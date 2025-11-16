@@ -59,9 +59,21 @@ export const RESOURCES = {
   RETROSUPPORT_VIEW: 'retrosupport:view',
   RETROSUPPORT_CREATE: 'retrosupport:create',
   
+  // RétroDemandes
+  RETRODEMANDES: 'retrodemandes:access',
+  RETRODEMANDES_VIEW: 'retrodemandes:view',
+  RETRODEMANDES_CREATE: 'retrodemandes:create',
+  RETRODEMANDES_EDIT: 'retrodemandes:edit',
+  
+  // Permissions Management
+  PERMISSIONS_MANAGEMENT: 'permissions:management',
+  PERMISSIONS_VIEW: 'permissions:view',
+  PERMISSIONS_EDIT: 'permissions:edit',
+  
   // MyRBE (Dashboard personnel)
   MYRBE: 'myrbe:access',
   MYRBE_VIEW: 'myrbe:view',
+  MYRBE_ACCESS: 'myrbe:card-access',
   
   // Administration
   ADMIN_PANEL: 'admin:panel',
@@ -127,8 +139,18 @@ export const ROLE_PERMISSIONS = {
       [RESOURCES.RETROSUPPORT_VIEW]: ['access', 'view', 'edit'],
       [RESOURCES.RETROSUPPORT_CREATE]: ['access', 'view', 'edit'],
       
+      [RESOURCES.RETRODEMANDES]: ['access', 'view', 'edit'],
+      [RESOURCES.RETRODEMANDES_VIEW]: ['access', 'view', 'edit'],
+      [RESOURCES.RETRODEMANDES_CREATE]: ['access', 'view', 'edit'],
+      [RESOURCES.RETRODEMANDES_EDIT]: ['access', 'view', 'edit'],
+      
+      [RESOURCES.PERMISSIONS_MANAGEMENT]: ['access', 'view', 'edit'],
+      [RESOURCES.PERMISSIONS_VIEW]: ['access', 'view', 'edit'],
+      [RESOURCES.PERMISSIONS_EDIT]: ['access', 'view', 'edit'],
+      
       [RESOURCES.MYRBE]: ['access', 'view', 'edit'],
       [RESOURCES.MYRBE_VIEW]: ['access', 'view', 'edit'],
+      [RESOURCES.MYRBE_ACCESS]: ['access', 'view', 'edit'],
       
       [RESOURCES.ADMIN_PANEL]: ['access', 'view', 'edit'],
       [RESOURCES.ADMIN_LOGS]: ['access', 'view', 'edit'],
@@ -181,8 +203,18 @@ export const ROLE_PERMISSIONS = {
       [RESOURCES.RETROSUPPORT_VIEW]: ['access', 'view', 'edit'],
       [RESOURCES.RETROSUPPORT_CREATE]: ['access', 'view', 'edit'],
       
+      [RESOURCES.RETRODEMANDES]: ['access', 'view', 'edit'],
+      [RESOURCES.RETRODEMANDES_VIEW]: ['access', 'view', 'edit'],
+      [RESOURCES.RETRODEMANDES_CREATE]: ['access', 'view', 'edit'],
+      [RESOURCES.RETRODEMANDES_EDIT]: ['access', 'view', 'edit'],
+      
+      [RESOURCES.PERMISSIONS_MANAGEMENT]: ['access', 'view', 'edit'],
+      [RESOURCES.PERMISSIONS_VIEW]: ['access', 'view', 'edit'],
+      [RESOURCES.PERMISSIONS_EDIT]: ['access', 'view', 'edit'],
+      
       [RESOURCES.MYRBE]: ['access', 'view', 'edit'],
       [RESOURCES.MYRBE_VIEW]: ['access', 'view', 'edit'],
+      [RESOURCES.MYRBE_ACCESS]: ['access', 'view', 'edit'],
       
       [RESOURCES.ADMIN_LOGS]: ['access', 'view']
     }
@@ -320,6 +352,16 @@ export const ROLE_PERMISSIONS = {
       [RESOURCES.RETROSUPPORT]: ['access', 'view', 'edit'],
       [RESOURCES.RETROSUPPORT_VIEW]: ['access', 'view'],
       [RESOURCES.RETROSUPPORT_CREATE]: ['access', 'view', 'edit']
+    }
+  },
+
+  // Partenaire: accès aux modules spécifiques selon permissions individuelles
+  PARTENAIRE: {
+    label: 'Partenaire',
+    color: 'teal',
+    permissions: {
+      // Les partenaires n'ont accès que si permissions individuelles accordées
+      [RESOURCES.MYRBE_ACCESS]: ['access', 'view']
     }
   },
 

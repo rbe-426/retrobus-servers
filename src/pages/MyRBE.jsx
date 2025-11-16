@@ -37,7 +37,8 @@ const cards = [
     to: "/dashboard/retro-requests",
     icon: FiPlus,
     color: "blue",
-    resource: "RETRODEMANDES"
+    resource: "RETRODEMANDES",
+    cardAccess: true
   },
   {
     title: "Récapitulatif Demandes",
@@ -46,7 +47,8 @@ const cards = [
     icon: FiPlus,
     color: "cyan",
     requiredRole: ['PRESIDENT', 'ADMIN'],
-    resource: "RETRODEMANDES"
+    resource: "RETRODEMANDES",
+    cardAccess: true
   },
   {
     title: "RétroBus",
@@ -54,7 +56,8 @@ const cards = [
     to: "/dashboard/retrobus",
     icon: FiTool,
     color: "teal",
-    resource: "VEHICLES"
+    resource: "VEHICLES",
+    cardAccess: true
   },
   {
     title: "Gestion Financière",
@@ -62,7 +65,8 @@ const cards = [
     to: "/admin/finance",
     icon: FiDollarSign,
     color: "rbe",
-    resource: "FINANCE"
+    resource: "FINANCE",
+    cardAccess: true
   },
   {
     title: "Gestion des Événements",
@@ -70,7 +74,8 @@ const cards = [
     to: "/dashboard/events-management",
     icon: FiCalendar,
     color: "green",
-    resource: "EVENTS"
+    resource: "EVENTS",
+    cardAccess: true
   },
   {
     title: "Gérer les adhésions",
@@ -78,7 +83,8 @@ const cards = [
     to: "/dashboard/members-management",
     icon: FiUsers,
     color: "blue",
-    resource: "MEMBERS"
+    resource: "MEMBERS",
+    cardAccess: true
   },
   {
     title: "Gestion des Stocks",
@@ -86,7 +92,8 @@ const cards = [
     to: "/dashboard/stock-management",
     icon: FiPackage,
     color: "yellow",
-    resource: "STOCK"
+    resource: "STOCK",
+    cardAccess: true
   },
   {
     title: "Gestion Newsletter",
@@ -94,7 +101,8 @@ const cards = [
     to: "/dashboard/newsletter",
     icon: FiMail,
     color: "purple",
-    resource: "NEWSLETTER"
+    resource: "NEWSLETTER",
+    cardAccess: true
   },
   {
     title: "RétroPlanning",
@@ -102,7 +110,8 @@ const cards = [
     to: "/dashboard/retroplanning",
     icon: FiCalendar,
     color: "orange",
-    resource: "PLANNING"
+    resource: "PLANNING",
+    cardAccess: true
   },
   {
     title: "Gestion du Site",
@@ -110,7 +119,8 @@ const cards = [
     to: "/dashboard/site-management",
     icon: FiGlobe,
     color: "pink",
-    resource: "SITE_MANAGEMENT"
+    resource: "SITE_MANAGEMENT",
+    cardAccess: true
   },
   {
     title: "Gestion des Autorisations",
@@ -119,7 +129,8 @@ const cards = [
     icon: FiShield,
     color: "red",
     requiredRole: ['ADMIN', 'MANAGER', 'OPERATOR'],
-    resource: "PERMISSIONS_MANAGEMENT"
+    resource: "PERMISSIONS_MANAGEMENT",
+    cardAccess: true
   },
   {
     title: "Retromail",
@@ -127,7 +138,8 @@ const cards = [
     to: "/retromail",
     icon: FiInbox,
     color: "teal",
-    resource: "RETROMAIL"
+    resource: "RETROMAIL",
+    cardAccess: true
   },
   {
     title: "RétroSupport",
@@ -135,7 +147,8 @@ const cards = [
     to: "/dashboard/support",
     icon: FiLifeBuoy,
     color: "cyan",
-    resource: "RETROSUPPORT"
+    resource: "RETROSUPPORT",
+    cardAccess: true
   },
   {
     title: "Mon Profil",
@@ -181,35 +194,48 @@ export default function MyRBE() {
       return false;
     }
 
-    // Si la carte a une ressource, vérifier les permissions
-    if (card.resource) {
-      // Vérifier d'abord les permissions individuelles
-      const hasIndividualPermission = userPermissions.some(p => p.resource === card.resource);
-      if (hasIndividualPermission) {
+    // Si la carte nécessite une autorisation d'accès (cardAccess)
+    if (card.cardAccess) {
+      // Vérifier d'abord les permissions individuelles pour cette carte
+      const hasCardPermission = userPermissions.some(p => p.resource === card.resource);
+      if (hasCardPermission) {
         return true;
       }
 
-      // Mapper les ressources aux permissions par rôle
-      const cardPermissionMap = {
-        'VEHICLES': RESOURCES.VEHICLES,
-        'EVENTS': RESOURCES.EVENTS,
-        'PLANNING': RESOURCES.RETROPLANNING,
-        'FINANCE': RESOURCES.FINANCE,
-        'MEMBERS': RESOURCES.MEMBERS,
-        'STOCK': RESOURCES.STOCK,
-        'NEWSLETTER': RESOURCES.NEWSLETTER,
-        'SITE_MANAGEMENT': RESOURCES.SITE_MANAGEMENT,
-        'RETRODEMANDES': RESOURCES.RETRODEMANDES,
-        'RETROMAIL': RESOURCES.RETROMAIL,
-        'RETROSUPPORT': RESOURCES.RETROSUPPORT,
-        'PERMISSIONS_MANAGEMENT': RESOURCES.PERMISSIONS_MANAGEMENT
-      };
+      // Pour les PARTENAIRES, l'accès aux cartes doit être accordé individuellement
+      if (userRole === 'PARTENAIRE') {
+        // Les partenaires ne voient la carte que s'ils ont une permission spécifique
+        return false;
+      }
 
-      const requiredResource = cardPermissionMap[card.resource];
-      return !requiredResource || canAccess(userRole, requiredResource, customPermissions);
+      // Pour les autres rôles, l'accès est autorisé par défaut (sauf si pas de permissions)
+      // Vérifier si le rôle a accès à la ressource
+      if (card.resource) {
+        const cardPermissionMap = {
+          'VEHICLES': RESOURCES.VEHICLES,
+          'EVENTS': RESOURCES.EVENTS,
+          'PLANNING': RESOURCES.RETROPLANNING,
+          'FINANCE': RESOURCES.FINANCE,
+          'MEMBERS': RESOURCES.MEMBERS,
+          'STOCK': RESOURCES.STOCK,
+          'NEWSLETTER': RESOURCES.NEWSLETTER,
+          'SITE_MANAGEMENT': RESOURCES.SITE_MANAGEMENT,
+          'RETRODEMANDES': RESOURCES.RETRODEMANDES,
+          'RETROMAIL': RESOURCES.RETROMAIL,
+          'RETROSUPPORT': RESOURCES.RETROSUPPORT,
+          'PERMISSIONS_MANAGEMENT': RESOURCES.PERMISSIONS_MANAGEMENT
+        };
+
+        const requiredResource = cardPermissionMap[card.resource];
+        // Les rôles standards voient les cartes si elles correspondent à leurs permissions
+        return !requiredResource || canAccess(userRole, requiredResource, customPermissions);
+      }
+      
+      // Si pas de ressource spécifiée, afficher la carte
+      return true;
     }
 
-    // Les cartes sans ressource sont toujours visibles
+    // Les cartes sans ressource sont toujours visibles (ex: Mon Profil)
     return true;
   };
 
