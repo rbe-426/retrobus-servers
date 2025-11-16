@@ -84,8 +84,7 @@ export default function PermissionEditor({ isOpen, onClose, user, onPermissionUp
   const loadPermissions = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/user-permissions/${user.id}`);
-      const data = await response.json();
+      const data = await fetchJson(`/api/user-permissions/${user.id}`);
       
       if (data.success) {
         // Parser les actions si elles sont en JSON string
@@ -128,18 +127,15 @@ export default function PermissionEditor({ isOpen, onClose, user, onPermissionUp
 
     try {
       setSaving(true);
-      const response = await fetch(`/api/user-permissions/${user.id}`, {
+      const data = await fetchJson(`/api/user-permissions/${user.id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           resource: newPermission.resource,
           actions: newPermission.actions,
           reason: newPermission.reason || '',
           expiresAt: newPermission.expiresAt || null
-        })
+        }
       });
-
-      const data = await response.json();
 
       if (data.success) {
         toast({
@@ -188,11 +184,9 @@ export default function PermissionEditor({ isOpen, onClose, user, onPermissionUp
   const handleDeletePermission = async (permissionResource) => {
     try {
       setSaving(true);
-      const response = await fetch(`/api/user-permissions/${user.id}/${permissionResource}`, {
+      const data = await fetchJson(`/api/user-permissions/${user.id}/${permissionResource}`, {
         method: 'DELETE'
       });
-
-      const data = await response.json();
 
       if (data.success) {
         toast({
