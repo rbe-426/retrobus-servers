@@ -143,22 +143,35 @@ export default function MyRBEPermissionsManager() {
           }
         });
 
-        const newPerm = data.permission || data;
+        console.log('✅ API Response:', data);
+        
+        if (data.success && data.permission) {
+          const newPerm = data.permission;
+          console.log('✅ New permission object:', newPerm);
 
-        // Mettre à jour l'état local
-        setPermissions(prev => ({
-          ...prev,
-          [userId]: {
-            ...prev[userId],
-            [cardId]: newPerm
-          }
-        }));
+          // Mettre à jour l'état local
+          setPermissions(prev => ({
+            ...prev,
+            [userId]: {
+              ...prev[userId],
+              [cardId]: newPerm
+            }
+          }));
 
-        toast({
-          title: 'Accès accordé',
-          status: 'success',
-          duration: 2000
-        });
+          toast({
+            title: 'Accès accordé',
+            status: 'success',
+            duration: 2000
+          });
+        } else {
+          console.error('❌ Unexpected response format:', data);
+          toast({
+            title: 'Erreur',
+            description: 'Réponse inattendue du serveur',
+            status: 'error',
+            duration: 2000
+          });
+        }
       }
     } catch (error) {
       console.error('❌ Erreur:', error);
