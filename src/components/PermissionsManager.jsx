@@ -103,9 +103,11 @@ export default function PermissionsManager() {
       
       const serverUsers = await response.json();
       console.log('📦 Utilisateurs reçus (raw):', serverUsers);
+      console.log('📊 Type:', typeof serverUsers, 'IsArray:', Array.isArray(serverUsers));
       
       let processedUsers = Array.isArray(serverUsers) ? serverUsers : 
-                          serverUsers.users ? serverUsers.users : [];
+                          serverUsers.users ? serverUsers.users : 
+                          serverUsers.data ? serverUsers.data : [];
 
       console.log('📝 Utilisateurs à traiter:', processedUsers.length);
 
@@ -354,16 +356,25 @@ export default function PermissionsManager() {
     return (
       <Card>
         <CardBody>
-          <Alert status="warning" borderRadius="md">
-            <AlertIcon />
-            <Box>
-              <Text fontWeight="bold">Aucun utilisateur trouvé</Text>
-              <Text fontSize="sm" mt={2}>
-                Vérifiez que l'API `/api/site-users` fonctionne correctement.
-                Consultez la console du navigateur pour les détails.
+          <VStack spacing={4}>
+            <Alert status="warning" borderRadius="md">
+              <AlertIcon />
+              <Box>
+                <Text fontWeight="bold">Aucun utilisateur trouvé</Text>
+                <Text fontSize="sm" mt={2}>
+                  L'API a retourné une réponse vide ou invalide.
+                </Text>
+              </Box>
+            </Alert>
+            <Box p={4} bg="gray.100" borderRadius="md" w="100%" maxH="300px" overflowY="auto">
+              <Text fontSize="xs" fontFamily="mono" whiteSpace="pre-wrap">
+                Consultez la console navigateur (F12) pour les détails de débogage.
               </Text>
             </Box>
-          </Alert>
+            <Button colorScheme="blue" onClick={() => loadData()}>
+              Réessayer
+            </Button>
+          </VStack>
         </CardBody>
       </Card>
     );
