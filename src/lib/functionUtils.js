@@ -10,6 +10,14 @@ import {
   ROLE_FUNCTION_DEFAULTS
 } from '../core/FunctionPermissions.js';
 
+// Réexporter les constantes pour faciliter l'utilisation
+export {
+  FUNCTIONS,
+  FUNCTION_GROUPS,
+  FUNCTION_DESCRIPTIONS,
+  ROLE_FUNCTION_DEFAULTS
+};
+
 /**
  * Vérifier si l'utilisateur a accès à une fonction
  */
