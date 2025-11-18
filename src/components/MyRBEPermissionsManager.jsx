@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Button,
@@ -25,43 +25,45 @@ import {
   useColorModeValue,
   Input,
   InputGroup,
-  InputLeftElement
+  InputLeftElement,
+  TabPanel,
+  Tabs,
+  TabList,
+  Tab
 } from '@chakra-ui/react';
 import { SearchIcon } from '@chakra-ui/icons';
 import { fetchJson } from '../apiClient';
-
-// Les cartes MyRBE qui nécessitent une autorisation
-const MYRBE_CARDS = [
-  { id: 'RETRODEMANDES', label: 'RétroDemandes', color: 'blue' },
-  { id: 'RETRODEMANDES_RECAP', label: 'Récapitulatif Demandes', color: 'cyan' },
-  { id: 'VEHICLES', label: 'RétroBus', color: 'teal' },
-  { id: 'FINANCE', label: 'Gestion Financière', color: 'green' },
-  { id: 'EVENTS', label: 'Gestion des Événements', color: 'green' },
-  { id: 'MEMBERS', label: 'Gérer les adhésions', color: 'blue' },
-  { id: 'STOCK', label: 'Gestion des Stocks', color: 'yellow' },
-  { id: 'NEWSLETTER', label: 'Gestion Newsletter', color: 'purple' },
-  { id: 'PLANNING', label: 'RétroPlanning', color: 'orange' },
-  { id: 'SITE_MANAGEMENT', label: 'Gestion du Site', color: 'pink' },
-  { id: 'PERMISSIONS_MANAGEMENT', label: 'Gestion des Autorisations', color: 'red' },
-  { id: 'RETROMAIL', label: 'Retromail', color: 'teal' },
-  { id: 'RETROSUPPORT', label: 'RétroSupport', color: 'cyan' }
-];
+import { useFunctionManagement } from '../hooks/useFunctionPermissions';
+import { groupFunctionsByModule, FUNCTION_DESCRIPTIONS } from '../utils/functionUtils';
+import { FUNCTIONS, FUNCTION_GROUPS } from '../core/FunctionPermissions';
 
 /**
- * MyRBEPermissionsManager - Gestion matricielle des permissions MyRBE
- * Vue d'ensemble: tous les utilisateurs vs toutes les cartes MyRBE
+ * MyRBEPermissionsManager - Gestion matricielle des permissions basée sur les fonctions
+ * Vue d'ensemble: tous les utilisateurs vs toutes les fonctions granulaires par module
  */
 export default function MyRBEPermissionsManager() {
   const toast = useToast();
+  const { functions: allFunctions, groups, loading: functionsLoading, grantFunction, revokeFunction } = useFunctionManagement();
+
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [permissions, setPermissions] = useState({});
+  const [selectedModuleIdx, setSelectedModuleIdx] = useState(0);
+  const [userFunctions, setUserFunctions] = useState({}); // userId -> {functionId: true/false}
 
   const tableBg = useColorModeValue('white', 'gray.800');
   const headerBg = useColorModeValue('blue.50', 'blue.900');
   const hoverBg = useColorModeValue('gray.50', 'gray.700');
+
+  // Grouper les fonctions par module
+  const functionsByModule = useMemo(() => {
+    return groupFunctionsByModule(Object.keys(FUNCTIONS));
+  }, []);
+
+  const modules = useMemo(() => Object.keys(functionsByModule), [functionsByModule]);
+  const currentModule = modules[selectedModuleIdx] || '';
+  const currentFunctions = functionsByModule[currentModule] || [];
 
   // Charger les utilisateurs et leurs permissions
   const loadData = useCallback(async () => {
@@ -72,21 +74,26 @@ export default function MyRBEPermissionsManager() {
       const usersData = await fetchJson('/api/site-users');
       setUsers(Array.isArray(usersData) ? usersData : []);
 
-      // Charger les permissions
-      const permsData = await fetchJson('/api/user-permissions');
-
-      // Organiser les permissions par userId et resource
+      // Charger les permissions pour chaque utilisateur
       const permsMap = {};
-      if (permsData.success && Array.isArray(permsData.permissions)) {
-        permsData.permissions.forEach(p => {
-          if (!permsMap[p.userId]) {
-            permsMap[p.userId] = {};
+      if (Array.isArray(usersData)) {
+        for (const user of usersData) {
+          try {
+            const userPerms = await fetchJson(`/api/functions/user/${user.id}`);
+            permsMap[user.id] = {};
+            if (Array.isArray(userPerms)) {
+              userPerms.forEach(fn => {
+                permsMap[user.id][fn] = true;
+              });
+            }
+          } catch (err) {
+            console.warn(`Erreur chargement perms pour ${user.id}:`, err);
+            permsMap[user.id] = {};
           }
-          permsMap[p.userId][p.resource] = p;
-        });
+        }
       }
 
-      setPermissions(permsMap);
+      setUserFunctions(permsMap);
       console.log('✅ Données chargées:', usersData.length, 'utilisateurs');
     } catch (error) {
       console.error('❌ Erreur:', error);
@@ -106,25 +113,21 @@ export default function MyRBEPermissionsManager() {
     loadData();
   }, [loadData]);
 
-  // Activer/Désactiver l'accès à une carte
-  const toggleCardAccess = async (userId, cardId) => {
+  // Activer/Désactiver l'accès à une fonction
+  const toggleFunctionAccess = async (userId, functionId) => {
     try {
       setSaving(true);
 
-      const hasAccess = permissions[userId]?.[cardId];
+      const hasAccess = userFunctions[userId]?.[functionId];
 
       if (hasAccess) {
-        // Supprimer la permission via DELETE /api/user-permissions/:userId/:resource
-        await fetchJson(`/api/user-permissions/${userId}/${cardId}`, {
-          method: 'DELETE'
-        });
-
-        // Mettre à jour l'état local
-        setPermissions(prev => ({
+        // Supprimer la permission
+        await revokeFunction(userId, functionId);
+        setUserFunctions(prev => ({
           ...prev,
           [userId]: {
             ...prev[userId],
-            [cardId]: null
+            [functionId]: false
           }
         }));
 
@@ -134,25 +137,15 @@ export default function MyRBEPermissionsManager() {
           duration: 2000
         });
       } else {
-        // Ajouter la permission via POST /api/user-permissions/:userId
-        const data = await fetchJson(`/api/user-permissions/${userId}`, {
-          method: 'POST',
-          body: {
-            resource: cardId,
-            actions: ['READ', 'CREATE', 'EDIT', 'DELETE']
+        // Ajouter la permission
+        await grantFunction(userId, functionId);
+        setUserFunctions(prev => ({
+          ...prev,
+          [userId]: {
+            ...prev[userId],
+            [functionId]: true
           }
-        });
-
-        if (!data.success || !data.permission) {
-          console.error('❌ Unexpected response format:', data);
-          toast({
-            title: 'Erreur',
-            description: 'Réponse inattendue du serveur',
-            status: 'error',
-            duration: 2000
-          });
-          return;
-        }
+        }));
 
         toast({
           title: 'Accès accordé',
@@ -171,56 +164,40 @@ export default function MyRBEPermissionsManager() {
       });
     } finally {
       setSaving(false);
-      // ✅ Recharger TOUTES les permissions depuis la base de données
-      // pour être sûr qu'elles sont à jour
-      await loadData();
     }
   };
 
-  // Donner/Retirer accès à toutes les cartes
-  const toggleAllCards = async (userId, grantAccess) => {
+  // Donner/Retirer accès à un groupe de fonctions
+  const toggleGroupAccess = async (userId, groupId, grant) => {
     try {
       setSaving(true);
 
-      const userPermissions = permissions[userId] || {};
+      const functionIds = FUNCTION_GROUPS[groupId] || [];
 
-      for (const card of MYRBE_CARDS) {
-        const hasAccess = userPermissions[card.id];
-
-        if (grantAccess && !hasAccess) {
-          // Ajouter
-          const data = await fetchJson(`/api/user-permissions/${userId}`, {
-            method: 'POST',
-            body: {
-              resource: card.id,
-              actions: ['READ', 'CREATE', 'EDIT', 'DELETE']
-            }
-          });
-          const newPerm = data.permission || data;
-          setPermissions(prev => ({
+      for (const functionId of functionIds) {
+        if (grant) {
+          await grantFunction(userId, functionId);
+          setUserFunctions(prev => ({
             ...prev,
             [userId]: {
               ...prev[userId],
-              [card.id]: newPerm
+              [functionId]: true
             }
           }));
-        } else if (!grantAccess && hasAccess) {
-          // Retirer
-          await fetchJson(`/api/user-permissions/${userId}/${card.id}`, {
-            method: 'DELETE'
-          });
-          setPermissions(prev => ({
+        } else {
+          await revokeFunction(userId, functionId);
+          setUserFunctions(prev => ({
             ...prev,
             [userId]: {
               ...prev[userId],
-              [card.id]: null
+              [functionId]: false
             }
           }));
         }
       }
 
       toast({
-        title: grantAccess ? 'Tous les accès accordés' : 'Tous les accès retirés',
+        title: grant ? 'Groupe accordé' : 'Groupe retiré',
         status: 'success',
         duration: 2000
       });
@@ -235,8 +212,6 @@ export default function MyRBEPermissionsManager() {
       });
     } finally {
       setSaving(false);
-      // ✅ Recharger TOUTES les permissions depuis la base de données
-      await loadData();
     }
   };
 
@@ -247,31 +222,44 @@ export default function MyRBEPermissionsManager() {
       .includes(searchTerm.toLowerCase())
   );
 
-  if (loading) {
+  if (loading || functionsLoading) {
     return (
       <Card>
         <CardBody>
-          <VStack spacing={4} py={8}>
-            <Spinner size="lg" />
-            <Text>Chargement des permissions MyRBE...</Text>
+          <VStack spacing={4} align="center" py={8}>
+            <Spinner size="lg" color="blue.500" />
+            <Text>⏳ Chargement des permissions...</Text>
           </VStack>
         </CardBody>
       </Card>
     );
   }
 
+  if (users.length === 0) {
+    return (
+      <Card>
+        <CardBody>
+          <Alert status="warning" borderRadius="md">
+            <AlertIcon />
+            Aucun utilisateur trouvé
+          </Alert>
+        </CardBody>
+      </Card>
+    );
+  }
+
   return (
-    <VStack spacing={6} align="stretch">
+    <VStack spacing={4} align="stretch">
       {/* En-tête */}
       <Box>
-        <Heading size="lg" mb={2}>🎯 Gestion des accès MyRBE</Heading>
+        <Heading size="lg" mb={2}>🎯 Gestion des accès par Fonction</Heading>
         <Text color="gray.600">
-          Matrice permettant de gérer les accès aux cartes MyRBE pour chaque utilisateur.
-          Par défaut, seul w.belaidi a accès à toutes les cartes.
+          Matrice permettant de gérer les accès granulaires aux fonctions du système pour chaque utilisateur.
+          Les permissions individuelles priment sur les rôles.
         </Text>
       </Box>
 
-      {/* Recherche */}
+      {/* Recherche utilisateurs */}
       <InputGroup>
         <InputLeftElement pointerEvents="none">
           <SearchIcon color="gray.300" />
@@ -288,117 +276,156 @@ export default function MyRBEPermissionsManager() {
         <AlertIcon />
         <Box>
           <Text fontWeight="bold" fontSize="sm">
-            ℹ️ {filteredUsers.length} utilisateur(s) trouvé(s) - {MYRBE_CARDS.length} cartes disponibles
+            ℹ️ {filteredUsers.length} utilisateur(s) - {currentFunctions.length} fonction(s) dans "{currentModule}"
           </Text>
         </Box>
       </Alert>
 
-      {/* Tableau matriciel */}
+      {/* Matrice par module */}
       <Card bg={tableBg}>
         <CardHeader>
-          <Heading size="md">📊 Matrice des permissions</Heading>
+          <Heading size="md">📊 Matrice des permissions par Module</Heading>
         </CardHeader>
         <Divider />
         <CardBody>
-          <Box overflowX="auto">
-            <Table size="sm" variant="striped">
-              <Thead bg={headerBg}>
-                <Tr>
-                  <Th position="sticky" left="0" bg={headerBg} zIndex="10" minW="250px">
-                    Utilisateur
-                  </Th>
-                  <Th textAlign="center" minW="100px">
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      fontSize="xs"
-                      title="Accorder accès à toutes les cartes"
-                    >
-                      ✓ Tous
-                    </Button>
-                  </Th>
-                  {MYRBE_CARDS.map(card => (
-                    <Th key={card.id} textAlign="center" minW="80px">
-                      <Box fontSize="xs" whiteSpace="normal" lineHeight="1.2">
-                        {card.label.substring(0, 12)}
-                      </Box>
-                    </Th>
-                  ))}
-                </Tr>
-              </Thead>
-              <Tbody>
-                {filteredUsers.map(user => {
-                  const userPerms = permissions[user.id] || {};
-                  const accessCount = Object.values(userPerms).filter(p => p).length;
+          <Tabs index={selectedModuleIdx} onChange={setSelectedModuleIdx} variant="enclosed" colorScheme="blue">
+            <TabList mb={4}>
+              {modules.map((module, idx) => (
+                <Tab key={module}>
+                  <HStack spacing={2}>
+                    <Text>{module}</Text>
+                    <Badge colorScheme="blue" fontSize="xs">{functionsByModule[module].length}</Badge>
+                  </HStack>
+                </Tab>
+              ))}
+            </TabList>
 
-                  return (
-                    <Tr key={user.id} _hover={{ bg: hoverBg }}>
-                      <Td
-                        position="sticky"
-                        left="0"
-                        bg={tableBg}
-                        zIndex="5"
-                        fontWeight="medium"
-                        minW="250px"
-                      >
-                        <VStack align="start" spacing={0}>
-                          <Text>
-                            {user.firstName} {user.lastName}
-                          </Text>
-                          <Text fontSize="xs" color="gray.500">
-                            {user.email}
-                          </Text>
-                          {user.email === 'w.belaidi@retrobus.fr' && (
-                            <Badge colorScheme="gold" fontSize="xs" mt={1}>
-                              Admin par défaut
-                            </Badge>
-                          )}
-                        </VStack>
-                      </Td>
-                      <Td textAlign="center">
-                        <Badge
-                          colorScheme={accessCount > 0 ? 'green' : 'gray'}
-                          fontSize="xs"
-                        >
-                          {accessCount}/{MYRBE_CARDS.length}
-                        </Badge>
-                      </Td>
-                      {MYRBE_CARDS.map(card => (
-                        <Td key={card.id} textAlign="center">
-                          <Checkbox
-                            isChecked={!!permissions[user.id]?.[card.id]}
-                            onChange={() => toggleCardAccess(user.id, card.id)}
-                            isDisabled={saving}
-                            size="md"
-                            colorScheme={card.color}
-                            title={
-                              permissions[user.id]?.[card.id]?.expiresAt
-                                ? `Expire le: ${new Date(permissions[user.id][card.id].expiresAt).toLocaleDateString()}`
-                                : 'Accès accordé'
-                            }
-                          />
-                        </Td>
-                      ))}
+            <TabPanel>
+              <Box overflowX="auto">
+                <Table size="sm" variant="striped">
+                  <Thead bg={headerBg}>
+                    <Tr>
+                      <Th position="sticky" left="0" bg={headerBg} zIndex="10" minW="200px">
+                        Utilisateur
+                      </Th>
+                      <Th textAlign="center" minW="80px">
+                        Accès
+                      </Th>
+                      {currentFunctions.map(functionId => {
+                        const desc = FUNCTION_DESCRIPTIONS[functionId] || {};
+                        return (
+                          <Th key={functionId} textAlign="center" minW="85px" title={desc.description}>
+                            <Box fontSize="xs" whiteSpace="normal" lineHeight="1.2">
+                              {desc.name || functionId}
+                            </Box>
+                          </Th>
+                        );
+                      })}
                     </Tr>
-                  );
-                })}
-              </Tbody>
-            </Table>
-          </Box>
+                  </Thead>
+                  <Tbody>
+                    {filteredUsers.map(user => {
+                      const userPerms = userFunctions[user.id] || {};
+                      const accessCount = currentFunctions.filter(fn => userPerms[fn]).length;
+
+                      return (
+                        <Tr key={user.id} _hover={{ bg: hoverBg }}>
+                          <Td
+                            position="sticky"
+                            left="0"
+                            bg={tableBg}
+                            zIndex="5"
+                            fontWeight="medium"
+                            minW="200px"
+                          >
+                            <VStack align="start" spacing={0}>
+                              <Text>
+                                {user.firstName} {user.lastName}
+                              </Text>
+                              <Text fontSize="xs" color="gray.500">
+                                {user.email}
+                              </Text>
+                            </VStack>
+                          </Td>
+                          <Td textAlign="center">
+                            <Badge
+                              colorScheme={accessCount > 0 ? 'green' : 'gray'}
+                              fontSize="xs"
+                            >
+                              {accessCount}/{currentFunctions.length}
+                            </Badge>
+                          </Td>
+                          {currentFunctions.map(functionId => (
+                            <Td key={functionId} textAlign="center">
+                              <Checkbox
+                                isChecked={!!userPerms[functionId]}
+                                onChange={() => toggleFunctionAccess(user.id, functionId)}
+                                isDisabled={saving}
+                                size="md"
+                                colorScheme="blue"
+                              />
+                            </Td>
+                          ))}
+                        </Tr>
+                      );
+                    })}
+                  </Tbody>
+                </Table>
+              </Box>
+            </TabPanel>
+          </Tabs>
         </CardBody>
       </Card>
 
-      {/* Info */}
+      {/* Gestion des groupes prédéfinis */}
+      <Card>
+        <CardHeader>
+          <Heading size="md">👥 Groupes de Fonctions Prédéfinis</Heading>
+        </CardHeader>
+        <Divider />
+        <CardBody>
+          <VStack spacing={3} align="stretch">
+            {Object.entries(FUNCTION_GROUPS).map(([groupId, functionIds]) => (
+              <Card key={groupId} size="sm" bg="gray.50" p={3}>
+                <HStack justify="space-between" align="start" spacing={4}>
+                  <VStack align="start" spacing={1} flex={1}>
+                    <Text fontWeight="bold" fontSize="sm">{groupId}</Text>
+                    <Text fontSize="xs" color="gray.600">{functionIds.length} fonction(s)</Text>
+                  </VStack>
+                  <HStack spacing={1} flexWrap="wrap" justify="flex-end">
+                    {filteredUsers.slice(0, 5).map(user => (
+                      <Button
+                        key={`grant-${user.id}-${groupId}`}
+                        size="xs"
+                        colorScheme="green"
+                        onClick={() => toggleGroupAccess(user.id, groupId, true)}
+                        isDisabled={saving}
+                        title={`Accorder ${groupId} à ${user.firstName}`}
+                      >
+                        +{user.firstName?.substring(0, 1).toUpperCase()}
+                      </Button>
+                    ))}
+                  </HStack>
+                </HStack>
+              </Card>
+            ))}
+          </VStack>
+        </CardBody>
+      </Card>
+
+      {/* Info et instructions */}
       <Alert status="warning" borderRadius="md">
         <AlertIcon />
         <Box>
           <Text fontWeight="bold" fontSize="sm">⚙️ À savoir</Text>
-          <Text fontSize="xs" color="gray.700" mt={1}>
-            • Cochez pour accorder l'accès à une carte
-            • Décochez pour révoquer l'accès
-            • Les permissions individuelles priment sur les rôles
-            • Les changements sont appliqués immédiatement
-          </Text>
+          <VStack align="start" spacing={1} fontSize="xs" color="gray.700" mt={2}>
+            <Text>• Cochez pour accorder l'accès à une fonction</Text>
+            <Text>• Décochez pour révoquer l'accès</Text>
+            <Text>• Les permissions individuelles priment sur les rôles</Text>
+            <Text>• Les changements sont appliqués immédiatement</Text>
+            <Text>• Utilisez les groupes pour accorder rapidement des ensembles de fonctions</Text>
+            <Text>• Filtrez par utilisateur pour une meilleure visibilité</Text>
+          </VStack>
         </Box>
       </Alert>
     </VStack>
