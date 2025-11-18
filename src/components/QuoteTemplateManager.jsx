@@ -356,7 +356,7 @@ export default function QuoteTemplateManager() {
                   fontSize="sm"
                 />
                 <Text fontSize="xs" color="gray.500" mt={2}>
-                  Utilisez les placeholders: NUM_DEVIS, OBJET, MONTANT, DATE, DESTINATAIRE_NOM, DESTINATAIRE_ADRESSE
+                  Utilisez les placeholders (double accolades): {'{{NUM_DEVIS}}, {{OBJET}}, {{MONTANT}}, {{PRIX_NET}}, {{DATE}}, {{DESTINATAIRE_NOM}}, {{DESTINATAIRE_ADRESSE}}, {{DESTINATAIRE_SOCIETE}}, {{DESTINATAIRE_CONTACTS}}, {{LOGO_BIG}}, {{LOGO_SMALL}}'}
                 </Text>
               </Box>
 

@@ -151,6 +151,8 @@ const AdminFinance = () => {
     memberId: '',
     destinataireName: '',
     destinataireAdresse: '',
+    destinataireSociete: '',
+    destinataireContacts: '',
     notes: '',
     paymentMethod: '',
     paymentDate: '',
@@ -1132,9 +1134,12 @@ const AdminFinance = () => {
         OBJET: docForm.title,
         DESCRIPTION: docForm.description || '',
         MONTANT: parseFloat(docForm.amount || 0).toFixed(2),
+        PRIX_NET: parseFloat(docForm.amount || 0).toFixed(2),
         DATE: new Date(docForm.date).toLocaleDateString('fr-FR'),
         DESTINATAIRE_NOM: docForm.destinataireName || 'Destinataire',
         DESTINATAIRE_ADRESSE: docForm.destinataireAdresse || '',
+        DESTINATAIRE_SOCIETE: docForm.destinataireSociete || '',
+        DESTINATAIRE_CONTACTS: docForm.destinataireContacts || '',
         NOTES: docForm.notes || '',
         LOGO_BIG: selectedTemplate.logoBig || '',
         LOGO_SMALL: selectedTemplate.logoSmall || '',
@@ -3411,6 +3416,27 @@ const AdminFinance = () => {
                       value={docForm.destinataireAdresse || ''} 
                       onChange={(e)=>setDocForm(prev=>({...prev, destinataireAdresse: e.target.value}))} 
                       placeholder="Adresse (pour le template)"
+                    />
+                  </FormControl>
+                </HStack>
+
+                <HStack spacing={3}>
+                  <FormControl>
+                    <FormLabel fontSize="sm" fontWeight="bold">Destinataire - Société</FormLabel>
+                    <Input 
+                      size="sm"
+                      value={docForm.destinataireSociete || ''} 
+                      onChange={(e)=>setDocForm(prev=>({...prev, destinataireSociete: e.target.value}))} 
+                      placeholder="Société (optionnel)"
+                    />
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel fontSize="sm" fontWeight="bold">Destinataire - Contacts</FormLabel>
+                    <Input 
+                      size="sm"
+                      value={docForm.destinataireContacts || ''} 
+                      onChange={(e)=>setDocForm(prev=>({...prev, destinataireContacts: e.target.value}))} 
+                      placeholder="Téléphone, email, etc."
                     />
                   </FormControl>
                 </HStack>
