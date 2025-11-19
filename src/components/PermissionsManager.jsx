@@ -108,7 +108,7 @@ export default function PermissionsManager() {
 
       const data = await response.json();
       setPermissions({
-        functions: data.functions || [],
+        functions: Array.isArray(data.functions) ? data.functions : Object.values(data.functions || {}),
         roles: data.roles || [],
         roleFunctionDefaults: data.roleFunctionDefaults || {}
       });
@@ -243,7 +243,7 @@ export default function PermissionsManager() {
   };
 
   // Filtrer les fonctions
-  const filteredFunctions = permissions.functions.filter(func => {
+  const filteredFunctions = (Array.isArray(permissions.functions) ? permissions.functions : []).filter(func => {
     if (searchFilter && !func.name.toLowerCase().includes(searchFilter.toLowerCase())) {
       return false;
     }
