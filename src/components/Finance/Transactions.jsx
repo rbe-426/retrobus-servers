@@ -4,10 +4,13 @@ import {
   Heading, Text, Button, Input, Select, Table, Thead, Tbody,
   Tr, Th, Td, Badge, useDisclosure, Icon, Flex, InputGroup,
   InputLeftElement, useToast, Modal, ModalOverlay, ModalContent,
-  ModalHeader, ModalBody, ModalFooter, FormControl, FormLabel
+  ModalHeader, ModalBody, ModalFooter, FormControl, FormLabel,
+  NumberInput, NumberInputField, NumberInputStepper, NumberIncrementStepper,
+  NumberDecrementStepper, Alert, AlertIcon
 } from "@chakra-ui/react";
-import { FiPlus, FiSearch, FiEdit2, FiTrash2 } from "react-icons/fi";
+import { FiPlus, FiSearch, FiEdit2, FiTrash2, FiAlertTriangle } from "react-icons/fi";
 import { useFinanceData } from "../../hooks/useFinanceData";
+import { TRANSACTION_CATEGORIES, getCategoryLabel } from "../../utils/financeBusinessRules";
 
 const FinanceTransactions = () => {
   const {
@@ -20,6 +23,7 @@ const FinanceTransactions = () => {
   const [filterCategory, setFilterCategory] = useState("Tous");
   const [searchTerm, setSearchTerm] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [allocations, setAllocations] = useState([]);
   const [formData, setFormData] = useState({
     type: "CREDIT",
     amount: "",
@@ -30,7 +34,7 @@ const FinanceTransactions = () => {
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  const categories = ["Tous", "ADHESION", "DONATION", "TRANSPORT", "MAINTENANCE", "FOURNITURES"];
+  const categories = ["Tous", ...Object.keys(TRANSACTION_CATEGORIES)];
 
   const filteredTransactions = (transactions || []).filter(t => {
     const matchesSearch = (t.description || "").toLowerCase().includes(searchTerm.toLowerCase());
@@ -39,33 +43,28 @@ const FinanceTransactions = () => {
   });
 
   const handleAdd = async () => {
-    if (!formData.amount || !formData.description) {
-      toast({
-        title: "Erreur",
-        description: "Remplissez tous les champs",
-        status: "error"
-      });
-      return;
-    }
-    
     setIsAdding(true);
     try {
-      await addTransaction(formData);
-      setFormData({
-        type: "CREDIT",
-        amount: "",
-        description: "",
-        category: "ADHESION",
-        date: new Date().toISOString().split("T")[0]
-      });
-      onClose();
+      // La validation est faite dans addTransaction via les regles metier
+      const result = await addTransaction(formData, allocations);
+      if (result) {
+        setFormData({
+          type: "CREDIT",
+          amount: "",
+          description: "",
+          category: "ADHESION",
+          date: new Date().toISOString().split("T")[0]
+        });
+        setAllocations([]);
+        onClose();
+      }
     } finally {
       setIsAdding(false);
     }
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm("Confirmer la suppression ?")) {
+    if (window.confirm("Confirmer la suppression ? Cette action est irreversible.")) {
       await deleteTransaction(id);
     }
   };
