@@ -271,6 +271,8 @@ export const useFinanceData = (currentUser = null) => {
             : "Transaction creee",
           status: "success"
         });
+        // Recharger les données pour synchroniser avec le serveur
+        await loadFinanceData();
         return data;
       } catch (error) {
         toast({
@@ -305,6 +307,8 @@ export const useFinanceData = (currentUser = null) => {
           description: "Transaction supprimée",
           status: "success"
         });
+        // Recharger les données pour synchroniser avec le serveur
+        await loadFinanceData();
       } catch (error) {
         toast({
           title: "Erreur",
@@ -366,6 +370,8 @@ export const useFinanceData = (currentUser = null) => {
           description: "Document cree",
           status: "success"
         });
+        // Recharger les données pour synchroniser avec le serveur
+        await loadFinanceData();
         return data;
       } catch (error) {
         toast({
@@ -400,6 +406,8 @@ export const useFinanceData = (currentUser = null) => {
           description: "Document supprimé",
           status: "success"
         });
+        // Recharger les données pour synchroniser avec le serveur
+        await loadFinanceData();
       } catch (error) {
         toast({
           title: "Erreur",
@@ -451,6 +459,8 @@ export const useFinanceData = (currentUser = null) => {
           description: "Solde mis a jour",
           status: "success"
         });
+        // Recharger les données pour synchroniser avec le serveur
+        await loadFinanceData();
         return true;
       } catch (error) {
         toast({
@@ -503,6 +513,8 @@ export const useFinanceData = (currentUser = null) => {
           description: "Operation approuvee",
           status: "success"
         });
+        // Recharger les données pour synchroniser avec le serveur
+        await loadFinanceData();
         return true;
       } catch (error) {
         toast({
