@@ -4,7 +4,7 @@ import {
   Heading, Box, useColorModeValue
 } from '@chakra-ui/react';
 import { FiCalendar, FiMapPin, FiClock } from 'react-icons/fi';
-import PageLayout from '../components/Layout/PageLayout';
+import WorkspaceLayout from '../components/Layout/WorkspaceLayout';
 import EventsManagement from './EventsManagement';
 import RetroGPS from '../components/RetroGPS';
 
@@ -19,21 +19,8 @@ export default function EventsHub() {
   const [tabIndex, setTabIndex] = useState(0);
   const tabsBg = useColorModeValue('gray.50', 'gray.900');
 
-  return (
-    <PageLayout
-      title="Gestion des Événements"
-      subtitle="Créez, planifiez et suivez les tournées RétroBus"
-      headerVariant="card"
-      bgGradient="linear(to-r, green.500, teal.600)"
-      titleSize="xl"
-      titleWeight="700"
-      breadcrumbs={[
-        { label: "Dashboard", href: "/dashboard/home" },
-        { label: "MyRBE", href: "/dashboard/myrbe" },
-        { label: "Événements", href: "/dashboard/events-management" }
-      ]}
-    >
-      <Box>
+  const renderEventsSection = () => (
+    <Box>
         <Tabs 
           index={tabIndex} 
           onChange={setTabIndex}
@@ -87,7 +74,19 @@ export default function EventsHub() {
             </TabPanel>
           </TabPanels>
         </Tabs>
-      </Box>
-    </PageLayout>
+    </Box>
+  );
+
+  return (
+    <WorkspaceLayout
+      title="Gestion des événements"
+      subtitle="Créez, planifiez et suivez les tournées RétroBus"
+      sections={[{ id: 'events', label: 'Événements', icon: FiCalendar, render: renderEventsSection }]}
+      defaultSectionId="events"
+      sidebarTitle="Événements"
+      sidebarSubtitle="Organisation & planning"
+      sidebarTitleIcon={FiCalendar}
+      versionLabel="Events v2"
+    />
   );
 }

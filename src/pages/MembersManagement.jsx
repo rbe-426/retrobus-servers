@@ -9,7 +9,7 @@ import {
   Table, Thead, Tbody, Tr, Th, Td, InputGroup, InputLeftElement,
   useColorModeValue, Progress, Tooltip, ButtonGroup, Divider,
   Stat, StatLabel, StatNumber, StatHelpText, CheckboxGroup, Checkbox,
-  Container, Heading, Icon
+  Container, Heading, Icon, Center
 } from "@chakra-ui/react";
 import { 
   FiUsers, FiPlus, FiSearch, FiEdit, FiTrash2, FiEye, FiMail,
@@ -19,7 +19,7 @@ import {
 } from 'react-icons/fi';
 import { membersAPI } from '../api/members.js';
 import CreateMember from '../components/CreateMember';
-import SidebarPageLayout from '../components/Layout/SidebarPageLayout';
+import WorkspaceLayout from '../components/Layout/WorkspaceLayout';
 
 // API base builder with relative fallback
 const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -254,14 +254,15 @@ export default function MembersManagement() {
 
   const toast = useToast();
   const cardBg = useColorModeValue('white', 'gray.800');
-  
-  const [activeSection, setActiveSection] = useState('dashboard');
-  const sections = [
-    { id: 'dashboard', label: '📊 Tableau de bord', icon: FiBarChart, color: 'purple' },
-    { id: 'members', label: '👥 Adhérents', icon: FiUsers, color: 'blue' },
-    { id: 'roles', label: '🔑 Rôles', icon: FiShield, color: 'green' },
-    { id: 'settings', label: '⚙️ Paramètres', icon: FiSettings, color: 'gray' }
-  ];
+
+  const renderLoadingState = () => (
+    <Center py={20}>
+      <VStack spacing={4}>
+        <Spinner size="xl" color="purple.500" />
+        <Text color="gray.500">Chargement des membres...</Text>
+      </VStack>
+    </Center>
+  );
 
   const [editData, setEditData] = useState(null);
   const [terminateMember, setTerminateMember] = useState(null);
@@ -540,85 +541,83 @@ export default function MembersManagement() {
     }
   };
 
-  const renderContent = () => {
-    switch (activeSection) {
-      case 'dashboard':
-        return renderDashboard();
-      case 'members':
-        return renderMembersTab();
-      case 'roles':
-        return renderRolesTab();
-      case 'settings':
-        return renderSettingsTab();
-      default:
-        return renderDashboard();
+  const renderDashboard = () => {
+    if (loading) {
+      return renderLoadingState();
     }
+
+    return (
+      <VStack spacing={8} align="stretch">
+        <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
+          <Card bg={cardBg}>
+            <CardBody>
+              <Stat>
+                <StatLabel>Total adhérents</StatLabel>
+                <StatNumber color="blue.500">{members.length}</StatNumber>
+              </Stat>
+            </CardBody>
+          </Card>
+          <Card bg={cardBg}>
+            <CardBody>
+              <Stat>
+                <StatLabel>Actifs</StatLabel>
+                <StatNumber color="green.500">{members.filter(m => m.membershipStatus === 'ACTIVE').length}</StatNumber>
+              </Stat>
+            </CardBody>
+          </Card>
+          <Card bg={cardBg}>
+            <CardBody>
+              <Stat>
+                <StatLabel>En attente</StatLabel>
+                <StatNumber color="yellow.500">{members.filter(m => m.membershipStatus === 'PENDING').length}</StatNumber>
+              </Stat>
+            </CardBody>
+          </Card>
+          <Card bg={cardBg}>
+            <CardBody>
+              <Stat>
+                <StatLabel>Accès activés</StatLabel>
+                <StatNumber color="purple.500">{members.filter(m => m.loginEnabled).length}</StatNumber>
+              </Stat>
+            </CardBody>
+          </Card>
+        </SimpleGrid>
+
+        {renderMembersTab()}
+      </VStack>
+    );
   };
 
-  const renderDashboard = () => (
-    <Box>
-      <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4} mb={8}>
-        <Card bg={cardBg}>
-          <CardBody>
-            <Stat>
-              <StatLabel>Total adhérents</StatLabel>
-              <StatNumber color="blue.500">{members.length}</StatNumber>
-            </Stat>
-          </CardBody>
-        </Card>
-        <Card bg={cardBg}>
-          <CardBody>
-            <Stat>
-              <StatLabel>Actifs</StatLabel>
-              <StatNumber color="green.500">{members.filter(m => m.membershipStatus === 'ACTIVE').length}</StatNumber>
-            </Stat>
-          </CardBody>
-        </Card>
-        <Card bg={cardBg}>
-          <CardBody>
-            <Stat>
-              <StatLabel>En attente</StatLabel>
-              <StatNumber color="yellow.500">{members.filter(m => m.membershipStatus === 'PENDING').length}</StatNumber>
-            </Stat>
-          </CardBody>
-        </Card>
-        <Card bg={cardBg}>
-          <CardBody>
-            <Stat>
-              <StatLabel>Accès activés</StatLabel>
-              <StatNumber color="purple.500">{members.filter(m => m.loginEnabled).length}</StatNumber>
-            </Stat>
-          </CardBody>
-        </Card>
-      </SimpleGrid>
-      {renderMembersTab()}
-    </Box>
-  );
+  const renderMembersTab = () => {
+    if (loading) {
+      return renderLoadingState();
+    }
 
-  const renderMembersTab = () => (
-    <Box>
-      <HStack mb={6} spacing={4}>
-        <InputGroup flex={1}>
-          <InputLeftElement><FiSearch /></InputLeftElement>
-          <Input
-            placeholder="Chercher par nom ou email..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </InputGroup>
-        <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} w="150px">
-          <option value="ALL">Tous</option>
-          <option value="ACTIVE">Actif</option>
-          <option value="PENDING">En attente</option>
-          <option value="EXPIRED">Expiré</option>
-        </Select>
-        <Button leftIcon={<FiPlus />} colorScheme="blue" onClick={onCreateOpen}>
-          Nouvel adhérent
-        </Button>
-      </HStack>
-      {renderExistingContent('members')}
-    </Box>
-  );
+    return (
+      <Box>
+        <HStack mb={6} spacing={4}>
+          <InputGroup flex={1}>
+            <InputLeftElement><FiSearch /></InputLeftElement>
+            <Input
+              placeholder="Chercher par nom ou email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </InputGroup>
+          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} w="150px">
+            <option value="ALL">Tous</option>
+            <option value="ACTIVE">Actif</option>
+            <option value="PENDING">En attente</option>
+            <option value="EXPIRED">Expiré</option>
+          </Select>
+          <Button leftIcon={<FiPlus />} colorScheme="blue" onClick={onCreateOpen}>
+            Nouvel adhérent
+          </Button>
+        </HStack>
+        {renderExistingContent('members')}
+      </Box>
+    );
+  };
 
   const renderRolesTab = () => (
     <Box>

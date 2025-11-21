@@ -68,7 +68,7 @@ import {
   FiDownload,
   FiFileText
 } from "react-icons/fi";
-import PageLayout from "../components/Layout/PageLayout";
+import WorkspaceLayout from "../components/Layout/WorkspaceLayout";
 import { apiClient } from "../api/config";
 import { useUser } from "../context/UserContext";
 
@@ -272,32 +272,9 @@ const RetroDemandes = () => {
   const isMobile = useBreakpointValue({ base: true, md: false });
   const tableSize = isMobile ? "sm" : "md";
 
-  return (
-    <PageLayout
-      title="RétroDemandes"
-      breadcrumbs={[{ label: "RétroDemandes", href: "/dashboard/retro-demandes" }]}
-    >
-      <VStack align="stretch" spacing={6}>
-        {/* Header */}
-        <HStack justify="space-between" wrap="wrap">
-          <Box>
-            <Heading size="lg">📋 RétroDemandes</Heading>
-            <Text color="gray.500" fontSize="sm">
-              Gestion de vos demandes et suivi global
-            </Text>
-          </Box>
-          <Button
-            leftIcon={<FiPlus />}
-            colorScheme="blue"
-            onClick={handleNew}
-            size={isMobile ? "sm" : "md"}
-          >
-            Nouvelle demande
-          </Button>
-        </HStack>
-
-        {/* Tabs */}
-        <Card>
+  const renderRetroDemandesSection = () => (
+    <VStack align="stretch" spacing={6}>
+      <Card>
           <CardHeader pb={0}>
             <Tabs index={tabIndex} onChange={setTabIndex} variant="enclosed">
               <TabList>
@@ -555,10 +532,8 @@ const RetroDemandes = () => {
               </TabPanels>
             </Tabs>
           </CardHeader>
-        </Card>
-      </VStack>
+      </Card>
 
-      {/* Modal Création/Edition */}
       <Modal isOpen={isOpen} onClose={onClose} size={isMobile ? "full" : "2xl"}>
         <ModalOverlay />
         <ModalContent>
@@ -643,7 +618,6 @@ const RetroDemandes = () => {
         </ModalContent>
       </Modal>
 
-      {/* Modal Détails */}
       <Modal isOpen={isPreviewOpen} onClose={onPreviewClose} size="2xl">
         <ModalOverlay />
         <ModalContent>
@@ -696,7 +670,25 @@ const RetroDemandes = () => {
           </ModalBody>
         </ModalContent>
       </Modal>
-    </PageLayout>
+    </VStack>
+  );
+
+  return (
+    <WorkspaceLayout
+      title="RétroDemandes"
+      subtitle="Gestion de vos demandes et suivi global"
+      sections={[{ id: "requests", label: "Demandes", icon: FiFileText, render: renderRetroDemandesSection }]}
+      defaultSectionId="requests"
+      sidebarTitle="RétroDemandes"
+      sidebarSubtitle="Support & demandes"
+      sidebarTitleIcon={FiFileText}
+      versionLabel="RétroDemandes v2"
+      headerActions={[
+        <Button key="new" leftIcon={<FiPlus />} colorScheme="blue" onClick={handleNew} size={isMobile ? "sm" : "md"}>
+          Nouvelle demande
+        </Button>
+      ]}
+    />
   );
 };
 

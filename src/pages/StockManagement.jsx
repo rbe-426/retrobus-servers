@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
-  Heading,
   HStack,
   VStack,
   Button,
@@ -35,8 +34,6 @@ import {
   StatLabel,
   StatNumber,
   StatHelpText,
-  Flex,
-  Spacer,
   Text,
   useDisclosure,
   AlertDialog,
@@ -63,6 +60,7 @@ import {
   FiRefreshCw,
 } from 'react-icons/fi';
 import { api } from '../api';
+import WorkspaceLayout from '../components/Layout/WorkspaceLayout';
 
 const STOCK_CATEGORIES = {
   PIECES_DETACHEES: 'Pièces détachées',
@@ -142,6 +140,7 @@ export default function StockManagement() {
   const { isOpen: isStockModalOpen, onOpen: onStockModalOpen, onClose: onStockModalClose } = useDisclosure();
   const { isOpen: isMovementModalOpen, onOpen: onMovementModalOpen, onClose: onMovementModalClose } = useDisclosure();
   const { isOpen: isDeleteAlertOpen, onOpen: onDeleteAlertOpen, onClose: onDeleteAlertClose } = useDisclosure();
+  const cancelRef = useRef();
 
   // Charger les données
   useEffect(() => {
@@ -335,19 +334,8 @@ export default function StockManagement() {
     outOfStockCount: stats.outOfStockCount || 0,
   };
 
-  return (
-    <Box p={6}>
-      <Flex align="center" mb={6}>
-        <Heading size="lg" color="teal.600">
-          Gestion des Stocks
-        </Heading>
-        <Spacer />
-        <Button leftIcon={<FiPlus />} colorScheme="teal" onClick={handleCreateStock}>
-          Nouvel article
-        </Button>
-      </Flex>
-
-      {/* Statistiques */}
+  const renderInventorySection = () => (
+    <Box>
       <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4} mb={6}>
         <Card>
           <CardBody>
@@ -402,7 +390,6 @@ export default function StockManagement() {
         </Card>
       </SimpleGrid>
 
-      {/* Filtres */}
       <Card mb={6}>
         <CardBody>
           <HStack spacing={4} wrap="wrap">
@@ -446,7 +433,6 @@ export default function StockManagement() {
         </CardBody>
       </Card>
 
-      {/* Tableau des stocks */}
       <Card>
         <CardBody>
           <Table variant="simple">
@@ -543,7 +529,6 @@ export default function StockManagement() {
         </CardBody>
       </Card>
 
-      {/* Modal Création/Édition Stock */}
       <Modal isOpen={isStockModalOpen} onClose={onStockModalClose} size="xl">
         <ModalOverlay />
         <ModalContent>
@@ -698,7 +683,6 @@ export default function StockManagement() {
         </ModalContent>
       </Modal>
 
-      {/* Modal Mouvement de Stock */}
       <Modal isOpen={isMovementModalOpen} onClose={onMovementModalClose}>
         <ModalOverlay />
         <ModalContent>
@@ -765,11 +749,10 @@ export default function StockManagement() {
         </ModalContent>
       </Modal>
 
-      {/* AlertDialog Suppression */}
       <AlertDialog
         isOpen={isDeleteAlertOpen}
         onClose={onDeleteAlertClose}
-        leastDestructiveRef={React.useRef()}
+        leastDestructiveRef={cancelRef}
       >
         <AlertDialogOverlay>
           <AlertDialogContent>
@@ -779,7 +762,7 @@ export default function StockManagement() {
               Cette action est irréversible.
             </AlertDialogBody>
             <AlertDialogFooter>
-              <Button onClick={onDeleteAlertClose}>
+              <Button ref={cancelRef} onClick={onDeleteAlertClose}>
                 Annuler
               </Button>
               <Button colorScheme="red" onClick={handleDeleteStock} ml={3}>
@@ -790,5 +773,25 @@ export default function StockManagement() {
         </AlertDialogOverlay>
       </AlertDialog>
     </Box>
+  );
+
+  return (
+    <WorkspaceLayout
+      title="Gestion des stocks"
+      subtitle="Inventaire et matériel de l'association"
+      sections={[
+        { id: 'inventory', label: 'Inventaire', icon: FiPackage, render: renderInventorySection }
+      ]}
+      defaultSectionId="inventory"
+      sidebarTitle="Stocks"
+      sidebarSubtitle="Pilotage des ressources"
+      sidebarTitleIcon={FiPackage}
+      versionLabel="Stocks v2"
+      headerActions={[
+        <Button key="create" leftIcon={<FiPlus />} colorScheme="teal" onClick={handleCreateStock}>
+          Nouvel article
+        </Button>
+      ]}
+    />
   );
 }
