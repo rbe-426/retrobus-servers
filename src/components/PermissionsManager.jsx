@@ -8,6 +8,7 @@ import {
   Container,
   Grid,
   GridItem,
+  Tabs,
   Tab,
   TabList,
   TabPanels,
