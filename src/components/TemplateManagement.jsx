@@ -60,7 +60,7 @@ const TemplateManagement = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/quote-templates', {
+      const response = await fetch('/api/document-templates', {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
       if (!response.ok) throw new Error('Failed to load templates');
@@ -96,7 +96,7 @@ const TemplateManagement = () => {
         return;
       }
 
-      const response = await fetch('/api/quote-templates', {
+      const response = await fetch('/api/document-templates', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -157,7 +157,7 @@ const TemplateManagement = () => {
         ...(formData.logoBig && formData.logoBig.length < 500000 ? { logoBig: formData.logoBig } : {}),
       };
 
-      const response = await fetch(`/api/quote-templates/${selectedTemplate.id}`, {
+      const response = await fetch(`/api/document-templates/${selectedTemplate.id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -200,7 +200,7 @@ const TemplateManagement = () => {
         return;
       }
 
-      const response = await fetch(`/api/quote-templates/${templateId}`, {
+      const response = await fetch(`/api/document-templates/${templateId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -231,7 +231,7 @@ const TemplateManagement = () => {
         return;
       }
 
-      const response = await fetch(`/api/quote-templates/${template.id}/preview`, {
+      const response = await fetch(`/api/document-templates/${template.id}/preview`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
