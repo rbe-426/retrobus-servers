@@ -102,7 +102,7 @@ export default function App() {
         
         {/* 🔐 Gestion des permissions */}
         <Route path="/dashboard/permissions" element={<RoleProtectedRoute allowedRoles={['ADMIN']}><PermissionsManager /></RoleProtectedRoute>} />
-        <Route path="/dashboard/permissions-management" element={<RoleProtectedRoute allowedRoles={['ADMIN']}><PermissionsManagement /></RoleProtectedRoute>} />
+        <Route path="/dashboard/permissions-management" element={<ProtectedRoute><PermissionsManagement /></ProtectedRoute>} />
         
         {/* 📧 Communication */}
         <Route path="/dashboard/newsletter" element={<RoleProtectedRoute deniedRoles={['CLIENT', 'GUEST']}><Newsletter /></RoleProtectedRoute>} />
