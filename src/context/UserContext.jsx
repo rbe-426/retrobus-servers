@@ -104,6 +104,7 @@ export function UserProvider({ children }) {
       const candidates = apiCandidates();
       let ok = false;
       let lastStatus = null;
+      let data = null;
       for (const base of candidates) {
         try {
           const res = await fetch(`${base}/api/members/me`, {
@@ -111,7 +112,7 @@ export function UserProvider({ children }) {
           });
           lastStatus = res.status;
           if (res.ok) {
-            const data = await res.json();
+            data = await res.json();
             setMember(data);
             setMemberApiBase(base || null);
             ok = true;
