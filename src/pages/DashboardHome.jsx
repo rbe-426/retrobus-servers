@@ -20,6 +20,7 @@ import { useUser } from '../context/UserContext';
 import { vehiculesAPI } from '../api/vehicles';
 import { eventsAPI } from '../api/events';
 import { membersAPI } from '../api/members';
+import { apiClient } from '../api/config';
 
 const ANN_KEY = "rbe:announcements";
 
@@ -80,27 +81,19 @@ export default function DashboardHome() {
 
   const loadRetroActus = async () => {
     try {
-      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-      const candidates = [
-        `${API_BASE}/api/retro-news`,
-        `${API_BASE}/retro-news`,
-        '/data/retro-news.json'
-      ];
+      // Charger les actualités publiées depuis l'API RetroNews
+      const response = await apiClient.get('/api/retro-news');
+      const data = Array.isArray(response.data) ? response.data : [];
       
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url);
-          if (!res.ok) continue;
-          const data = await res.json();
-          setRetroActus(Array.isArray(data) ? data : []);
-          return;
-        } catch (e) {
-          console.warn(`Échec chargement depuis ${url}:`, e);
-        }
-      }
+      // Filtrer pour ne garder que les publiés et les trier (vedettes en premier)
+      const published = data
+        .filter(news => news.published)
+        .sort((a, b) => {
+          if (a.featured !== b.featured) return b.featured - a.featured;
+          return new Date(b.publishedAt) - new Date(a.publishedAt);
+        });
       
-      // Si aucune source n'a fonctionné
-      setRetroActus([]);
+      setRetroActus(published);
     } catch (error) {
       console.error('Erreur chargement RétroActus:', error);
       setRetroActus([]);

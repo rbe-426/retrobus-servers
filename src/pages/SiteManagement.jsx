@@ -19,7 +19,7 @@ import {
   FiEdit, FiTrash2, FiPlus, FiUsers, FiKey, FiEye, FiShield,
   FiUserCheck, FiUserX, FiLink, FiSearch, FiGlobe, FiLock,
   FiUnlock, FiRefreshCw, FiSettings, FiActivity, FiMail, FiBell,
-  FiChevronLeft, FiChevronRight, FiArrowUpRight
+  FiChevronLeft, FiChevronRight, FiArrowUpRight, FiShare
 } from 'react-icons/fi';
 import { apiClient } from '../api/config';
 import { API_BASE_URL } from '../api/config';
@@ -29,8 +29,8 @@ import EmailTemplateManager from '../components/EmailTemplateManager';
 import TemplateManagement from '../components/TemplateManagement';
 import {
   ENDPOINTS,
-  getUsersPath, getMembersPath, getSiteConfigPath, getChangelogPath,
-  getUsersOrigin, getMembersOrigin, getSiteConfigOrigin, getChangelogOrigin, getGlobalOrigin,
+  getUsersPath, getMembersPath, getSiteConfigPath,
+  getUsersOrigin, getMembersOrigin, getSiteConfigOrigin, getGlobalOrigin,
   clean, getApiPrefix, isAbsoluteUrl, ensureJsonResponse, buildCandidates
 } from '../api/endpoints';
 
@@ -1173,15 +1173,18 @@ function LinkMemberModal({ isOpen, onClose, user, members, onLinked }) {
 export default function SiteManagement() {
   const { user, roles } = useUser();
   const cardBg = useColorModeValue('white', 'gray.800');
-  const [changelogs, setChangelogs] = useState([]);
+  const [retroNews, setRetroNews] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedChangelog, setSelectedChangelog] = useState(null);
+  const [selectedRetroNews, setSelectedRetroNews] = useState(null);
   const [formData, setFormData] = useState({
     title: '',
-    version: '',
-    date: '',
-    entryType: 'update',
-    changes: [{ tag: 'update', text: '' }]
+    content: '',
+    excerpt: '',
+    imageUrl: '',
+    author: '',
+    published: false,
+    featured: false,
+    showOnExternal: false
   });
   // Nouveau: configuration HelloAsso (navbar externe)
   const [helloAssoLink, setHelloAssoLink] = useState(
@@ -1212,30 +1215,19 @@ export default function SiteManagement() {
   } = useDisclosure();
   const toast = useToast();
 
-  // Charger les changelogs avec gestion d'erreur améliorée
-  const fetchChangelogs = async () => {
+  // Charger les RetroNews avec gestion d'erreur améliorée
+  const fetchRetroNews = async () => {
     try {
       setLoading(true);
-      const response = await apiGet(
-        buildCandidates(ENDPOINTS.changelog, getChangelogPath(), '', getChangelogOrigin())
-      );
-      const data = response.data;
-      if (Array.isArray(data)) {
-        setChangelogs(data);
-      } else if (data && Array.isArray(data.entries)) {
-        setChangelogs(data.entries);
-      } else if (data && Array.isArray(data.items)) {
-        setChangelogs(data.items);
-      } else {
-        console.warn('Réponse inattendue de l\'API:', data);
-        setChangelogs([]);
-      }
+      const response = await apiClient.get('/api/retro-news/admin/all');
+      const data = Array.isArray(response.data) ? response.data : [];
+      setRetroNews(data);
     } catch (error) {
-      console.error('Erreur lors du chargement des changelogs:', error);
-      setChangelogs([]);
+      console.error('Erreur lors du chargement des RetroNews:', error);
+      setRetroNews([]);
       toast({
         title: 'Erreur',
-        description: `${error.message}${error.urlsTried ? ` • Testé: ${error.urlsTried.join(', ')}` : ''}`,
+        description: 'Impossible de charger les actualités',
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1246,7 +1238,7 @@ export default function SiteManagement() {
   };
 
   useEffect(() => {
-    fetchChangelogs();
+    fetchRetroNews();
   }, []);
 
   // --- Header config state & lifecycle ---
@@ -1390,12 +1382,15 @@ export default function SiteManagement() {
   const resetForm = () => {
     setFormData({
       title: '',
-      version: '',
-      date: new Date().toISOString().split('T')[0],
-      entryType: 'update',
-      changes: [{ tag: 'update', text: '' }]
+      content: '',
+      excerpt: '',
+      imageUrl: '',
+      author: '',
+      published: false,
+      featured: false,
+      showOnExternal: false
     });
-    setSelectedChangelog(null);
+    setSelectedRetroNews(null);
   };
 
   // Ouvrir le modal pour créer
@@ -1404,44 +1399,18 @@ export default function SiteManagement() {
     onOpen();
   };
 
-  // Ouvrir le modal pour éditer avec validation
-  const handleEdit = (changelog) => {
-    setSelectedChangelog(changelog);
-    
-    // S'assurer que changes est toujours un tableau
-    let changes = [{ tag: 'update', text: '' }];
-    if (changelog.changes) {
-      if (Array.isArray(changelog.changes)) {
-        if (changelog.changes.length > 0) {
-          // Supporte soit tableau d'objets, soit tableau de chaînes
-          changes = changelog.changes.map((c) => (
-            typeof c === 'string'
-              ? { tag: 'update', text: c.replace(/^([\p{Emoji_Presentation}\p{Extended_Pictographic}]\s*)/u, '').trim() }
-              : { tag: c.tag || 'update', text: c.text || '' }
-          ));
-        }
-      } else if (typeof changelog.changes === 'string') {
-        try {
-          const parsed = JSON.parse(changelog.changes);
-          changes = Array.isArray(parsed)
-            ? parsed.map((c) => (typeof c === 'string' ? { tag: 'update', text: c } : c))
-            : [{ tag: 'update', text: String(changelog.changes) }];
-        } catch (e) {
-          console.warn('Impossible de parser changes:', changelog.changes);
-          changes = [{ tag: 'update', text: changelog.changes }];
-        }
-      }
-    } else if (changelog.description && typeof changelog.description === 'string') {
-      // Découper la description multi-lignes en items
-      changes = changelog.description.split(/\n|\r\n/).map(line => ({ tag: 'update', text: line.replace(/^•\s*/, '') }));
-    }
-    
+  // Ouvrir le modal pour éditer
+  const handleEdit = (news) => {
+    setSelectedRetroNews(news);
     setFormData({
-      title: changelog.title || '',
-      version: changelog.version || '',
-      date: changelog.date ? changelog.date.split('T')[0] : new Date().toISOString().split('T')[0],
-      entryType: changelog.type || 'update',
-      changes
+      title: news.title || '',
+      content: news.content || '',
+      excerpt: news.excerpt || '',
+      imageUrl: news.imageUrl || '',
+      author: news.author || '',
+      published: !!news.published,
+      featured: !!news.featured,
+      showOnExternal: !!news.showOnExternal
     });
     onOpen();
   };
@@ -1492,14 +1461,14 @@ export default function SiteManagement() {
   ];
   const getEmojiForTag = (tag) => (TAGS.find(t => t.key === tag)?.emoji || '•');
 
-  // Sauvegarder le changelog
+  // Sauvegarder la RetroNews
   const handleSave = async () => {
     try {
       // Validation
-      if (!formData.title.trim() || !formData.version.trim()) {
+      if (!formData.title.trim() || !formData.content.trim()) {
         toast({
           title: 'Erreur de validation',
-          description: 'Le titre et la version sont requis',
+          description: 'Le titre et le contenu sont requis',
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -1507,72 +1476,46 @@ export default function SiteManagement() {
         return;
       }
 
-      // Préparer la description et la compatibilité
-      const normalizedChanges = (formData.changes || []).filter(c => c && String(c.text || '').trim() !== '');
-      const changesText = normalizedChanges.map(c => `${getEmojiForTag(c.tag)} ${c.text.trim()}`);
-      const description = changesText.join('\n');
-
       const payload = {
         title: formData.title.trim(),
-        version: formData.version.trim(),
-        date: formData.date,
-        type: formData.entryType || 'update',
-        // champs riches
-        changes: normalizedChanges,
-        // compatibilité externe
-        changesText,
-        description
+        content: formData.content.trim(),
+        excerpt: formData.excerpt ? formData.excerpt.trim() : null,
+        imageUrl: formData.imageUrl || null,
+        author: formData.author || user?.name || user?.email || 'Admin',
+        published: formData.published,
+        featured: formData.featured,
+        showOnExternal: formData.showOnExternal
       };
 
-      if (selectedChangelog) {
+      if (selectedRetroNews) {
         // Mise à jour
-        await apiPut(
-          buildCandidates(ENDPOINTS.changelog, getChangelogPath(), `${selectedChangelog.id}`, getChangelogOrigin()),
-          payload
-        );
+        await apiClient.put(`/api/retro-news/${selectedRetroNews.id}`, payload);
         toast({
           title: 'Succès',
-          description: 'Changelog mis à jour avec succès',
+          description: 'Actualité mise à jour avec succès',
           status: 'success',
           duration: 3000,
           isClosable: true,
         });
       } else {
         // Création
-        await apiPost(
-          buildCandidates(ENDPOINTS.changelog, getChangelogPath(), '', getChangelogOrigin()),
-          payload
-        );
+        await apiClient.post('/api/retro-news', payload);
         toast({
           title: 'Succès',
-          description: 'Changelog créé avec succès',
+          description: 'Actualité créée avec succès',
           status: 'success',
           duration: 3000,
           isClosable: true,
         });
       }
 
-      fetchChangelogs();
+      fetchRetroNews();
       onClose();
-
-      // Synchroniser la version du site dans la configuration publique
-      try {
-        if (formData.version?.trim()) {
-          await apiPut(
-            buildCandidates(ENDPOINTS.siteConfig, getSiteConfigPath(), '', getSiteConfigOrigin()),
-            { siteVersion: formData.version.trim() }
-          );
-          toast({ title: 'Version du site mise à jour', description: `v${formData.version.trim()}`, status: 'success', duration: 2500 });
-        }
-      } catch (e) {
-        console.warn('MàJ siteVersion échouée:', e);
-        toast({ title: 'Version non synchronisée', description: 'Impossible de mettre à jour la version du site.', status: 'warning', duration: 3500 });
-      }
     } catch (error) {
       console.error('Erreur lors de la sauvegarde:', error);
       toast({
         title: 'Erreur',
-        description: `${error.message}${error.urlsTried ? ` • Testé: ${error.urlsTried.join(', ')}` : ''}`,
+        description: error.response?.data?.error || error.message || 'Impossible de sauvegarder',
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1581,27 +1524,25 @@ export default function SiteManagement() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Êtes-vous sûr de vouloir supprimer ce changelog ?')) {
+    if (!window.confirm('Êtes-vous sûr de vouloir supprimer cette actualité ?')) {
       return;
     }
 
     try {
-      await apiDelete(
-        buildCandidates(ENDPOINTS.changelog, getChangelogPath(), `${id}`, getChangelogOrigin())
-      );
+      await apiClient.delete(`/api/retro-news/${id}`);
       toast({
         title: 'Succès',
-        description: 'Changelog supprimé avec succès',
+        description: 'Actualité supprimée avec succès',
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      fetchChangelogs();
+      fetchRetroNews();
     } catch (error) {
       console.error('Erreur lors de la suppression:', error);
       toast({
         title: 'Erreur',
-        description: `${error.message}${error.urlsTried ? ` • Testé: ${error.urlsTried.join(', ')}` : ''}`,
+        description: error.response?.data?.error || error.message || 'Impossible de supprimer',
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1637,7 +1578,7 @@ export default function SiteManagement() {
       <Center minH="400px">
         <VStack>
           <Spinner size="xl" color="var(--rbe-red)" />
-          <Text>Chargement des changelogs...</Text>
+          <Text>Chargement des actualités...</Text>
         </VStack>
       </Center>
     );
@@ -1666,68 +1607,73 @@ export default function SiteManagement() {
 
             <TabPanel>
               <Flex mb={6} align="center">
-                <Heading size="lg">📰 Gestion des RétroNews</Heading>
+                <Heading size="lg">📰 Créer des Actualités</Heading>
                 <Spacer />
                 <Button leftIcon={<FaPlus />} colorScheme="blue" onClick={handleCreate}>
-                  Nouvelle RétroNews
+                  Nouvelle actualité
                 </Button>
               </Flex>
 
+              <Alert status="info" mb={6}>
+                <AlertIcon />
+                <Box>
+                  <Text fontWeight="bold">ℹ️ Comment ça marche ?</Text>
+                  <Text fontSize="sm">Créez vos actualités ici. Elles s'afficheront ensuite dans la modale <strong>RétroActus</strong> sur le Dashboard pour être partagées.</Text>
+                </Box>
+              </Alert>
+
               <VStack spacing={4} align="stretch">
-                {changelogs.length === 0 ? (
+                {retroNews.length === 0 ? (
                   <Alert status="info">
                     <AlertIcon />
-                    Aucune RétroNews trouvée. Créez la première !
+                    Aucune actualité. Créez la première !
                   </Alert>
                 ) : (
-                  changelogs.map((changelog) => (
-                    <Card key={changelog.id}>
-                      <CardHeader>
-                        <Flex align="center">
-                          <VStack align="start" spacing={1}>
-                            <Heading size="md">{changelog.title}</Heading>
-                            <HStack>
-                              <Badge colorScheme="blue">v{changelog.version}</Badge>
-                              <Text fontSize="sm" color="gray.600">
-                                {changelog.date
-                                  ? new Date(changelog.date).toLocaleDateString('fr-FR')
-                                  : 'Date inconnue'}
-                              </Text>
+                  retroNews.map((news) => (
+                    <Card key={news.id} variant="outline">
+                      <CardHeader pb={2}>
+                        <Flex align="start" justify="space-between">
+                          <VStack align="start" spacing={1} flex={1}>
+                            <Heading size="sm">{news.title}</Heading>
+                            <HStack spacing={2} fontSize="xs">
+                              {news.published ? (
+                                <Badge colorScheme="green">✅ Publié</Badge>
+                              ) : (
+                                <Badge colorScheme="gray">📝 Brouillon</Badge>
+                              )}
+                              {news.featured && <Badge colorScheme="purple">⭐ Vedette</Badge>}
+                              {news.showOnExternal && <Badge colorScheme="blue">🌐 Externe</Badge>}
                             </HStack>
                           </VStack>
-                          <Spacer />
-                          <HStack>
+                          <HStack spacing={1}>
                             <IconButton
                               icon={<FaEdit />}
                               size="sm"
                               colorScheme="blue"
-                              variant="ghost"
-                              onClick={() => handleEdit(changelog)}
+                              variant="outline"
+                              onClick={() => handleEdit(news)}
                               aria-label="Modifier"
                             />
                             <IconButton
                               icon={<FaTrash />}
                               size="sm"
                               colorScheme="red"
-                              variant="ghost"
-                              onClick={() => handleDelete(changelog.id)}
+                              variant="outline"
+                              onClick={() => handleDelete(news.id)}
                               aria-label="Supprimer"
                             />
                           </HStack>
                         </Flex>
                       </CardHeader>
                       <CardBody pt={0}>
-                        <VStack align="start" spacing={2}>
-                          {Array.isArray(changelog.changes) && changelog.changes.length > 0 ? (
-                            changelog.changes.map((c, i) => (
-                              <Text key={i} fontSize="sm">
-                                {typeof c === 'string' ? c : `${getEmojiForTag(c.tag)} ${c.text}`}
-                              </Text>
-                            ))
-                          ) : (
-                            renderChanges(changelog.changesText || changelog.description || [])
-                          )}
-                        </VStack>
+                        {news.excerpt && (
+                          <Text fontSize="sm" color="gray.600" mb={2}>
+                            <strong>Résumé:</strong> {news.excerpt}
+                          </Text>
+                        )}
+                        <Text fontSize="sm" noOfLines={2} color="gray.700">
+                          {news.content}
+                        </Text>
                       </CardBody>
                     </Card>
                   ))
@@ -1963,11 +1909,11 @@ export default function SiteManagement() {
           </ModalContent>
         </Modal>
 
-        {/* Modal de création/édition de Changelog */}
+        {/* Modal de création/édition de RetroNews */}
         <Modal isOpen={isOpen} onClose={onClose} size="lg">
           <ModalOverlay />
           <ModalContent>
-            <ModalHeader>{selectedChangelog ? '✏️ Modifier un changelog' : '🆕 Nouveau changelog'}</ModalHeader>
+            <ModalHeader>{selectedRetroNews ? '✏️ Modifier l\'actualité' : '🆕 Nouvelle actualité'}</ModalHeader>
             <ModalCloseButton />
             <ModalBody>
               <VStack spacing={4} align="stretch">
@@ -1976,81 +1922,79 @@ export default function SiteManagement() {
                   <Input
                     value={formData.title}
                     onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder="Ex: Améliorations sur la page d'accueil"
+                    placeholder="Titre de l'actualité"
                   />
                 </FormControl>
 
-                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                  <FormControl isRequired>
-                    <FormLabel>Version</FormLabel>
-                    <Input
-                      value={formData.version}
-                      onChange={(e) => setFormData(prev => ({ ...prev, version: e.target.value }))}
-                      placeholder="Ex: 1.3.0"
-                    />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel>Date</FormLabel>
-                    <Input
-                      type="date"
-                      value={formData.date}
-                      onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
-                    />
-                  </FormControl>
-                </SimpleGrid>
-
-                <FormControl>
-                  <FormLabel>Type de publication</FormLabel>
-                  <Select
-                    value={formData.entryType}
-                    onChange={(e) => setFormData(prev => ({ ...prev, entryType: e.target.value }))}
-                  >
-                    <option value="feature">Fonctionnalité ✨</option>
-                    <option value="fix">Correction 🐛</option>
-                    <option value="update">Mise à jour 🔄</option>
-                    <option value="security">Sécurité 🔒</option>
-                  </Select>
+                <FormControl isRequired>
+                  <FormLabel>Contenu</FormLabel>
+                  <Textarea
+                    value={formData.content}
+                    onChange={(e) => setFormData(prev => ({ ...prev, content: e.target.value }))}
+                    placeholder="Contenu détaillé..."
+                    minH="150px"
+                  />
                 </FormControl>
 
-                <VStack align="stretch" spacing={2}>
-                  <FormLabel>Changements</FormLabel>
-                  {formData.changes.map((change, idx) => (
-                    <HStack key={idx} align="start">
-                      <Select
-                        maxW="180px"
-                        value={change.tag}
-                        onChange={(e) => updateChangeTag(idx, e.target.value)}
-                      >
-                        {TAGS.map(t => (
-                          <option key={t.key} value={t.key}>{t.emoji} {t.label}</option>
-                        ))}
-                      </Select>
-                      <Input
-                        value={change.text}
-                        onChange={(e) => updateChange(idx, e.target.value)}
-                        placeholder={`• Entrée ${idx + 1}`}
-                      />
-                      <IconButton
-                        aria-label="Supprimer"
-                        icon={<FiTrash2 />}
-                        size="sm"
-                        colorScheme="red"
-                        variant="outline"
-                        onClick={() => removeChange(idx)}
-                      />
-                    </HStack>
-                  ))}
-                  <Button leftIcon={<FiPlus />} onClick={addChange} size="sm" alignSelf="flex-start">
-                    Ajouter une ligne
-                  </Button>
+                <FormControl>
+                  <FormLabel>Résumé court (pour affichage liste)</FormLabel>
+                  <Textarea
+                    value={formData.excerpt}
+                    onChange={(e) => setFormData(prev => ({ ...prev, excerpt: e.target.value }))}
+                    placeholder="Courte description"
+                    minH="60px"
+                  />
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>Auteur</FormLabel>
+                  <Input
+                    value={formData.author}
+                    onChange={(e) => setFormData(prev => ({ ...prev, author: e.target.value }))}
+                    placeholder="Nom de l'auteur"
+                  />
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>URL image (optionnel)</FormLabel>
+                  <Input
+                    value={formData.imageUrl}
+                    onChange={(e) => setFormData(prev => ({ ...prev, imageUrl: e.target.value }))}
+                    placeholder="https://..."
+                    type="url"
+                  />
+                </FormControl>
+
+                <VStack align="stretch" spacing={3} borderTop="1px solid" borderColor="gray.200" pt={4}>
+                  <FormControl display="flex" alignItems="center">
+                    <FormLabel mb="0" flex={1}>Publier</FormLabel>
+                    <Switch
+                      isChecked={formData.published}
+                      onChange={(e) => setFormData(prev => ({ ...prev, published: e.target.checked }))}
+                    />
+                  </FormControl>
+
+                  <FormControl display="flex" alignItems="center">
+                    <FormLabel mb="0" flex={1}>Vedette (priorité d'affichage)</FormLabel>
+                    <Switch
+                      isChecked={formData.featured}
+                      onChange={(e) => setFormData(prev => ({ ...prev, featured: e.target.checked }))}
+                    />
+                  </FormControl>
+
+                  <FormControl display="flex" alignItems="center">
+                    <FormLabel mb="0" flex={1}>Afficher sur site externe</FormLabel>
+                    <Switch
+                      isChecked={formData.showOnExternal}
+                      onChange={(e) => setFormData(prev => ({ ...prev, showOnExternal: e.target.checked }))}
+                    />
+                  </FormControl>
                 </VStack>
               </VStack>
             </ModalBody>
             <ModalFooter>
               <Button variant="ghost" mr={3} onClick={onClose}>Annuler</Button>
-              <Button colorScheme="blue" onClick={handleSave}>
-                {selectedChangelog ? 'Enregistrer' : 'Créer'}
-              </Button>
+              <Button colorScheme="blue" onClick={handleSave}>Enregistrer</Button>
             </ModalFooter>
           </ModalContent>
         </Modal>
