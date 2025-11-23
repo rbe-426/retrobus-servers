@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import {
   FiDollarSign,
   FiTrendingUp,
@@ -17,12 +17,20 @@ import FinanceQuotes from "../components/Finance/Quotes";
 import FinanceInvoicing from "../components/Finance/Invoicing";
 import FinanceReports from "../components/Finance/Reports";
 import FinanceSettings from "../components/Finance/Settings";
+import { useFinanceData } from "../hooks/useFinanceData";
 
 /**
  * FinanceNew - Nouvelle page Finance avec sidebar navigation
  * Architecture modulaire pour meilleure organisation
  */
 const FinanceNew = () => {
+  // Charger les données Finance une fois au mount
+  const { loadFinanceData } = useFinanceData();
+
+  useEffect(() => {
+    loadFinanceData();
+  }, [loadFinanceData]);
+
   const sections = [
     { id: "dashboard", label: "Tableau de bord", icon: FiBarChart, render: () => <FinanceDashboard /> },
     { id: "transactions", label: "Transactions", icon: FiCreditCard, render: () => <FinanceTransactions /> },
