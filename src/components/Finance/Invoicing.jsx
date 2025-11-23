@@ -173,10 +173,24 @@ const FinanceInvoicing = () => {
 
     setIsAdding(true);
     try {
+      // Si un fichier PDF est sélectionné, convertir en base64
+      let documentUrl = undefined;
+      if (pdfFile) {
+        const reader = new FileReader();
+        documentUrl = await new Promise((resolve, reject) => {
+          reader.onload = () => {
+            resolve(reader.result); // data:application/pdf;base64,...
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(pdfFile);
+        });
+      }
+
       // Si on édite un document existant, ajouter l'ID
       const dataToSave = {
         ...docForm,
-        ...(editingDocument && { id: editingDocument.id })
+        ...(editingDocument && { id: editingDocument.id }),
+        ...(documentUrl && { documentUrl })
       };
       await addDocument(dataToSave);
       toast({
@@ -207,6 +221,7 @@ const FinanceInvoicing = () => {
         paymentDate: "",
         amountPaid: ""
       });
+      setPdfFile(null);
       setEditingDocument(null);
       onClose();
     } catch (error) {
