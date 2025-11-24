@@ -1024,6 +1024,43 @@ const FinanceInvoicing = () => {
                 </Box>
               )}
 
+              {/* Génération du document depuis template */}
+              <Box bg="blue.50" p={3} borderRadius="md" borderLeft="4px solid" borderColor="blue.500">
+                <VStack spacing={3} align="stretch">
+                  <FormLabel fontSize="sm" fontWeight="bold">📄 Génération de Document</FormLabel>
+                  <FormControl>
+                    <FormLabel fontSize="xs">Template HTML</FormLabel>
+                    <Select
+                      size="sm"
+                      value={selectedTemplate?.id || ""}
+                      onChange={(e) => {
+                        const template = templates.find(t => t.id === e.target.value);
+                        setSelectedTemplate(template || null);
+                      }}
+                    >
+                      <option value="">-- Sélectionner un template --</option>
+                      {templates.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  {selectedTemplate && (
+                    <Button 
+                      colorScheme="orange" 
+                      size="sm"
+                      onClick={generateFromTemplate}
+                      leftIcon={<FiDownload />}
+                      width="100%"
+                    >
+                      🔍 Générer l'aperçu & PDF
+                    </Button>
+                  )}
+                  <Text fontSize="xs" color="gray.500">
+                    💡 Remplissez tous les champs du formulaire (Numéro, Titre, Montant, Destinataire) avant de générer
+                  </Text>
+                </VStack>
+              </Box>
+
               {/* Informations destinataire */}
               <Box bg="orange.50" p={3} borderRadius="md" borderLeft="4px solid" borderColor="orange.500">
                 <VStack spacing={2} align="stretch">
