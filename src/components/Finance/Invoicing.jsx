@@ -1024,43 +1024,6 @@ const FinanceInvoicing = () => {
                 </Box>
               )}
 
-              {/* Génération du document depuis template */}
-              <Box bg="blue.50" p={3} borderRadius="md" borderLeft="4px solid" borderColor="blue.500">
-                <VStack spacing={3} align="stretch">
-                  <FormLabel fontSize="sm" fontWeight="bold">📄 Génération de Document</FormLabel>
-                  <FormControl>
-                    <FormLabel fontSize="xs">Template HTML</FormLabel>
-                    <Select
-                      size="sm"
-                      value={selectedTemplate?.id || ""}
-                      onChange={(e) => {
-                        const template = templates.find(t => t.id === e.target.value);
-                        setSelectedTemplate(template || null);
-                      }}
-                    >
-                      <option value="">-- Sélectionner un template --</option>
-                      {templates.map(t => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  {selectedTemplate && (
-                    <Button 
-                      colorScheme="orange" 
-                      size="sm"
-                      onClick={generateFromTemplate}
-                      leftIcon={<FiDownload />}
-                      width="100%"
-                    >
-                      🔍 Générer l'aperçu & PDF
-                    </Button>
-                  )}
-                  <Text fontSize="xs" color="gray.500">
-                    💡 Remplissez tous les champs du formulaire (Numéro, Titre, Montant, Destinataire) avant de générer
-                  </Text>
-                </VStack>
-              </Box>
-
               {/* Informations destinataire */}
               <Box bg="orange.50" p={3} borderRadius="md" borderLeft="4px solid" borderColor="orange.500">
                 <VStack spacing={2} align="stretch">
@@ -1104,7 +1067,7 @@ const FinanceInvoicing = () => {
                 </VStack>
               </Box>
 
-              {/* Notes et liaisons */}
+              {/* Notes internes */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="bold">📝 Notes internes</FormLabel>
                 <Textarea
@@ -1116,6 +1079,68 @@ const FinanceInvoicing = () => {
                 />
               </FormControl>
 
+              {/* ========== GÉNÉRATION & IMPORT (FIN DU FORMULAIRE) ========== */}
+              <Divider />
+              <Heading size="sm">📄 Génération & Import du Document</Heading>
+
+              {/* Génération depuis template */}
+              <Box bg="blue.50" p={3} borderRadius="md" borderLeft="4px solid" borderColor="blue.500">
+                <VStack spacing={3} align="stretch">
+                  <FormLabel fontSize="sm" fontWeight="bold">🔨 Générer depuis un Template</FormLabel>
+                  <FormControl>
+                    <FormLabel fontSize="xs">Template HTML</FormLabel>
+                    <Select
+                      size="sm"
+                      value={selectedTemplate?.id || ""}
+                      onChange={(e) => {
+                        const template = templates.find(t => t.id === e.target.value);
+                        setSelectedTemplate(template || null);
+                      }}
+                    >
+                      <option value="">-- Sélectionner un template --</option>
+                      {templates.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  {selectedTemplate && (
+                    <Button 
+                      colorScheme="orange" 
+                      size="sm"
+                      onClick={generateFromTemplate}
+                      leftIcon={<FiDownload />}
+                      width="100%"
+                    >
+                      🔍 Générer l'aperçu & PDF
+                    </Button>
+                  )}
+                  <Text fontSize="xs" color="gray.500">
+                    💡 Remplissez tous les champs ci-dessus (Destinataire, Montant, etc.) avant de générer
+                  </Text>
+                </VStack>
+              </Box>
+
+              {/* Import PDF */}
+              <Box bg="green.50" p={3} borderRadius="md" borderLeft="4px solid" borderColor="green.500">
+                <VStack spacing={3} align="stretch">
+                  <FormLabel fontSize="sm" fontWeight="bold">📥 Importer un PDF</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="file"
+                      accept=".pdf"
+                      size="sm"
+                      onChange={handlePdfUpload}
+                    />
+                  </FormControl>
+                  {pdfFile && (
+                    <Text fontSize="xs" color="green.600">
+                      ✅ {pdfFile.name} sélectionné
+                    </Text>
+                  )}
+                </VStack>
+              </Box>
+
+              {/* Liaisons optionnelles */}
               <HStack spacing={3}>
                 <FormControl>
                   <FormLabel fontSize="sm">ID Événement (optionnel)</FormLabel>
