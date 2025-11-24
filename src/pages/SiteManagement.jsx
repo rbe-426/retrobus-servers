@@ -906,7 +906,7 @@ const SiteManagement = () => {
   return (
     <WorkspaceLayout
       title="Gestion du Site Web"
-      subtitle="Accès, actualités, templates et configuration"
+      subtitle="Accès, permissions, actualités, templates et configuration"
       sections={sections}
       defaultSectionId="access"
       sidebarTitle="Site Web"
