@@ -114,16 +114,6 @@ const cards = [
     cardAccess: true
   },
   {
-    title: "Gestion des Autorisations",
-    description: "Rôles et permissions des utilisateurs",
-    to: "/dashboard/permissions-management",
-    icon: FiShield,
-    color: "red",
-    requiredRole: ['ADMIN', 'MANAGER', 'OPERATOR'],
-    resource: "PERMISSIONS_MANAGEMENT",
-    cardAccess: true
-  },
-  {
     title: "RétroSupport",
     description: "Tickets: incidents, bugs et améliorations",
     to: "/dashboard/support",
