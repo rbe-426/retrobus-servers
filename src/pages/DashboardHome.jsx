@@ -10,7 +10,7 @@ import { Link as RouterLink } from "react-router-dom";
 import { 
   FiActivity, FiBell, FiCalendar, FiClock, FiCpu, 
   FiDollarSign, FiExternalLink, FiEye, FiFileText, FiGitBranch, 
-  FiHeart, FiHome, FiMapPin, FiPlus, FiRefreshCw, FiSettings, 
+  FiHeart, FiMapPin, FiPlus, FiRefreshCw, FiSettings, 
   FiTrendingUp, FiTruck, FiUser, FiUsers, FiZap, FiBarChart,
   FiChevronLeft, FiChevronRight, FiShare2, FiMail
 } from "react-icons/fi";
@@ -595,16 +595,6 @@ export default function DashboardHome() {
               </CardHeader>
               <CardBody>
                 <VStack spacing={3} align="stretch">
-                  <Button
-                    as={RouterLink}
-                    to="/dashboard/myrbe"
-                    variant="ghost"
-                    justifyContent="flex-start"
-                    leftIcon={<FiHome />}
-                    size="sm"
-                  >
-                    MyRBE
-                  </Button>
                   <Button
                     as={RouterLink}
                     to="/dashboard/vehicules"
