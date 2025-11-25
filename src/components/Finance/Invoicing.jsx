@@ -197,6 +197,39 @@ const FinanceInvoicing = () => {
         ...(documentUrl && { documentUrl })
       };
       await addDocument(dataToSave);
+      
+      // Générer automatiquement le PDF si htmlContent existe et qu'on n'a pas d'URL PDF déjà
+      if (docForm.htmlContent && !documentUrl) {
+        try {
+          console.log("📄 Génération automatique du PDF après création du document...");
+          
+          // Récupérer l'ID du document créé (depuis la liste mise à jour)
+          const newDoc = documents[0]; // Le document créé devrait être le premier de la liste
+          if (newDoc) {
+            const token = localStorage.getItem("token");
+            const generateResponse = await fetch(
+              (import.meta.env.VITE_API_URL || "http://localhost:4000") + `/api/finance/documents/${newDoc.id}/generate-pdf`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ htmlContent: docForm.htmlContent })
+              }
+            );
+            
+            if (generateResponse.ok) {
+              console.log("✅ PDF généré automatiquement!");
+            } else {
+              console.warn("⚠️ Génération automatique du PDF échouée");
+            }
+          }
+        } catch (error) {
+          console.warn("⚠️ Erreur génération auto PDF:", error.message);
+        }
+      }
+      
       toast({
         title: "Succès",
         description: editingDocument ? "Document modifié" : "Document créé",
