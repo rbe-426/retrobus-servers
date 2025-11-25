@@ -208,11 +208,55 @@ const FinanceInvoicing = () => {
         docId = result.id || result?.document?.id;
       }
       
-      // Générer automatiquement le PDF si htmlContent existe et qu'on n'a pas d'URL PDF déjà
-      if (docForm.htmlContent && !documentUrl && docId) {
+      console.log(`📝 Document ID récupéré: ${docId}`);
+      
+      // Générer automatiquement le PDF si on a un template ET un docId
+      if (selectedTemplate?.htmlContent && docId && !editingDocument) {
         try {
           console.log("📄 Génération automatique du PDF après création du document...");
           console.log(`📝 Document ID: ${docId}`);
+          console.log(`🎨 Template sélectionné: ${selectedTemplate.name}`);
+          
+          // Générer le HTML en remplaçant les placeholders
+          const devisLines = [];
+          let devisLinesTr = "";
+          if (Array.isArray(devisLines) && devisLines.length > 0) {
+            devisLinesTr = devisLines.map(line => `
+              <tr>
+                <td>${line.description || ""}</td>
+                <td class="qte">${line.quantity || 1}</td>
+                <td class="pu">${parseFloat(line.unitPrice || 0).toFixed(2)}</td>
+                <td class="total">${(parseFloat(line.quantity || 1) * parseFloat(line.unitPrice || 0)).toFixed(2)}</td>
+              </tr>
+            `).join("");
+          }
+          
+          const previewData = {
+            NUM_DEVIS: docForm.number || "N/A",
+            TITRE: docForm.title || "Document",
+            DESCRIPTION: docForm.description || "",
+            MONTANT: parseFloat(docForm.amount || 0).toFixed(2),
+            PRIX_NET: parseFloat(docForm.amount || 0).toFixed(2),
+            DATE: new Date(docForm.date).toLocaleDateString("fr-FR"),
+            DESTINATAIRE_NOM: docForm.destinataireName || "Destinataire",
+            DESTINATAIRE_ADRESSE: docForm.destinataireAdresse || "",
+            DESTINATAIRE_SOCIETE: docForm.destinataireSociete || "",
+            DESTINATAIRE_CONTACTS: docForm.destinataireContacts || "",
+            NOTES: docForm.notes || "",
+            LOGO_BIG: selectedTemplate.logoBig || "",
+            LOGO_SMALL: selectedTemplate.logoSmall || "",
+            DEVIS_LINES_TR: devisLinesTr
+          };
+
+          // Générer l'HTML en remplaçant les placeholders
+          let generatedHtml = selectedTemplate.htmlContent;
+          Object.entries(previewData).forEach(([key, value]) => {
+            const placeholder = new RegExp(`{{${key}}}`, "g");
+            generatedHtml = generatedHtml.replace(placeholder, String(value || ""));
+          });
+
+          console.log("📄 Envoi au serveur pour génération PDF avec Puppeteer...");
+          console.log(`📏 Taille HTML: ${(generatedHtml.length / 1024).toFixed(2)} KB`);
           
           const token = localStorage.getItem("token");
           const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, '');
@@ -226,7 +270,7 @@ const FinanceInvoicing = () => {
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`
             },
-            body: JSON.stringify({ htmlContent: docForm.htmlContent })
+            body: JSON.stringify({ htmlContent: generatedHtml })
           });
           
           console.log(`📊 Réponse status: ${generateResponse.status}`);
@@ -265,8 +309,11 @@ const FinanceInvoicing = () => {
         if (!docId) {
           console.warn("⚠️ Impossible de récupérer l'ID du document créé");
         }
-        if (documentUrl) {
-          console.log("ℹ️ Document a déjà un PDF, pas de génération");
+        if (!selectedTemplate?.htmlContent) {
+          console.log("ℹ️ Pas de template HTML sélectionné, pas de génération auto");
+        }
+        if (editingDocument) {
+          console.log("ℹ️ Édition d'un document existant, pas de génération auto");
         }
       }
       
