@@ -470,8 +470,14 @@ const FinanceInvoicing = () => {
     if (doc.documentUrl) {
       console.log(`📄 Ouverture du PDF pour: ${doc.number}`);
       try {
-        // Utiliser downloadPDF pour convertir la data URI en blob URL valide
-        downloadPDF(doc.documentUrl, `${doc.type === 'QUOTE' ? 'Devis' : 'Facture'}_${doc.number}.pdf`);
+        // Vérifier que documentUrl est une valide data URI
+        if (typeof doc.documentUrl === 'string' && doc.documentUrl.startsWith('data:application/pdf')) {
+          downloadPDF(doc.documentUrl, `${doc.type === 'QUOTE' ? 'Devis' : 'Facture'}_${doc.number}.pdf`);
+        } else {
+          // Si documentUrl n'est pas valide, régénérer le PDF
+          console.warn("⚠️ DocumentUrl invalide, régénération...");
+          await regeneratePDF(doc);
+        }
       } catch (error) {
         console.error("❌ Erreur ouverture PDF:", error);
         toast({
@@ -493,6 +499,11 @@ const FinanceInvoicing = () => {
       return;
     }
 
+    await regeneratePDF(doc);
+  };
+
+  // Helper pour régénérer le PDF
+  const regeneratePDF = async (doc) => {
     try {
       toast({
         title: "Génération en cours...",
@@ -501,17 +512,21 @@ const FinanceInvoicing = () => {
       });
 
       const token = localStorage.getItem("token");
-      const generateResponse = await fetch(
-        (import.meta.env.VITE_API_URL || "http://localhost:4000") + `/api/finance/documents/${doc.id}/generate-pdf`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({ htmlContent: doc.htmlContent })
-        }
-      );
+      const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, '');
+      const endpoint = `${apiUrl}/api/finance/documents/${doc.id}/generate-pdf`;
+      
+      console.log(`🔗 POST ${endpoint}`);
+
+      const generateResponse = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ htmlContent: doc.htmlContent })
+      });
+
+      console.log(`📊 Réponse status: ${generateResponse.status}`);
 
       if (!generateResponse.ok) {
         const error = await generateResponse.json();
@@ -519,22 +534,26 @@ const FinanceInvoicing = () => {
       }
 
       const generateResult = await generateResponse.json();
+      console.log("📋 Réponse serveur:", generateResult);
+      
       const pdfDataUri = generateResult.pdfDataUri;
 
       if (!pdfDataUri) {
         throw new Error("Impossible de générer le PDF - résultat vide du serveur");
       }
 
-      // Télécharger le PDF au lieu de l'ouvrir (évite les erreurs de sécurité)
-      downloadPDF(pdfDataUri, `${doc.type === 'QUOTE' ? 'Devis' : 'Facture'}_${doc.number}.pdf`);
+      console.log(`✅ PDF reçu du serveur: ${pdfDataUri.length} caractères`);
+
+      // Afficher le PDF
+      downloadPDF(pdfDataUri, generateResult.filename);
 
       toast({
         title: "Succès",
-        description: "PDF téléchargé!",
+        description: "PDF généré!",
         status: "success"
       });
     } catch (error) {
-      console.error("❌ Erreur visualisation PDF:", error);
+      console.error("❌ Erreur génération PDF:", error);
       toast({
         title: "Erreur",
         description: "Impossible de générer le PDF: " + error.message,
