@@ -346,9 +346,9 @@ const FinanceInvoicing = () => {
 
   // Visualiser le PDF via Puppeteer (génération côté serveur)
   const handleViewPDF = async (doc) => {
-    // Si le PDF est déjà généré, l'ouvrir directement
+    // Si le PDF est déjà généré, le télécharger
     if (doc.documentUrl) {
-      window.open(doc.documentUrl, "_blank");
+      downloadPDF(doc.documentUrl, `${doc.type === 'QUOTE' ? 'Devis' : 'Facture'}_${doc.number}.pdf`);
       return;
     }
 
@@ -394,12 +394,12 @@ const FinanceInvoicing = () => {
         throw new Error("Impossible de générer le PDF - résultat vide du serveur");
       }
 
-      // Ouvrir le PDF dans la visionneuse native du navigateur
-      window.open(pdfDataUri, "_blank");
+      // Télécharger le PDF au lieu de l'ouvrir (évite les erreurs de sécurité)
+      downloadPDF(pdfDataUri, `${doc.type === 'QUOTE' ? 'Devis' : 'Facture'}_${doc.number}.pdf`);
 
       toast({
         title: "Succès",
-        description: "PDF affiché dans la visionneuse!",
+        description: "PDF téléchargé!",
         status: "success"
       });
     } catch (error) {
@@ -410,6 +410,16 @@ const FinanceInvoicing = () => {
         status: "error"
       });
     }
+  };
+
+  // Helper pour télécharger un PDF à partir d'une data URI
+  const downloadPDF = (dataUri, filename) => {
+    const link = document.createElement('a');
+    link.href = dataUri;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Générer un document depuis un template HTML
@@ -545,15 +555,12 @@ const FinanceInvoicing = () => {
 
       console.log("✅ PDF généré avec succès par Puppeteer!");
 
-      // Ouvrir le PDF dans la visionneuse native du navigateur
-      const pdfWindow = window.open(pdfDataUri, "_blank");
-      if (!pdfWindow) {
-        throw new Error("Impossible d'ouvrir la fenêtre PDF - vérifiez les bloqueurs de popup");
-      }
+      // Télécharger le PDF au lieu de l'ouvrir (évite les erreurs de sécurité)
+      downloadPDF(pdfDataUri, `${docForm.type === 'QUOTE' ? 'Devis' : 'Facture'}_${docForm.number}.pdf`);
 
       toast({
         title: "Succès",
-        description: "PDF généré par serveur ! Aperçu et téléchargement disponibles.",
+        description: "PDF généré et téléchargé!",
         status: "success"
       });
     } catch (error) {
