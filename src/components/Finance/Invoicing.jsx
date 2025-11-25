@@ -414,12 +414,39 @@ const FinanceInvoicing = () => {
 
   // Helper pour télécharger un PDF à partir d'une data URI
   const downloadPDF = (dataUri, filename) => {
-    const link = document.createElement('a');
-    link.href = dataUri;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      // Convertir la data URI en blob pour éviter les problèmes avec les gros fichiers
+      const byteCharacters = atob(dataUri.split(',')[1]); // Récupérer la partie base64
+      const byteNumbers = new Array(byteCharacters.length);
+      
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'application/pdf' });
+      
+      // Créer une URL blob et déclencher le téléchargement
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Libérer la mémoire
+      URL.revokeObjectURL(blobUrl);
+      
+      console.log(`✅ PDF téléchargé: ${filename}`);
+    } catch (error) {
+      console.error('❌ Erreur téléchargement PDF:', error);
+      toast({
+        title: "Erreur",
+        description: "Impossible de télécharger le PDF. Réessayez.",
+        status: "error"
+      });
+    }
   };
 
   // Générer un document depuis un template HTML
