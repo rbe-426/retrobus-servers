@@ -591,10 +591,19 @@ export const useFinanceData = (currentUser = null) => {
         if (!res.ok) throw new Error("Erreur mise à jour statut");
 
         const updatedDoc = await res.json();
+        
+        // 🔄 Message spécial si transaction auto-créée
+        let description = "Statut mis à jour";
+        if (updatedDoc.transactionCreated) {
+          description = `✅ Statut mis à jour + Transaction créée (${updatedDoc.transactionAmount}€)`;
+        } else if (updatedDoc.transactionError) {
+          description = `⚠️ Statut mis à jour, mais erreur transaction: ${updatedDoc.transactionError}`;
+        }
+        
         toast({
           title: "Succès",
-          description: "Statut mis à jour",
-          status: "success"
+          description,
+          status: updatedDoc.transactionError ? "warning" : "success"
         });
         // Recharger les données pour synchroniser
         await loadFinanceData();
