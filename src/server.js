@@ -62,7 +62,12 @@ const state = {
   stocks: [
     { id: 's1', name: 'Pièce moteur', quantity: 5, category: 'motor', location: 'A1', unitPrice: 150 },
     { id: 's2', name: 'Batterie', quantity: 3, category: 'electric', location: 'A2', unitPrice: 200 }
-  ]
+  ],
+  newsletter: {
+    subscribers: [
+      { id: 'ns1', email: 'w.belaidi@example.com', status: 'subscribed', subscribedAt: new Date().toISOString() }
+    ]
+  }
 };
 
 // Helpers
@@ -789,6 +794,51 @@ app.put('/api/stocks/:id', requireAuth, (req, res) => {
 
 app.delete('/api/stocks/:id', requireAuth, (req, res) => {
   state.stocks = state.stocks.filter(s => s.id !== req.params.id);
+  res.json({ ok: true });
+});
+
+// NEWSLETTER
+app.get('/newsletter', (req, res) => {
+  res.json({ subscribers: state.newsletter.subscribers });
+});
+
+app.get('/api/newsletter', (req, res) => {
+  res.json({ subscribers: state.newsletter.subscribers });
+});
+
+app.post('/newsletter', (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  const subscriber = { 
+    id: 'ns' + uid().slice(0, 8),
+    email,
+    status: 'subscribed',
+    subscribedAt: new Date().toISOString()
+  };
+  state.newsletter.subscribers.push(subscriber);
+  res.status(201).json({ subscriber });
+});
+
+app.post('/api/newsletter', (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  const subscriber = { 
+    id: 'ns' + uid().slice(0, 8),
+    email,
+    status: 'subscribed',
+    subscribedAt: new Date().toISOString()
+  };
+  state.newsletter.subscribers.push(subscriber);
+  res.status(201).json({ subscriber });
+});
+
+app.delete('/newsletter/:id', (req, res) => {
+  state.newsletter.subscribers = state.newsletter.subscribers.filter(s => s.id !== req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/newsletter/:id', (req, res) => {
+  state.newsletter.subscribers = state.newsletter.subscribers.filter(s => s.id !== req.params.id);
   res.json({ ok: true });
 });
 
