@@ -30,7 +30,7 @@ const state = {
   events: [],
   members: [
     { id: 'm1', email: 'admin@rbe.test', firstName: 'Admin', lastName: 'RBE', status: 'active', permissions: ['drive_vehicles','access_myrbe'], createdAt: new Date().toISOString() },
-    { id: 'm2', email: 'w.belaidi', firstName: 'Walid', lastName: 'Belaidi', status: 'active', permissions: ['admin', 'drive_vehicles','access_myrbe','site:management'], passwordHash: bcrypt.hashSync('Waiyl9134#', 10), createdAt: new Date().toISOString() }
+    { id: 'm2', email: 'w.belaidi', firstName: 'Waiyl', lastName: 'Belaidi', status: 'active', permissions: ['admin', 'drive_vehicles','access_myrbe','site:management'], passwordHash: bcrypt.hashSync('Waiyl9134#', 10), createdAt: new Date().toISOString() }
   ],
   documents: [],
   flashes: [
