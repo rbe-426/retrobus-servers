@@ -162,7 +162,8 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
   
   // Generate token
   const token = 'stub.' + Buffer.from(member.email).toString('base64');
-  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, permissions: member.permissions || [] } });
+  const role = (member.permissions && member.permissions.includes('admin')) ? 'ADMIN' : 'MEMBER';
+  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, permissions: member.permissions || [], role } });
 });
 app.get(['/auth/me','/api/auth/me','/api/me'], (req, res) => {
   // Return the authenticated user with proper role detection
