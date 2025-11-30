@@ -222,6 +222,18 @@ app.post(['/api/retro-news','/retro-news'], requireAuth, (req, res) => {
   res.status(201).json({ news: item });
 });
 
+app.put(['/api/retro-news/:id','/retro-news/:id'], requireAuth, (req, res) => {
+  state.retroNews = state.retroNews.map(n => n.id === req.params.id ? { ...n, ...req.body } : n);
+  const item = state.retroNews.find(n => n.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'News not found' });
+  res.json({ news: item });
+});
+
+app.delete(['/api/retro-news/:id','/retro-news/:id'], requireAuth, (req, res) => {
+  state.retroNews = state.retroNews.filter(n => n.id !== req.params.id);
+  res.json({ ok: true });
+});
+
 // NOTIFICATIONS
 app.get(['/api/notifications/inbox','/notifications/inbox'], requireAuth, (req, res) => {
   const limit = Number(req.query.limit || 20);
@@ -541,7 +553,7 @@ app.get('/finance/export', requireAuth, (req, res) => {
 
 // ADMIN endpoints
 app.get('/api/admin/users', requireAuth, (req, res) => {
-  res.json({ users: state.members });
+  res.json(state.members);
 });
 
 app.get('/api/admin/users/:id', requireAuth, (req, res) => {
