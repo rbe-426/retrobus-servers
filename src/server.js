@@ -131,7 +131,7 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
   const token = 'stub.' + Buffer.from(member.email).toString('base64');
   res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, permissions: member.permissions || [] } });
 });
-app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
+app.get(['/auth/me','/api/auth/me','/api/me'], requireAuth, (req, res) => {
   const member = state.members[0] || null;
   res.json({ user: member ? { id: member.id, email: member.email, permissions: member.permissions || [] } : null });
 });
