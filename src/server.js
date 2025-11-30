@@ -56,6 +56,10 @@ const state = {
   ],
   retroRequests: [
     { id: 'rr1', title: 'Demande 1', description: 'Description', status: 'open', createdAt: new Date().toISOString(), memberId: 'm1' }
+  ],
+  stocks: [
+    { id: 's1', name: 'Pièce moteur', quantity: 5, category: 'motor', location: 'A1', unitPrice: 150 },
+    { id: 's2', name: 'Batterie', quantity: 3, category: 'electric', location: 'A2', unitPrice: 200 }
   ]
 };
 
@@ -662,6 +666,60 @@ app.put('/api/retro-requests/:id', requireAuth, (req, res) => {
 
 app.delete('/api/retro-requests/:id', requireAuth, (req, res) => {
   state.retroRequests = state.retroRequests.filter(r => r.id !== req.params.id);
+  res.json({ ok: true });
+});
+
+// STOCKS (Gestion de stock)
+app.get('/api/stocks', requireAuth, (req, res) => {
+  const { category, location } = req.query;
+  let list = state.stocks;
+  if (category) list = list.filter(s => s.category === category);
+  if (location) list = list.filter(s => s.location === location);
+  res.json({ stocks: list });
+});
+
+app.get('/api/stocks/stats', requireAuth, (req, res) => {
+  const totalItems = state.stocks.reduce((sum, s) => sum + s.quantity, 0);
+  const totalValue = state.stocks.reduce((sum, s) => sum + (s.quantity * s.unitPrice), 0);
+  const categories = [...new Set(state.stocks.map(s => s.category))];
+  res.json({ 
+    stats: { 
+      totalItems, 
+      totalValue, 
+      categoryCount: categories.length,
+      lowStock: state.stocks.filter(s => s.quantity < 5).length
+    } 
+  });
+});
+
+app.post('/api/stocks', requireAuth, (req, res) => {
+  const { name, quantity, category, location, unitPrice } = req.body || {};
+  const stock = { 
+    id: uid(),
+    name: name || 'Stock',
+    quantity: Number(quantity || 0),
+    category: category || 'other',
+    location: location || '',
+    unitPrice: Number(unitPrice || 0)
+  };
+  state.stocks.push(stock);
+  res.status(201).json({ stock });
+});
+
+app.get('/api/stocks/:id', requireAuth, (req, res) => {
+  const stock = state.stocks.find(s => s.id === req.params.id);
+  if (!stock) return res.status(404).json({ error: 'Stock not found' });
+  res.json({ stock });
+});
+
+app.put('/api/stocks/:id', requireAuth, (req, res) => {
+  state.stocks = state.stocks.map(s => s.id === req.params.id ? { ...s, ...req.body } : s);
+  const stock = state.stocks.find(s => s.id === req.params.id);
+  res.json({ stock });
+});
+
+app.delete('/api/stocks/:id', requireAuth, (req, res) => {
+  state.stocks = state.stocks.filter(s => s.id !== req.params.id);
   res.json({ ok: true });
 });
 
