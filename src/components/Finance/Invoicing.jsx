@@ -61,6 +61,13 @@ const FinanceInvoicing = () => {
     htmlContent: ""
   });
 
+  // État séparé pour le formulaire de paiement dans la row expandable
+  const [paymentFormData, setPaymentFormData] = useState({
+    amountPaid: "",
+    paymentMethod: "",
+    paymentDate: ""
+  });
+
   const [expandedRows, setExpandedRows] = useState({}); // Track des lignes ouvertes
 
   const toast = useToast();
@@ -153,7 +160,7 @@ const FinanceInvoicing = () => {
 
   const handleAddPayment = async (doc) => {
     // Validations
-    if (!docForm.amountPaid || parseFloat(docForm.amountPaid) <= 0) {
+    if (!paymentFormData.amountPaid || parseFloat(paymentFormData.amountPaid) <= 0) {
       toast({
         title: "Erreur",
         description: "Veuillez entrer un montant valide",
@@ -161,7 +168,7 @@ const FinanceInvoicing = () => {
       });
       return;
     }
-    if (!docForm.paymentMethod) {
+    if (!paymentFormData.paymentMethod) {
       toast({
         title: "Erreur",
         description: "Veuillez sélectionner un mode de paiement",
@@ -169,7 +176,7 @@ const FinanceInvoicing = () => {
       });
       return;
     }
-    if (!docForm.paymentDate) {
+    if (!paymentFormData.paymentDate) {
       toast({
         title: "Erreur",
         description: "Veuillez sélectionner une date",
@@ -181,9 +188,9 @@ const FinanceInvoicing = () => {
     try {
       console.log("💳 Enregistrement du paiement:", {
         docId: doc.id,
-        amountPaid: docForm.amountPaid,
-        paymentMethod: docForm.paymentMethod,
-        paymentDate: docForm.paymentDate
+        amountPaid: paymentFormData.amountPaid,
+        paymentMethod: paymentFormData.paymentMethod,
+        paymentDate: paymentFormData.paymentDate
       });
 
       // Appel direct à l'API pour ajouter le paiement
@@ -192,9 +199,9 @@ const FinanceInvoicing = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...doc,
-          amountPaid: parseFloat(docForm.amountPaid),
-          paymentMethod: docForm.paymentMethod,
-          paymentDate: docForm.paymentDate
+          amountPaid: parseFloat(paymentFormData.amountPaid),
+          paymentMethod: paymentFormData.paymentMethod,
+          paymentDate: paymentFormData.paymentDate
         })
       });
 
@@ -207,17 +214,16 @@ const FinanceInvoicing = () => {
 
       toast({
         title: "Succès",
-        description: `Paiement de ${docForm.amountPaid} € enregistré`,
+        description: `Paiement de ${paymentFormData.amountPaid} € enregistré`,
         status: "success"
       });
 
       // Réinitialiser le formulaire de paiement
-      setDocForm(prev => ({
-        ...prev,
+      setPaymentFormData({
         amountPaid: "",
         paymentMethod: "",
         paymentDate: ""
-      }));
+      });
 
       // Recharger les données
       await loadFinanceData();
@@ -1438,7 +1444,6 @@ const FinanceInvoicing = () => {
                                       </Box>
 
                                       {/* Formulaire d'ajout de paiement */}
-                                      {remaining > 0 && (
                                         <Box borderTop="1px solid" borderColor="purple.200" pt={2} bg="blue.50" p={2} borderRadius="md">
                                           <Text fontWeight="bold" fontSize="sm" mb={2}>➕ Ajouter un paiement:</Text>
                                           <HStack spacing={2}>
@@ -1447,8 +1452,8 @@ const FinanceInvoicing = () => {
                                               <Input
                                                 size="sm"
                                                 placeholder="Virement..."
-                                                value={docForm.paymentMethod || ""}
-                                                onChange={(e) => setDocForm(prev => ({ ...prev, paymentMethod: e.target.value }))}
+                                                value={paymentFormData.paymentMethod || ""}
+                                                onChange={(e) => setPaymentFormData(prev => ({ ...prev, paymentMethod: e.target.value }))}
                                               />
                                             </FormControl>
                                             <FormControl>
@@ -1456,16 +1461,16 @@ const FinanceInvoicing = () => {
                                               <Input
                                                 size="sm"
                                                 type="date"
-                                                value={docForm.paymentDate || ""}
-                                                onChange={(e) => setDocForm(prev => ({ ...prev, paymentDate: e.target.value }))}
+                                                value={paymentFormData.paymentDate || ""}
+                                                onChange={(e) => setPaymentFormData(prev => ({ ...prev, paymentDate: e.target.value }))}
                                               />
                                             </FormControl>
                                             <FormControl>
                                               <FormLabel fontSize="xs">Montant (€)</FormLabel>
                                               <NumberInput
                                                 size="sm"
-                                                value={docForm.amountPaid || ""}
-                                                onChange={(v) => setDocForm(prev => ({ ...prev, amountPaid: v }))}
+                                                value={paymentFormData.amountPaid || ""}
+                                                onChange={(v) => setPaymentFormData(prev => ({ ...prev, amountPaid: v }))}
                                                 min={0}
                                                 max={remaining}
                                               >
@@ -1482,7 +1487,6 @@ const FinanceInvoicing = () => {
                                             </Button>
                                           </HStack>
                                         </Box>
-                                      )}
                                     </VStack>
                                   </Td>
                                 </Tr>
