@@ -22,10 +22,15 @@ $include = @(
 $exclude = @('node_modules', '.git', '.vercel', '.next', 'logs.txt')
 
 # Build file list
-$items = Get-ChildItem -Path $root -Force | Where-Object { $_.Name -in $include -or $_.Name -notin $exclude -and ($Mode -eq 'full') }
+$items = @()
+foreach ($name in $include) {
+  $path = Join-Path $root $name
+  if (Test-Path $path) { $items += $path }
+}
 
 # Create archive
 if (Test-Path $archivePath) { Remove-Item $archivePath -Force }
-Compress-Archive -Path $items.FullName -DestinationPath $archivePath -Force
+if ($items.Count -eq 0) { Write-Error "No files to backup"; exit 1 }
+Compress-Archive -Path $items -DestinationPath $archivePath -Force
 
 Write-Host "Backup created: $archivePath" -ForegroundColor Green
