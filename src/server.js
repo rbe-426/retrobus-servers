@@ -184,13 +184,36 @@ app.get(['/api/retro-news','/retro-news'], (req, res) => {
   res.json({ news: state.retroNews });
 });
 app.post(['/api/retro-news','/retro-news'], requireAuth, (req, res) => {
-  const item = { id: 'rn' + Date.now(), title: req.body?.title || 'News', body: req.body?.body || '', publishedAt: new Date().toISOString() };
+  const title = req.body?.title || 'News';
+  const body = req.body?.body || req.body?.content || '';
+  const item = { 
+    id: 'rn' + Date.now(), 
+    title, 
+    body, 
+    content: body,  // Also store as content for frontend compatibility
+    published: req.body?.published || false,
+    featured: req.body?.featured || false,
+    publishedAt: new Date().toISOString() 
+  };
   state.retroNews.unshift(item);
   res.status(201).json({ news: item });
 });
 
 app.put(['/api/retro-news/:id','/retro-news/:id'], requireAuth, (req, res) => {
-  state.retroNews = state.retroNews.map(n => n.id === req.params.id ? { ...n, ...req.body } : n);
+  state.retroNews = state.retroNews.map(n => {
+    if (n.id === req.params.id) {
+      const updated = { ...n, ...req.body };
+      // Ensure body matches content
+      if (req.body?.content && !req.body?.body) {
+        updated.body = req.body.content;
+      }
+      if (req.body?.body && !req.body?.content) {
+        updated.content = req.body.body;
+      }
+      return updated;
+    }
+    return n;
+  });
   const item = state.retroNews.find(n => n.id === req.params.id);
   if (!item) return res.status(404).json({ error: 'News not found' });
   res.json({ news: item });
