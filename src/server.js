@@ -28,7 +28,8 @@ const state = {
   expenseReports: [],
   events: [],
   members: [
-    { id: 'm1', email: 'admin@rbe.test', firstName: 'Admin', lastName: 'RBE', status: 'active', permissions: ['drive_vehicles','access_myrbe'], createdAt: new Date().toISOString() }
+    { id: 'm1', email: 'admin@rbe.test', firstName: 'Admin', lastName: 'RBE', status: 'active', permissions: ['drive_vehicles','access_myrbe'], createdAt: new Date().toISOString() },
+    { id: 'm2', email: 'w.belaidi@rbe.test', firstName: 'Walid', lastName: 'Belaidi', status: 'active', permissions: ['admin', 'drive_vehicles','access_myrbe','site:management'], createdAt: new Date().toISOString() }
   ],
   documents: [],
   flashes: [
@@ -104,7 +105,23 @@ app.use('/uploads', express.static(pathRoot + '/uploads'));
 app.use((req, res, next) => {
   const auth = req.headers.authorization;
   if (auth && auth.startsWith('Bearer ')) {
-    req.user = { id: 'user', role: 'admin' }; // stub
+    const token = auth.substring(7);
+    // Decode token (stub.base64email)
+    if (token.startsWith('stub.')) {
+      try {
+        const email = Buffer.from(token.substring(5), 'base64').toString();
+        const member = state.members.find(m => m.email === email);
+        if (member) {
+          req.user = { id: member.id, email: member.email, role: 'admin', ...member };
+        } else {
+          req.user = { id: 'user', role: 'admin', email };
+        }
+      } catch (e) {
+        req.user = { id: 'user', role: 'admin' };
+      }
+    } else {
+      req.user = { id: 'user', role: 'admin' };
+    }
   }
   next();
 });
@@ -132,8 +149,11 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
   res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, permissions: member.permissions || [] } });
 });
 app.get(['/auth/me','/api/auth/me','/api/me'], requireAuth, (req, res) => {
-  const member = state.members[0] || null;
-  res.json({ user: member ? { id: member.id, email: member.email, permissions: member.permissions || [] } : null });
+  // Return the logged-in user from token
+  const member = req.user && req.user.email 
+    ? state.members.find(m => m.email === req.user.email) || req.user
+    : (state.members[0] || null);
+  res.json({ user: member ? { id: member.id, email: member.email, firstName: member.firstName, lastName: member.lastName, permissions: member.permissions || [] } : null });
 });
 
 // FLASHES
