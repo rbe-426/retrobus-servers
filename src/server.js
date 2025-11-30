@@ -168,7 +168,8 @@ app.get(['/auth/me','/api/auth/me','/api/me'], requireAuth, (req, res) => {
   const member = req.user && req.user.email 
     ? state.members.find(m => m.email === req.user.email) || req.user
     : (state.members[0] || null);
-  res.json({ user: member ? { id: member.id, email: member.email, firstName: member.firstName, lastName: member.lastName, permissions: member.permissions || [] } : null });
+  const role = (member.permissions && member.permissions.includes('admin')) ? 'ADMIN' : 'MEMBER';
+  res.json({ user: member ? { id: member.id, email: member.email, firstName: member.firstName, lastName: member.lastName, permissions: member.permissions || [], role } : null });
 });
 
 // FLASHES
