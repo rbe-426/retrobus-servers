@@ -528,6 +528,45 @@ app.delete('/api/admin/users/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
+  const user = state.members.find(m => m.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({ permissions: user.permissions || [] });
+});
+
+app.put('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
+  const { permissions } = req.body || {};
+  state.members = state.members.map(m => m.id === req.params.id ? { ...m, permissions } : m);
+  const user = state.members.find(m => m.id === req.params.id);
+  res.json({ permissions: user.permissions || [] });
+});
+
+app.post('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
+  const { permission } = req.body || {};
+  state.members = state.members.map(m => {
+    if (m.id === req.params.id) {
+      const perms = m.permissions || [];
+      if (!perms.includes(permission)) perms.push(permission);
+      return { ...m, permissions: perms };
+    }
+    return m;
+  });
+  const user = state.members.find(m => m.id === req.params.id);
+  res.json({ permissions: user.permissions || [] });
+});
+
+app.delete('/api/admin/users/:id/permissions/:permission', requireAuth, (req, res) => {
+  state.members = state.members.map(m => {
+    if (m.id === req.params.id) {
+      const perms = (m.permissions || []).filter(p => p !== req.params.permission);
+      return { ...m, permissions: perms };
+    }
+    return m;
+  });
+  const user = state.members.find(m => m.id === req.params.id);
+  res.json({ permissions: user.permissions || [] });
+});
+
 // EMAIL & QUOTE TEMPLATES
 app.get('/api/email-templates', requireAuth, (req, res) => {
   res.json({ templates: [] });
