@@ -2,10 +2,11 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Copie les fichiers de dépendances
+# Copie les fichiers de dépendances ET le schema Prisma (requis pour postinstall)
 COPY package*.json ./
+COPY prisma ./prisma
 
-# Installe les dépendances
+# Installe les dépendances (execute postinstall: prisma generate)
 RUN npm install --production
 
 # Copie le reste du code source
