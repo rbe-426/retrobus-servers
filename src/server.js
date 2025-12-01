@@ -420,13 +420,35 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'email & password requis' });
   const member = state.members.find(m => m.email === email) || state.members[0];
   if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
-  // Stub: toujours OK
+  
+  // Find user's role from site_users via linkedMemberId
+  let role = 'MEMBER'; // default
+  if (state.siteUsers && member.id) {
+    const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
+    if (siteUser) {
+      role = siteUser.role || 'MEMBER';
+    }
+  }
+  
   const token = 'stub.' + Buffer.from(email).toString('base64');
-  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, permissions: member.permissions || [] } });
+  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, role: role, permissions: member.permissions || [] } });
 });
 app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
   const member = state.members[0] || null;
-  res.json({ user: member ? { id: member.id, email: member.email, permissions: member.permissions || [] } : null });
+  if (!member) {
+    return res.json({ user: null });
+  }
+  
+  // Find user's role from site_users via linkedMemberId
+  let role = 'MEMBER'; // default
+  if (state.siteUsers && member.id) {
+    const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
+    if (siteUser) {
+      role = siteUser.role || 'MEMBER';
+    }
+  }
+  
+  res.json({ user: { id: member.id, email: member.email, role: role, permissions: member.permissions || [] } });
 });
 
 // Session validation - /api/me endpoint
@@ -908,37 +930,37 @@ app.delete('/events/:id', requireAuth, (req, res) => {
 });
 
 // FINANCE
-app.get('/finance/stats', requireAuth, (req, res) => {
+app.get(['/finance/stats', '/api/finance/stats'], requireAuth, (req, res) => {
   const revenue = state.transactions.filter(t => t.type === 'recette').reduce((s,t)=>s+t.amount,0);
   const expenses = state.transactions.filter(t => t.type === 'depense').reduce((s,t)=>s+t.amount,0);
   res.json({ data: { monthlyRevenue: revenue, monthlyExpenses: expenses, currentBalance: state.bankBalance, membershipRevenue: 0, activeMembers: state.members.length, revenueGrowth: 0 } });
 });
-app.get('/finance/bank-balance', requireAuth, (req, res) => {
+app.get(['/finance/bank-balance', '/api/finance/bank-balance'], requireAuth, (req, res) => {
   res.json({ data: { balance: state.bankBalance } });
 });
-app.post('/finance/bank-balance', requireAuth, (req, res) => {
+app.post(['/finance/bank-balance', '/api/finance/bank-balance'], requireAuth, (req, res) => {
   state.bankBalance = Number(req.body.balance || 0);
   res.json({ data: { balance: state.bankBalance } });
 });
 
 // Scheduled expenses
-app.get('/finance/scheduled-expenses', requireAuth, (req, res) => {
+app.get(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requireAuth, (req, res) => {
   const { eventId } = req.query;
   let list = state.scheduled;
   if (eventId) list = list.filter(x => x.eventId === eventId);
   res.json({ operations: list });
 });
-app.post('/finance/scheduled-expenses', requireAuth, (req, res) => {
+app.post(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requireAuth, (req, res) => {
   const op = { id: uid(), ...req.body };
   state.scheduled.push(op);
   res.status(201).json(op);
 });
-app.put('/finance/scheduled-expenses/:id', requireAuth, (req, res) => {
+app.put(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, (req, res) => {
   state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body } : o);
   const op = state.scheduled.find(o => o.id === req.params.id);
   res.json(op);
 });
-app.delete('/finance/scheduled-expenses/:id', requireAuth, (req, res) => {
+app.delete(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, (req, res) => {
   state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
   res.json({ ok: true });
 });
@@ -955,7 +977,7 @@ app.post('/finance/scheduled-expenses/:id/execute', requireAuth, (req, res) => {
 });
 
 // Transactions
-app.get('/finance/transactions', requireAuth, (req, res) => {
+app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, (req, res) => {
   const { page = 1, limit = 20, eventId } = req.query;
   let list = state.transactions;
   if (eventId) list = list.filter(t => t.eventId === eventId);
@@ -983,15 +1005,15 @@ app.post('/finance/sync/memberships', requireAuth, (req, res) => {
   res.json({ synchronized: 0, ok: true });
 });
 
-app.get('/finance/categories', requireAuth, (req, res) => {
+app.get(['/finance/categories', '/api/finance/categories'], requireAuth, (req, res) => {
   res.json({ categories: state.categories });
 });
-app.get('/finance/category-breakdown', requireAuth, (req, res) => {
+app.get(['/finance/category-breakdown', '/api/finance/category-breakdown'], requireAuth, (req, res) => {
   res.json({ period: req.query.period || 'month', breakdown: [], total: 0 });
 });
 
 // Expense Reports (notes de frais)
-app.get('/finance/expense-reports', requireAuth, (req, res) => {
+app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, (req, res) => {
   const { eventId } = req.query;
   let list = state.expenseReports;
   if (eventId) list = list.filter(r => r.eventId === eventId);
@@ -1040,7 +1062,7 @@ app.delete('/finance/expense-reports/:id', requireAuth, (req, res) => {
 });
 
 // EXPORT placeholder
-app.get('/finance/export', requireAuth, (req, res) => {
+app.get(['/finance/export', '/api/finance/export'], requireAuth, (req, res) => {
   res.header('Content-Type','text/csv');
   res.send('Date,Type,Description,Montant\n');
 });
@@ -1148,7 +1170,39 @@ app.get('/newsletter/export', requireAuth, (req, res) => {
   }
 });
 
-// New endpoint to check user permissions (no auth required for initial load)
+// FINANCE API ALIASES - for frontend compatibility
+// /api/finance/balance -> /api/finance/bank-balance
+app.get('/api/finance/balance', requireAuth, (req, res) => {
+  res.json({ data: { balance: state.bankBalance } });
+});
+
+// /api/finance/scheduled-operations -> /finance/scheduled-expenses
+app.get('/api/finance/scheduled-operations', requireAuth, (req, res) => {
+  const { eventId } = req.query;
+  let list = state.scheduled;
+  if (eventId) list = list.filter(x => x.eventId === eventId);
+  res.json({ operations: list });
+});
+app.post('/api/finance/scheduled-operations', requireAuth, (req, res) => {
+  const op = { id: uid(), ...req.body };
+  state.scheduled.push(op);
+  res.status(201).json(op);
+});
+app.put('/api/finance/scheduled-operations/:id', requireAuth, (req, res) => {
+  state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body } : o);
+  const op = state.scheduled.find(o => o.id === req.params.id);
+  res.json(op);
+});
+app.delete('/api/finance/scheduled-operations/:id', requireAuth, (req, res) => {
+  state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
+  res.json({ ok: true });
+});
+
+// /api/finance/documents -> returns all documents (finance perspective)
+app.get('/api/finance/documents', requireAuth, (req, res) => {
+  res.json({ documents: state.documents || [] });
+});
+
 // Generic error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err);
