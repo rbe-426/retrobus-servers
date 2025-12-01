@@ -319,15 +319,105 @@ app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (r
   res.json(list);
 });
 app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (req, res) => {
-  const usage = { id: uid(), parc: req.params.parc, startedAt: new Date().toISOString(), conducteur: req.body?.conducteur || 'Conducteur', note: req.body?.note || '' };
+  const usage = { id: uid(), parc: req.params.parc, startedAt: new Date().toISOString(), conducteur: req.body?.conducteur || 'Conducteur', note: req.body?.note || '', participants: req.body?.participants || [] };
   state.vehicleUsages.push(usage);
   res.status(201).json(usage);
 });
-app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, (req, res) => {
-  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, endedAt: new Date().toISOString() } : u);
+// GET single usage
+app.get(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
+  const usage = state.vehicleUsages.find(u => u.id === req.params.id && u.parc === req.params.parc);
+  if (!usage) return res.status(404).json({ error: 'Usage not found' });
+  res.json(usage);
+});
+// PATCH/UPDATE usage (end pointage, add note, update participants)
+app.patch(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
+  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, ...req.body, updatedAt: new Date().toISOString() } : u);
   const u = state.vehicleUsages.find(u => u.id === req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usage not found' });
   res.json(u);
 });
+// PUT update usage
+app.put(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
+  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, ...req.body, updatedAt: new Date().toISOString() } : u);
+  const u = state.vehicleUsages.find(u => u.id === req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usage not found' });
+  res.json(u);
+});
+// DELETE usage
+app.delete(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
+  const initialLength = state.vehicleUsages.length;
+  state.vehicleUsages = state.vehicleUsages.filter(u => !(u.id === req.params.id && u.parc === req.params.parc));
+  if (state.vehicleUsages.length === initialLength) {
+    return res.status(404).json({ error: 'Usage not found' });
+  }
+  res.json({ ok: true, message: 'Usage deleted' });
+});
+// Legacy endpoint (end pointage with POST)
+app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, (req, res) => {
+  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, endedAt: new Date().toISOString(), ...req.body } : u);
+  const u = state.vehicleUsages.find(u => u.id === req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usage not found' });
+  res.json(u);
+});
+// Reports (Fiches de suivi des pointages)
+app.get(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, (req, res) => {
+  // Simuler les reports associés aux usages
+  const usages = state.vehicleUsages.filter(u => u.parc === req.params.parc);
+  const reports = usages
+    .filter(u => u.endedAt) // Seulement les usages terminés
+    .map(u => ({
+      id: `report-${u.id}`,
+      usageId: u.id,
+      parc: req.params.parc,
+      date: u.startedAt,
+      createdAt: u.endedAt || new Date().toISOString(),
+      conducteur: u.conducteur,
+      description: u.note || '',
+      startedAt: u.startedAt,
+      endedAt: u.endedAt,
+      participants: u.participants || []
+    }));
+  res.json(reports);
+});
+// POST report (fiche de suivi avec fichiers)
+app.post(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, upload.array('files'), (req, res) => {
+  const { description, startedAt, endedAt, conducteur, participants } = req.body;
+  const report = {
+    id: uid(),
+    parc: req.params.parc,
+    date: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    description: description || '',
+    startedAt: startedAt || new Date().toISOString(),
+    endedAt: endedAt || new Date().toISOString(),
+    conducteur: conducteur || 'Inconnu',
+    participants: participants ? JSON.parse(participants) : [],
+    files: req.files?.map(f => ({ name: f.originalname, size: f.size, type: f.mimetype })) || []
+  };
+  res.status(201).json(report);
+});
+// POST report pour une fiche associée à un usage
+app.post(['/vehicles/:parc/usages/:id/report','/api/vehicles/:parc/usages/:id/report'], requireAuth, upload.array('files'), (req, res) => {
+  const { description, startedAt, endedAt, conducteur, participants } = req.body;
+  const usage = state.vehicleUsages.find(u => u.id === req.params.id);
+  if (!usage) return res.status(404).json({ error: 'Usage not found' });
+  
+  const report = {
+    id: `report-${uid()}`,
+    usageId: req.params.id,
+    parc: req.params.parc,
+    date: usage.startedAt,
+    createdAt: new Date().toISOString(),
+    description: description || usage.note || '',
+    startedAt: startedAt || usage.startedAt,
+    endedAt: endedAt || usage.endedAt || new Date().toISOString(),
+    conducteur: conducteur || usage.conducteur,
+    participants: participants ? JSON.parse(participants) : usage.participants || [],
+    files: req.files?.map(f => ({ name: f.originalname, size: f.size, type: f.mimetype })) || []
+  };
+  res.status(201).json(report);
+});
+
 // Maintenance
 app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, (req, res) => {
   const list = state.vehicleMaintenance.filter(m => m.parc === req.params.parc);
