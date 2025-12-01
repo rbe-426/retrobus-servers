@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --watch ./src/server.js",
     "start": "node ./src/server.js",
+    "build": "prisma generate",
     "backup": "node backup-full.mjs",
     "backup:full": "node backup-full.mjs",
     "backups:list": "node list-backups.mjs",
