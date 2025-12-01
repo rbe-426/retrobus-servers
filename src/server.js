@@ -739,6 +739,15 @@ app.post('/api/members/:id/link-access', requireAuth, (req, res) => {
 });
 
 // GET member permissions
+// MEMBERS endpoints
+app.get('/api/members/:id', requireAuth, (req, res) => {
+  const member = state.members.find(m => m.id === req.params.id);
+  if (!member) {
+    return res.status(404).json({ error: 'Member not found' });
+  }
+  res.json(member);
+});
+
 app.get('/api/members/:id/permissions', requireAuth, (req, res) => {
   const { id } = req.params;
   const member = state.members.find(m => m.id === id);
@@ -1231,6 +1240,75 @@ app.get('/api/quote-templates', requireAuth, (req, res) => {
 app.post('/api/quote-templates', requireAuth, (req, res) => {
   const template = { id: uid(), ...req.body };
   res.status(201).json(template);
+});
+
+// Email templates endpoint
+app.get('/api/email-templates', requireAuth, (req, res) => {
+  res.json([]);
+});
+app.get('/api/email-templates/:id', requireAuth, (req, res) => {
+  res.status(404).json({ error: 'Template not found' });
+});
+app.post('/api/email-templates', requireAuth, (req, res) => {
+  const template = { id: uid(), ...req.body, createdAt: new Date().toISOString() };
+  res.status(201).json(template);
+});
+app.put('/api/email-templates/:id', requireAuth, (req, res) => {
+  const template = { id: req.params.id, ...req.body, updatedAt: new Date().toISOString() };
+  res.json(template);
+});
+app.delete('/api/email-templates/:id', requireAuth, (req, res) => {
+  res.json({ ok: true });
+});
+
+// ===== ADMIN PROMOTION ENDPOINT =====
+// POST /api/admin/users/:userId/make-admin - Grant admin permissions to a user
+app.post('/api/admin/users/:userId/make-admin', requireAuth, (req, res) => {
+  const { userId } = req.params;
+  
+  console.log(`👤 Admin promotion request for user: ${userId}`);
+  
+  // Find the site_users entry for this memberId
+  let siteUser = null;
+  if (state.siteUsers) {
+    siteUser = state.siteUsers.find(u => u.linkedMemberId === userId || u.id === userId);
+  }
+  
+  if (!siteUser) {
+    return res.status(400).json({ error: 'User not found in site_users' });
+  }
+  
+  // Define admin resources
+  const adminResources = ['members', 'vehicles', 'events', 'finance', 'transactions', 'reports', 'permissions', 'users', 'news', 'documents', 'maintenance', 'admin'];
+  const adminActions = ['READ', 'CREATE', 'UPDATE', 'DELETE', 'ADMIN'];
+  
+  // Create permission records for this user
+  state.userPermissions[siteUser.id] = { 
+    permissions: adminResources.map(resource => ({
+      id: uid(),
+      resource: resource,
+      actions: adminActions,
+      grantedAt: new Date().toISOString(),
+      grantedBy: 'api'
+    }))
+  };
+  
+  // Update role in siteUsers
+  siteUser.role = 'ADMIN';
+  
+  console.log(`✅ Admin permissions granted to ${siteUser.firstName} ${siteUser.lastName}`);
+  
+  res.json({
+    success: true,
+    message: `Admin permissions granted to user ${userId}`,
+    user: {
+      id: siteUser.id,
+      linkedMemberId: siteUser.linkedMemberId,
+      firstName: siteUser.firstName,
+      lastName: siteUser.lastName,
+      role: 'ADMIN'
+    }
+  });
 });
 
 // Generic error handler
