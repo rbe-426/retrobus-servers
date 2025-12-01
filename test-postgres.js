@@ -5,15 +5,15 @@ import pkg from 'pg';
 const { Client } = pkg;
 
 async function test() {
-  // Railway DB format:
-  // postgresql://username:password@host:port/database?sslmode=require
-  const connectionString = process.env.DATABASE_URL || 'postgresql://user:password@yamanote.proxy.rlwy.net:18663/railway?sslmode=require';
+  // Use DATABASE_URL from env or fallback to Railway connection
+  const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:kufBlJfvgFQSHCnQyUgVqwGLthMXtyot@yamanote.proxy.rlwy.net:18663/railway?sslmode=require';
   
   console.log('🔍 Testing PostgreSQL connection...');
-  console.log(`📍 Host: ${connectionString.split('@')[1]?.split('/')[0] || 'unknown'}`);
+  console.log(`📍 Connection string: ${connectionString.substring(0, 50)}...`);
   
   const client = new Client({
-    connectionString
+    connectionString,
+    ssl: { rejectUnauthorized: false }
   });
 
   try {

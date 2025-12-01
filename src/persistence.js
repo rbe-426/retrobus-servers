@@ -14,10 +14,16 @@ export async function initDatabase() {
   }
 
   try {
-    dbPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false } // Required for Railway
-    });
+    const poolConfig = {
+      connectionString: process.env.DATABASE_URL
+    };
+    
+    // SSL config for Railway PostgreSQL (self-signed cert)
+    if (process.env.DATABASE_URL?.includes('railway')) {
+      poolConfig.ssl = { rejectUnauthorized: false };
+    }
+    
+    dbPool = new Pool(poolConfig);
 
     // Test connection
     await dbPool.query('SELECT NOW()');
