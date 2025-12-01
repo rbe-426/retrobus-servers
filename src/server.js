@@ -2,25 +2,30 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
-import pkg from 'pg';
 
 dotenv.config();
 
-const { Client } = pkg;
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 4000;
 const pathRoot = process.cwd();
 
-// PostgreSQL connection for data recovery
-const pgClient = new Client({
-  host: process.env.DB_HOST || 'yamanote.proxy.rlwy.net',
-  port: process.env.DB_PORT || 18663,
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
-  database: process.env.DB_NAME || 'railway',
-  ssl: false
-});
+// PostgreSQL connection for data recovery (optional)
+let pgClient = null;
+try {
+  const pkg = await import('pg');
+  const { Client } = pkg;
+  pgClient = new Client({
+    host: process.env.DB_HOST || 'yamanote.proxy.rlwy.net',
+    port: process.env.DB_PORT || 18663,
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
+    database: process.env.DB_NAME || 'railway',
+    ssl: false
+  });
+} catch (error) {
+  console.warn('⚠️  PostgreSQL package not available, will use in-memory storage');
+}
 
 // In-memory stores (reconstruction). À migrer vers Prisma ensuite.
 const state = {
@@ -142,6 +147,11 @@ const requireAuth = (req, res, next) => {
 
 // Function to load data from PostgreSQL
 async function initializeFromPostgres() {
+  if (!pgClient) {
+    console.log('⚠️  PostgreSQL client not available, using in-memory data');
+    return;
+  }
+  
   try {
     await pgClient.connect();
     console.log('✅ Connected to PostgreSQL - loading data...');
