@@ -3,7 +3,7 @@
 // Datasource & generator placeholders (adapter plus tard à PostgreSQL)
 
 datasource db {
-  provider = "sqlite"
+  provider = "sqlite" // bascule vers postgresql quand prêt
   url      = env("DATABASE_URL")
 }
 

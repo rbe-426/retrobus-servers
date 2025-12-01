@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
-import { initDatabase, vehicleStore, memberStore, useDatabase } from './persistence.js';
 
 dotenv.config();
 
@@ -29,8 +28,7 @@ const state = {
   expenseReports: [],
   events: [],
   members: [
-    { id: 'm1', email: 'admin@rbe.test', firstName: 'Admin', lastName: 'RBE', status: 'active', permissions: ['ADMIN','drive_vehicles','access_myrbe','site:management'], createdAt: new Date().toISOString() },
-    { id: 'm2', email: 'w.belaidi', firstName: 'Waiyl', lastName: 'Belaidi', status: 'active', permissions: ['ADMIN', 'drive_vehicles','access_myrbe','site:management'], createdAt: new Date().toISOString() }
+    { id: 'm1', email: 'admin@rbe.test', firstName: 'Admin', lastName: 'RBE', status: 'active', permissions: ['drive_vehicles','access_myrbe'], createdAt: new Date().toISOString() }
   ],
   documents: [],
   flashes: [
@@ -38,25 +36,10 @@ const state = {
     { id: 'f2', title: 'Nouvelle page', message: 'Photothèque RBE', active: false, createdAt: new Date().toISOString() }
   ],
   retroNews: [
-    { id: 'rn1', title: 'Bienvenue sur RétroBus', body: 'Plateforme reconstruite.', content: 'Plateforme reconstruite.', published: true, featured: true, publishedAt: new Date().toISOString() }
+    { id: 'rn1', title: 'Bienvenue sur RétroBus', body: 'Plateforme reconstruite.', publishedAt: new Date().toISOString() }
   ],
   notifications: [
     { id: 'n1', type: 'info', message: 'Serveur API reconstruit', createdAt: new Date().toISOString(), read: false }
-  ],
-  events: [
-    // Événement de test pour l'affichage public
-    { 
-      id: 'ev-demo-1', 
-      title: 'RétroWouh ! Halloween', 
-      description: 'Grand événement de RétroBus avec participation publique',
-      status: 'PUBLISHED',
-      date: '2024-10-31',
-      location: 'Essonne',
-      isVisible: true,
-      allowPublicRegistration: true,
-      requiresRegistration: true,
-      createdAt: new Date().toISOString()
-    }
   ],
   vehicles: [
     { parc: 'RBE-001', marque: 'Renault', modele: 'Master', etat: 'disponible', fuel: 70, caracteristiques: [{ label: 'Niveau gasoil', value: '70' }] },
@@ -81,23 +64,13 @@ const today = () => new Date().toISOString().split('T')[0];
 const allowedOrigins = [
   'https://www.retrobus-interne.fr',
   'https://retrobus-interne.fr',
-  'https://www.association-rbe.fr',
-  'https://association-rbe.fr',
   'https://attractive-kindness-rbe-serveurs.up.railway.app',
   'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:3001',
-  'http://127.0.0.1:3001'
+  'http://127.0.0.1:5173'
 ];
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (mobile apps, curl requests)
-    if (!origin) return cb(null, true);
-    // Allow if in whitelist
-    if (allowedOrigins.includes(origin)) return cb(null, origin);
-    // Allow all requests in development (comment out in production)
-    if (process.env.NODE_ENV !== 'production') return cb(null, origin);
-    // Reject in production if not in whitelist
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, origin || true);
     return cb(new Error('CORS bloque: origine non autorisée'));
   },
   credentials: true,
@@ -120,36 +93,17 @@ app.use(express.json());
 // Static files (serve uploaded content)
 app.use('/uploads', express.static(pathRoot + '/uploads'));
 
-// Auth middleware
+// Auth placeholder
 app.use((req, res, next) => {
   const auth = req.headers.authorization;
   if (auth && auth.startsWith('Bearer ')) {
-    const token = auth.substring(7);
-    // Decode token (stub.base64email)
-    if (token.startsWith('stub.')) {
-      try {
-        const email = Buffer.from(token.substring(5), 'base64').toString();
-        const member = state.members.find(m => m.email === email);
-        if (member) {
-          req.user = { id: member.id, email: member.email, ...member };
-        } else {
-          req.user = { id: 'user', role: 'admin', email };
-        }
-      } catch (e) {
-        req.user = { id: 'user', role: 'admin' };
-      }
-    } else {
-      req.user = { id: 'user', role: 'admin' };
-    }
-  } else {
-    // Default guest user when no auth header
-    req.user = { id: 'guest', role: 'guest', email: 'guest@retrobus' };
+    req.user = { id: 'user', role: 'admin' }; // stub
   }
   next();
 });
 
 const requireAuth = (req, res, next) => {
-  if (!req.user || req.user.id === 'guest') return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   next();
 };
 
@@ -164,19 +118,11 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
   if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
   // Stub: toujours OK
   const token = 'stub.' + Buffer.from(email).toString('base64');
-  const role = (member.permissions && member.permissions.includes('ADMIN')) ? 'ADMIN' : 'MEMBER';
-  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, permissions: member.permissions || [], role } });
+  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, permissions: member.permissions || [] } });
 });
-app.get(['/auth/me','/api/auth/me','/api/me'], (req, res) => {
-  let member = null;
-  if (req.user && req.user.email && req.user.email !== 'guest@retrobus') {
-    member = state.members.find(m => m.email === req.user.email);
-  }
-  if (!member) {
-    return res.json({ user: null });
-  }
-  const role = (member.permissions && member.permissions.includes('ADMIN')) ? 'ADMIN' : 'MEMBER';
-  res.json({ user: { id: member.id, email: member.email, firstName: member.firstName, lastName: member.lastName, permissions: member.permissions || [], role } });
+app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
+  const member = state.members[0] || null;
+  res.json({ user: member ? { id: member.id, email: member.email, permissions: member.permissions || [] } : null });
 });
 
 // FLASHES
@@ -210,44 +156,9 @@ app.get(['/api/retro-news','/retro-news'], (req, res) => {
   res.json({ news: state.retroNews });
 });
 app.post(['/api/retro-news','/retro-news'], requireAuth, (req, res) => {
-  const title = req.body?.title || 'News';
-  const body = req.body?.body || req.body?.content || '';
-  const item = { 
-    id: 'rn' + Date.now(), 
-    title, 
-    body, 
-    content: body,  // Also store as content for frontend compatibility
-    published: req.body?.published || false,
-    featured: req.body?.featured || false,
-    publishedAt: new Date().toISOString() 
-  };
+  const item = { id: 'rn' + Date.now(), title: req.body?.title || 'News', body: req.body?.body || '', publishedAt: new Date().toISOString() };
   state.retroNews.unshift(item);
   res.status(201).json({ news: item });
-});
-
-app.put(['/api/retro-news/:id','/retro-news/:id'], requireAuth, (req, res) => {
-  state.retroNews = state.retroNews.map(n => {
-    if (n.id === req.params.id) {
-      const updated = { ...n, ...req.body };
-      // Ensure body matches content
-      if (req.body?.content && !req.body?.body) {
-        updated.body = req.body.content;
-      }
-      if (req.body?.body && !req.body?.content) {
-        updated.content = req.body.body;
-      }
-      return updated;
-    }
-    return n;
-  });
-  const item = state.retroNews.find(n => n.id === req.params.id);
-  if (!item) return res.status(404).json({ error: 'News not found' });
-  res.json({ news: item });
-});
-
-app.delete(['/api/retro-news/:id','/retro-news/:id'], requireAuth, (req, res) => {
-  state.retroNews = state.retroNews.filter(n => n.id !== req.params.id);
-  res.json({ ok: true });
 });
 
 // NOTIFICATIONS
@@ -269,43 +180,9 @@ app.post(['/api/notifications/:id/read','/notifications/:id/read'], requireAuth,
   res.json({ notification: n });
 });
 
-// VEHICLES - Public endpoints (no auth required)
-app.get(['/public/vehicles'], (req, res) => {
-  res.json(state.vehicles);
-});
-
-app.get(['/public/vehicles/:parc'], (req, res) => {
-  const { parc } = req.params;
-  const vehicle = state.vehicles.find(v => v.parc === parc);
-  if (!vehicle) return res.status(404).json({ error: 'Véhicule non trouvé' });
-  res.json(vehicle);
-});
-
-// VEHICLES - Protected endpoints (auth required)
+// VEHICLES
 app.get(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
-  res.json(state.vehicles);
-});
-app.post(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
-  const { parc, marque, modele, etat, fuel, caracteristiques, ...rest } = req.body || {};
-  if (!parc) return res.status(400).json({ error: 'parc requis' });
-  if (state.vehicles.find(v => v.parc === parc)) return res.status(409).json({ error: 'Véhicule déjà existant' });
-  const newVehicle = {
-    parc,
-    marque: marque || '',
-    modele: modele || '',
-    etat: etat || 'disponible',
-    fuel: fuel || 0,
-    caracteristiques: caracteristiques || [],
-    ...rest
-  };
-  state.vehicles.push(newVehicle);
-  res.status(201).json({ parc, ...newVehicle });
-});
-app.get(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
-  const { parc } = req.params;
-  const vehicle = state.vehicles.find(v => v.parc === parc);
-  if (!vehicle) return res.status(404).json({ error: 'Véhicule non trouvé' });
-  res.json(vehicle);
+  res.json({ vehicles: state.vehicles });
 });
 app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
   const { parc } = req.params;
@@ -319,105 +196,15 @@ app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (r
   res.json(list);
 });
 app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (req, res) => {
-  const usage = { id: uid(), parc: req.params.parc, startedAt: new Date().toISOString(), conducteur: req.body?.conducteur || 'Conducteur', note: req.body?.note || '', participants: req.body?.participants || [] };
+  const usage = { id: uid(), parc: req.params.parc, startedAt: new Date().toISOString(), conducteur: req.body?.conducteur || 'Conducteur', note: req.body?.note || '' };
   state.vehicleUsages.push(usage);
   res.status(201).json(usage);
 });
-// GET single usage
-app.get(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
-  const usage = state.vehicleUsages.find(u => u.id === req.params.id && u.parc === req.params.parc);
-  if (!usage) return res.status(404).json({ error: 'Usage not found' });
-  res.json(usage);
-});
-// PATCH/UPDATE usage (end pointage, add note, update participants)
-app.patch(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
-  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, ...req.body, updatedAt: new Date().toISOString() } : u);
-  const u = state.vehicleUsages.find(u => u.id === req.params.id);
-  if (!u) return res.status(404).json({ error: 'Usage not found' });
-  res.json(u);
-});
-// PUT update usage
-app.put(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
-  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, ...req.body, updatedAt: new Date().toISOString() } : u);
-  const u = state.vehicleUsages.find(u => u.id === req.params.id);
-  if (!u) return res.status(404).json({ error: 'Usage not found' });
-  res.json(u);
-});
-// DELETE usage
-app.delete(['/vehicles/:parc/usages/:id','/api/vehicles/:parc/usages/:id'], requireAuth, (req, res) => {
-  const initialLength = state.vehicleUsages.length;
-  state.vehicleUsages = state.vehicleUsages.filter(u => !(u.id === req.params.id && u.parc === req.params.parc));
-  if (state.vehicleUsages.length === initialLength) {
-    return res.status(404).json({ error: 'Usage not found' });
-  }
-  res.json({ ok: true, message: 'Usage deleted' });
-});
-// Legacy endpoint (end pointage with POST)
 app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, (req, res) => {
-  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, endedAt: new Date().toISOString(), ...req.body } : u);
+  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, endedAt: new Date().toISOString() } : u);
   const u = state.vehicleUsages.find(u => u.id === req.params.id);
-  if (!u) return res.status(404).json({ error: 'Usage not found' });
   res.json(u);
 });
-// Reports (Fiches de suivi des pointages)
-app.get(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, (req, res) => {
-  // Simuler les reports associés aux usages
-  const usages = state.vehicleUsages.filter(u => u.parc === req.params.parc);
-  const reports = usages
-    .filter(u => u.endedAt) // Seulement les usages terminés
-    .map(u => ({
-      id: `report-${u.id}`,
-      usageId: u.id,
-      parc: req.params.parc,
-      date: u.startedAt,
-      createdAt: u.endedAt || new Date().toISOString(),
-      conducteur: u.conducteur,
-      description: u.note || '',
-      startedAt: u.startedAt,
-      endedAt: u.endedAt,
-      participants: u.participants || []
-    }));
-  res.json(reports);
-});
-// POST report (fiche de suivi avec fichiers)
-app.post(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, upload.array('files'), (req, res) => {
-  const { description, startedAt, endedAt, conducteur, participants } = req.body;
-  const report = {
-    id: uid(),
-    parc: req.params.parc,
-    date: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    description: description || '',
-    startedAt: startedAt || new Date().toISOString(),
-    endedAt: endedAt || new Date().toISOString(),
-    conducteur: conducteur || 'Inconnu',
-    participants: participants ? JSON.parse(participants) : [],
-    files: req.files?.map(f => ({ name: f.originalname, size: f.size, type: f.mimetype })) || []
-  };
-  res.status(201).json(report);
-});
-// POST report pour une fiche associée à un usage
-app.post(['/vehicles/:parc/usages/:id/report','/api/vehicles/:parc/usages/:id/report'], requireAuth, upload.array('files'), (req, res) => {
-  const { description, startedAt, endedAt, conducteur, participants } = req.body;
-  const usage = state.vehicleUsages.find(u => u.id === req.params.id);
-  if (!usage) return res.status(404).json({ error: 'Usage not found' });
-  
-  const report = {
-    id: `report-${uid()}`,
-    usageId: req.params.id,
-    parc: req.params.parc,
-    date: usage.startedAt,
-    createdAt: new Date().toISOString(),
-    description: description || usage.note || '',
-    startedAt: startedAt || usage.startedAt,
-    endedAt: endedAt || usage.endedAt || new Date().toISOString(),
-    conducteur: conducteur || usage.conducteur,
-    participants: participants ? JSON.parse(participants) : usage.participants || [],
-    files: req.files?.map(f => ({ name: f.originalname, size: f.size, type: f.mimetype })) || []
-  };
-  res.status(201).json(report);
-});
-
 // Maintenance
 app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, (req, res) => {
   const list = state.vehicleMaintenance.filter(m => m.parc === req.params.parc);
@@ -526,26 +313,9 @@ app.get('/api/documents/:id/download', requireAuth, (req, res) => {
   res.status(404).json({ error: 'Not implemented file storage' });
 });
 
-// EVENTS - Public endpoints (no auth required)
-app.get(['/public/events'], (req, res) => {
-  // Retourner seulement les événements publiés
-  const publicEvents = state.events.filter(e => e.status === 'PUBLISHED' || e.status === 'published');
-  res.json(publicEvents);
-});
-
-app.get(['/public/events/:id'], (req, res) => {
-  const ev = state.events.find(e => e.id === req.params.id);
-  if (!ev) return res.status(404).json({ error: 'Événement non trouvé' });
-  // Vérifier que l'événement est public
-  if (ev.status !== 'PUBLISHED' && ev.status !== 'published') {
-    return res.status(404).json({ error: 'Événement non disponible' });
-  }
-  res.json(ev);
-});
-
-// EVENTS - Protected endpoints (auth required)
+// EVENTS
 app.get('/events', requireAuth, (req, res) => {
-  res.json(state.events);
+  res.json({ events: state.events });
 });
 app.get('/events/:id', requireAuth, (req, res) => {
   const ev = state.events.find(e => e.id === req.params.id);
@@ -705,77 +475,12 @@ app.get('/finance/export', requireAuth, (req, res) => {
   res.send('Date,Type,Description,Montant\n');
 });
 
-// ADMIN USERS
-app.get('/api/admin/users', requireAuth, (req, res) => {
-  res.json(state.members);
-});
-
-app.get('/api/admin/users/:id', requireAuth, (req, res) => {
-  const user = state.members.find(m => m.id === req.params.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ user });
-});
-
-app.put('/api/admin/users/:id', requireAuth, (req, res) => {
-  state.members = state.members.map(m => m.id === req.params.id ? { ...m, ...req.body } : m);
-  const user = state.members.find(m => m.id === req.params.id);
-  res.json({ user });
-});
-
-app.delete('/api/admin/users/:id', requireAuth, (req, res) => {
-  state.members = state.members.filter(m => m.id !== req.params.id);
-  res.json({ ok: true });
-});
-
-app.post('/api/admin/users/:id/make-admin', requireAuth, (req, res) => {
-  const { isAdmin } = req.body || {};
-  const ADMIN_PERMISSIONS = ['ADMIN', 'drive_vehicles', 'access_myrbe', 'site:management'];
-  
-  state.members = state.members.map(m => {
-    if (m.id === req.params.id) {
-      const perms = m.permissions || [];
-      if (isAdmin) {
-        // Ajouter TOUTES les permissions admin
-        ADMIN_PERMISSIONS.forEach(perm => {
-          if (!perms.includes(perm)) {
-            perms.push(perm);
-          }
-        });
-      } else {
-        // Retirer les permissions admin
-        return { ...m, permissions: perms.filter(p => !ADMIN_PERMISSIONS.includes(p)) };
-      }
-      return { ...m, permissions: perms };
-    }
-    return m;
-  });
-  const user = state.members.find(m => m.id === req.params.id);
-  const role = (user.permissions && user.permissions.includes('ADMIN')) ? 'ADMIN' : 'MEMBER';
-  res.json({ user: { ...user, role }, permissions: user.permissions || [] });
-});
-
-app.get('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
-  const user = state.members.find(m => m.id === req.params.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ permissions: user.permissions || [] });
-});
-
 // Generic error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Initialize database and start server
-(async () => {
-  await initDatabase();
-  app.listen(PORT, () => {
-    console.log(`API reconstruction server running on port ${PORT}`);
-    if (!useDatabase) {
-      console.log('📝 Note: Using in-memory storage. Data will be lost on restart.');
-    }
-  });
-})().catch(err => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
+app.listen(PORT, () => {
+  console.log(`API reconstruction server running on port ${PORT}`);
 });
