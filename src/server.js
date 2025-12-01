@@ -263,6 +263,12 @@ app.post(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
   state.vehicles.push(newVehicle);
   res.status(201).json({ parc, ...newVehicle });
 });
+app.get(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
+  const { parc } = req.params;
+  const vehicle = state.vehicles.find(v => v.parc === parc);
+  if (!vehicle) return res.status(404).json({ error: 'Véhicule non trouvé' });
+  res.json(vehicle);
+});
 app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
   const { parc } = req.params;
   state.vehicles = state.vehicles.map(v => (v.parc === parc ? { ...v, ...req.body } : v));
