@@ -511,6 +511,109 @@ app.get('/finance/export', requireAuth, (req, res) => {
   res.send('Date,Type,Description,Montant\n');
 });
 
+// PERMISSIONS & ADMIN endpoints
+app.get('/api/admin/users', requireAuth, (req, res) => {
+  const users = state.members.map(m => ({
+    id: m.id,
+    email: m.email,
+    firstName: m.firstName,
+    lastName: m.lastName,
+    status: m.status || 'active',
+    permissions: m.permissions || [],
+    createdAt: m.createdAt
+  }));
+  res.json(users);
+});
+
+app.get(['/api/admin/users/:id/permissions', '/api/user-permissions/:id'], requireAuth, (req, res) => {
+  const member = state.members.find(m => m.id === req.params.id);
+  if (!member) return res.status(404).json({ error: 'User not found' });
+  res.json({ 
+    permissions: member.permissions || [],
+    userId: member.id,
+    email: member.email
+  });
+});
+
+// NEWSLETTER endpoints
+app.get('/newsletter', requireAuth, (req, res) => {
+  const subscribers = state.members.map(m => ({
+    id: m.id,
+    email: m.email,
+    status: 'CONFIRMED',
+    subscribedAt: m.createdAt,
+    firstName: m.firstName,
+    lastName: m.lastName
+  }));
+  res.json(subscribers);
+});
+
+app.post('/newsletter', requireAuth, (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  const id = 'sub_' + uid();
+  const subscriber = {
+    id,
+    email,
+    status: 'CONFIRMED',
+    subscribedAt: new Date().toISOString()
+  };
+  state.members.push({
+    id: subscriber.id,
+    email: subscriber.email,
+    firstName: email.split('@')[0],
+    lastName: 'Newsletter',
+    status: 'active',
+    permissions: [],
+    createdAt: new Date().toISOString()
+  });
+  res.status(201).json(subscriber);
+});
+
+app.get('/newsletter/:id', requireAuth, (req, res) => {
+  const member = state.members.find(m => m.id === req.params.id);
+  if (!member) return res.status(404).json({ error: 'Subscriber not found' });
+  res.json({
+    id: member.id,
+    email: member.email,
+    status: 'CONFIRMED',
+    subscribedAt: member.createdAt
+  });
+});
+
+app.put('/newsletter/:id/status', requireAuth, (req, res) => {
+  const { status } = req.body || {};
+  const idx = state.members.findIndex(m => m.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Subscriber not found' });
+  state.members[idx].status = status || 'active';
+  res.json({ ok: true, status });
+});
+
+app.delete('/newsletter/:id', requireAuth, (req, res) => {
+  state.members = state.members.filter(m => m.id !== req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/newsletter/stats', requireAuth, (req, res) => {
+  res.json({
+    total: state.members.length,
+    confirmed: state.members.length,
+    pending: 0
+  });
+});
+
+app.get('/newsletter/export', requireAuth, (req, res) => {
+  const format = req.query.format || 'csv';
+  if (format === 'csv') {
+    res.header('Content-Type', 'text/csv');
+    const csv = 'Email,Status,SubscribedAt\n' + 
+      state.members.map(m => `"${m.email}","CONFIRMED","${m.createdAt}"`).join('\n');
+    res.send(csv);
+  } else {
+    res.json(state.members.map(m => ({ email: m.email, status: 'CONFIRMED' })));
+  }
+});
+
 // Generic error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err);
