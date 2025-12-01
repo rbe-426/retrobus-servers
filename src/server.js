@@ -247,6 +247,22 @@ app.post(['/api/notifications/:id/read','/notifications/:id/read'], requireAuth,
 app.get(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
   res.json({ vehicles: state.vehicles });
 });
+app.post(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
+  const { parc, marque, modele, etat, fuel, caracteristiques, ...rest } = req.body || {};
+  if (!parc) return res.status(400).json({ error: 'parc requis' });
+  if (state.vehicles.find(v => v.parc === parc)) return res.status(409).json({ error: 'Véhicule déjà existant' });
+  const newVehicle = {
+    parc,
+    marque: marque || '',
+    modele: modele || '',
+    etat: etat || 'disponible',
+    fuel: fuel || 0,
+    caracteristiques: caracteristiques || [],
+    ...rest
+  };
+  state.vehicles.push(newVehicle);
+  res.status(201).json({ parc, ...newVehicle });
+});
 app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
   const { parc } = req.params;
   state.vehicles = state.vehicles.map(v => (v.parc === parc ? { ...v, ...req.body } : v));
