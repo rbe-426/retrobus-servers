@@ -1203,6 +1203,15 @@ app.get('/api/finance/documents', requireAuth, (req, res) => {
   res.json({ documents: state.documents || [] });
 });
 
+// Quote templates endpoint (returns empty array - stored locally in frontend)
+app.get('/api/quote-templates', requireAuth, (req, res) => {
+  res.json([]);
+});
+app.post('/api/quote-templates', requireAuth, (req, res) => {
+  const template = { id: uid(), ...req.body };
+  res.status(201).json(template);
+});
+
 // Generic error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err);
