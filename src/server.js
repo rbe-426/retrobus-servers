@@ -283,7 +283,7 @@ app.get(['/public/vehicles/:parc'], (req, res) => {
 
 // VEHICLES - Protected endpoints (auth required)
 app.get(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
-  res.json({ vehicles: state.vehicles });
+  res.json(state.vehicles);
 });
 app.post(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
   const { parc, marque, modele, etat, fuel, caracteristiques, ...rest } = req.body || {};
