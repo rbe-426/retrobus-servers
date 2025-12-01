@@ -3,7 +3,7 @@
 // Datasource & generator placeholders (adapter plus tard à PostgreSQL)
 
 datasource db {
-  provider = "sqlite" // bascule vers postgresql quand prêt
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -87,4 +87,88 @@ model ExpenseReport {
   createdAt   DateTime @default(now())
   reimbursedAt DateTime?
   closedAt    DateTime?
+}
+
+// ===== ADMINISTRATION VÉHICULES =====
+
+model VehicleGrayscale {
+  id                String   @id @default(cuid())
+  vehicleId         String   @unique // référence au véhicule (parc)
+  currentGrayscaleNumber String // numéro CG actuelle
+  currentGrayscaleUrl String? // URL du fichier CG
+  previousGrayscaleNumber String? // ancienne CG
+  previousGrayscaleUrl String? // URL ancienne CG
+  registrationDate  DateTime?
+  expiresAt         DateTime?
+  status            String   @default("valid") // valid | expired
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model VehicleCessionCertificate {
+  id                String   @id @default(cuid())
+  vehicleId         String   @unique // référence au véhicule (parc)
+  certificateUrl    String? // URL du fichier de cession
+  issuedDate        DateTime?
+  issuedBy          String? // nom du vendeur
+  status            String   @default("active") // active | archived
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model VehicleInsurance {
+  id                String   @id @default(cuid())
+  vehicleId         String   @unique // référence au véhicule (parc)
+  attestationUrl    String? // URL attestation PDF
+  insuranceCompany  String? // nom assureur
+  policyNumber      String? // numéro police
+  validFrom         DateTime? // date début validité
+  validUntil        DateTime? // date fin validité
+  validFromTime     String? // heure début (HH:mm)
+  validUntilTime    String? // heure fin (HH:mm)
+  status            String   @default("valid") // valid | expired | pending
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model VehicleInspection {
+  id                String   @id @default(cuid())
+  vehicleId         String   // référence au véhicule (parc)
+  attestationUrl    String? // URL attestation CT
+  inspectionDate    DateTime? // date du dernier CT
+  expiryDate        DateTime? // date expiration CT
+  mileage           Int? // kilométrage au CT
+  status            String   @default("valid") // valid | expired | contravisite | pending
+  defects           String? // défauts relevés (JSON)
+  nextInspectionDate DateTime? // date prochain CT obligatoire
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  @@unique([vehicleId, inspectionDate]) // un seul CT par date
+}
+
+model VehicleScheduleItem {
+  id                String   @id @default(cuid())
+  vehicleId         String // référence au véhicule (parc)
+  type              String // "cg" | "insurance" | "inspection" | "maintenance" | "custom"
+  description       String // ex: "Renouvellement assurance"
+  dueDate           DateTime
+  dueTime           String? // heure (HH:mm)
+  priority          String   @default("normal") // low | normal | high | critical
+  status            String   @default("pending") // pending | completed | overdue
+  notes             String? // notes additionnelles
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  @@index([vehicleId])
+  @@index([dueDate])
+}
+
+model VehicleAdministrativeNote {
+  id                String   @id @default(cuid())
+  vehicleId         String // référence au véhicule (parc)
+  category          String // "administrative" | "maintenance" | "legal" | "other"
+  content           String // contenu de la note
+  attachmentUrl     String? // URL d'une pièce jointe si nécessaire
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  @@index([vehicleId])
 }

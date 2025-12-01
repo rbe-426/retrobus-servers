@@ -6,12 +6,14 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getLatestBackup } from '../backup-utils.mjs';
+import { PrismaClient } from '@prisma/client';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
+const prisma = new PrismaClient();
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 4000;
@@ -1846,6 +1848,246 @@ app.post('/api/admin/users/:userId/make-admin', requireAuth, (req, res) => {
   });
 });
 
+// ===== ENDPOINTS ADMINISTRATION VÉHICULES (PERSISTE DANS PRISMA) =====
+
+// Cartes Grises - GET
+app.get(['/vehicles/:parc/grayscale','/api/vehicles/:parc/grayscale'], requireAuth, async (req, res) => {
+  try {
+    const grayscale = await prisma.vehicleGrayscale.findUnique({
+      where: { vehicleId: req.params.parc }
+    });
+    res.json(grayscale || { vehicleId: req.params.parc });
+  } catch (e) {
+    console.error('Erreur lecture CG:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cartes Grises - PUT
+app.put(['/vehicles/:parc/grayscale','/api/vehicles/:parc/grayscale'], requireAuth, async (req, res) => {
+  try {
+    const { currentGrayscaleNumber, currentGrayscaleUrl, previousGrayscaleNumber, previousGrayscaleUrl, registrationDate, expiresAt } = req.body;
+    const grayscale = await prisma.vehicleGrayscale.upsert({
+      where: { vehicleId: req.params.parc },
+      update: { currentGrayscaleNumber, currentGrayscaleUrl, previousGrayscaleNumber, previousGrayscaleUrl, registrationDate, expiresAt, status: expiresAt && new Date(expiresAt) < new Date() ? 'expired' : 'valid' },
+      create: { vehicleId: req.params.parc, currentGrayscaleNumber, currentGrayscaleUrl, previousGrayscaleNumber, previousGrayscaleUrl, registrationDate, expiresAt, status: expiresAt && new Date(expiresAt) < new Date() ? 'expired' : 'valid' }
+    });
+    res.json(grayscale);
+  } catch (e) {
+    console.error('Erreur sauvegarde CG:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Certificat de Cession - GET
+app.get(['/vehicles/:parc/cession','/api/vehicles/:parc/cession'], requireAuth, async (req, res) => {
+  try {
+    const cession = await prisma.vehicleCessionCertificate.findUnique({
+      where: { vehicleId: req.params.parc }
+    });
+    res.json(cession || { vehicleId: req.params.parc });
+  } catch (e) {
+    console.error('Erreur lecture cession:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Certificat de Cession - PUT
+app.put(['/vehicles/:parc/cession','/api/vehicles/:parc/cession'], requireAuth, async (req, res) => {
+  try {
+    const { certificateUrl, issuedDate, issuedBy } = req.body;
+    const cession = await prisma.vehicleCessionCertificate.upsert({
+      where: { vehicleId: req.params.parc },
+      update: { certificateUrl, issuedDate, issuedBy },
+      create: { vehicleId: req.params.parc, certificateUrl, issuedDate, issuedBy }
+    });
+    res.json(cession);
+  } catch (e) {
+    console.error('Erreur sauvegarde cession:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Assurance - GET
+app.get(['/vehicles/:parc/insurance','/api/vehicles/:parc/insurance'], requireAuth, async (req, res) => {
+  try {
+    const insurance = await prisma.vehicleInsurance.findUnique({
+      where: { vehicleId: req.params.parc }
+    });
+    res.json(insurance || { vehicleId: req.params.parc });
+  } catch (e) {
+    console.error('Erreur lecture assurance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Assurance - PUT
+app.put(['/vehicles/:parc/insurance','/api/vehicles/:parc/insurance'], requireAuth, async (req, res) => {
+  try {
+    const { attestationUrl, insuranceCompany, policyNumber, validFrom, validUntil, validFromTime, validUntilTime } = req.body;
+    const isExpired = validUntil && new Date(validUntil) < new Date();
+    const insurance = await prisma.vehicleInsurance.upsert({
+      where: { vehicleId: req.params.parc },
+      update: { attestationUrl, insuranceCompany, policyNumber, validFrom, validUntil, validFromTime, validUntilTime, status: isExpired ? 'expired' : 'valid' },
+      create: { vehicleId: req.params.parc, attestationUrl, insuranceCompany, policyNumber, validFrom, validUntil, validFromTime, validUntilTime, status: isExpired ? 'expired' : 'valid' }
+    });
+    res.json(insurance);
+  } catch (e) {
+    console.error('Erreur sauvegarde assurance:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Contrôle Technique - GET dernier CT
+app.get(['/vehicles/:parc/inspection','/api/vehicles/:parc/inspection'], requireAuth, async (req, res) => {
+  try {
+    const inspection = await prisma.vehicleInspection.findFirst({
+      where: { vehicleId: req.params.parc },
+      orderBy: { inspectionDate: 'desc' },
+      take: 1
+    });
+    res.json(inspection || { vehicleId: req.params.parc });
+  } catch (e) {
+    console.error('Erreur lecture CT:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Contrôle Technique - GET tous les CT
+app.get(['/vehicles/:parc/inspections','/api/vehicles/:parc/inspections'], requireAuth, async (req, res) => {
+  try {
+    const inspections = await prisma.vehicleInspection.findMany({
+      where: { vehicleId: req.params.parc },
+      orderBy: { inspectionDate: 'desc' }
+    });
+    res.json({ inspections });
+  } catch (e) {
+    console.error('Erreur lecture CT:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Contrôle Technique - POST nouveau CT
+app.post(['/vehicles/:parc/inspection','/api/vehicles/:parc/inspection'], requireAuth, async (req, res) => {
+  try {
+    const { attestationUrl, inspectionDate, expiryDate, mileage, status, defects, nextInspectionDate } = req.body;
+    const inspection = await prisma.vehicleInspection.create({
+      data: {
+        vehicleId: req.params.parc,
+        attestationUrl,
+        inspectionDate,
+        expiryDate,
+        mileage,
+        status: status || (expiryDate && new Date(expiryDate) < new Date() ? 'expired' : 'valid'),
+        defects,
+        nextInspectionDate
+      }
+    });
+    res.status(201).json(inspection);
+  } catch (e) {
+    console.error('Erreur création CT:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Échéancier - GET tous les échéanciers pour un véhicule
+app.get(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAuth, async (req, res) => {
+  try {
+    const schedule = await prisma.vehicleScheduleItem.findMany({
+      where: { vehicleId: req.params.parc },
+      orderBy: { dueDate: 'asc' }
+    });
+    res.json({ schedule });
+  } catch (e) {
+    console.error('Erreur lecture échéancier:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Échéancier - GET global tous les véhicules
+app.get(['/vehicles/schedule/all','/api/vehicles/schedule/all'], requireAuth, async (req, res) => {
+  try {
+    const schedule = await prisma.vehicleScheduleItem.findMany({
+      orderBy: { dueDate: 'asc' }
+    });
+    res.json({ schedule });
+  } catch (e) {
+    console.error('Erreur lecture échéancier global:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Échéancier - POST ajouter une ligne
+app.post(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAuth, async (req, res) => {
+  try {
+    const { type, description, dueDate, dueTime, priority, notes } = req.body;
+    const item = await prisma.vehicleScheduleItem.create({
+      data: {
+        vehicleId: req.params.parc,
+        type,
+        description,
+        dueDate,
+        dueTime,
+        priority: priority || 'normal',
+        status: 'pending',
+        notes
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('Erreur création ligne échéancier:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Échéancier - PUT marquer comme complété
+app.put(['/vehicles/schedule/:itemId','/api/vehicles/schedule/:itemId'], requireAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const item = await prisma.vehicleScheduleItem.update({
+      where: { id: req.params.itemId },
+      data: { status }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('Erreur mise à jour échéancier:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Notes Administratives - GET
+app.get(['/vehicles/:parc/notes','/api/vehicles/:parc/notes'], requireAuth, async (req, res) => {
+  try {
+    const notes = await prisma.vehicleAdministrativeNote.findMany({
+      where: { vehicleId: req.params.parc },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ notes });
+  } catch (e) {
+    console.error('Erreur lecture notes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Notes Administratives - POST
+app.post(['/vehicles/:parc/notes','/api/vehicles/:parc/notes'], requireAuth, async (req, res) => {
+  try {
+    const { category, content, attachmentUrl } = req.body;
+    const note = await prisma.vehicleAdministrativeNote.create({
+      data: {
+        vehicleId: req.params.parc,
+        category,
+        content,
+        attachmentUrl
+      }
+    });
+    res.status(201).json(note);
+  } catch (e) {
+    console.error('Erreur création note:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Generic error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err);
@@ -1856,4 +2098,17 @@ app.listen(PORT, async () => {
   console.log(`API reconstruction server running on port ${PORT}`);
   // Initialize data from backup (with permissions)
   await initializeFromBackup();
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Arrêt du serveur...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Arrêt du serveur (SIGTERM)...');
+  await prisma.$disconnect();
+  process.exit(0);
 });
