@@ -4,9 +4,9 @@ const { Client } = pkg;
 const client = new Client({
   host: 'yamanote.proxy.rlwy.net',
   port: 18663,
-  database: 'retrobus',
+  database: 'railway',
   user: 'postgres',
-  password: 'hXjLJGLVlqkQF8f2'
+  password: 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot'
 });
 
 try {
