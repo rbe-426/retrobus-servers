@@ -43,6 +43,21 @@ const state = {
   notifications: [
     { id: 'n1', type: 'info', message: 'Serveur API reconstruit', createdAt: new Date().toISOString(), read: false }
   ],
+  events: [
+    // Événement de test pour l'affichage public
+    { 
+      id: 'ev-demo-1', 
+      title: 'RétroWouh ! Halloween', 
+      description: 'Grand événement de RétroBus avec participation publique',
+      status: 'PUBLISHED',
+      date: '2024-10-31',
+      location: 'Essonne',
+      isVisible: true,
+      allowPublicRegistration: true,
+      requiresRegistration: true,
+      createdAt: new Date().toISOString()
+    }
+  ],
   vehicles: [
     { parc: 'RBE-001', marque: 'Renault', modele: 'Master', etat: 'disponible', fuel: 70, caracteristiques: [{ label: 'Niveau gasoil', value: '70' }] },
     { parc: 'RBE-002', marque: 'Iveco', modele: 'Daily', etat: 'maintenance', fuel: 45, caracteristiques: [] }
@@ -254,7 +269,19 @@ app.post(['/api/notifications/:id/read','/notifications/:id/read'], requireAuth,
   res.json({ notification: n });
 });
 
-// VEHICLES
+// VEHICLES - Public endpoints (no auth required)
+app.get(['/public/vehicles'], (req, res) => {
+  res.json(state.vehicles);
+});
+
+app.get(['/public/vehicles/:parc'], (req, res) => {
+  const { parc } = req.params;
+  const vehicle = state.vehicles.find(v => v.parc === parc);
+  if (!vehicle) return res.status(404).json({ error: 'Véhicule non trouvé' });
+  res.json(vehicle);
+});
+
+// VEHICLES - Protected endpoints (auth required)
 app.get(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
   res.json({ vehicles: state.vehicles });
 });
@@ -409,7 +436,24 @@ app.get('/api/documents/:id/download', requireAuth, (req, res) => {
   res.status(404).json({ error: 'Not implemented file storage' });
 });
 
-// EVENTS
+// EVENTS - Public endpoints (no auth required)
+app.get(['/public/events'], (req, res) => {
+  // Retourner seulement les événements publiés
+  const publicEvents = state.events.filter(e => e.status === 'PUBLISHED' || e.status === 'published');
+  res.json(publicEvents);
+});
+
+app.get(['/public/events/:id'], (req, res) => {
+  const ev = state.events.find(e => e.id === req.params.id);
+  if (!ev) return res.status(404).json({ error: 'Événement non trouvé' });
+  // Vérifier que l'événement est public
+  if (ev.status !== 'PUBLISHED' && ev.status !== 'published') {
+    return res.status(404).json({ error: 'Événement non disponible' });
+  }
+  res.json(ev);
+});
+
+// EVENTS - Protected endpoints (auth required)
 app.get('/events', requireAuth, (req, res) => {
   res.json({ events: state.events });
 });
