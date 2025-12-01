@@ -686,18 +686,21 @@ app.post(['/flashes','/api/flashes'], requireAuth, (req, res) => {
   const { title, message, active = false } = req.body || {};
   const item = { id: 'f' + Date.now(), title, message, active: !!active, createdAt: new Date().toISOString() };
   state.flashes.unshift(item);
+  debouncedSave();
   res.status(201).json(item);
 });
 app.put(['/flashes/:id','/api/flashes/:id'], requireAuth, (req, res) => {
   const idx = state.flashes.findIndex(f => f.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Flash introuvable' });
   state.flashes[idx] = { ...state.flashes[idx], ...req.body };
+  debouncedSave();
   res.json(state.flashes[idx]);
 });
 app.delete(['/flashes/:id','/api/flashes/:id'], requireAuth, (req, res) => {
   const before = state.flashes.length;
   state.flashes = state.flashes.filter(f => f.id !== req.params.id);
   if (before === state.flashes.length) return res.status(404).json({ error: 'Flash introuvable' });
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -722,11 +725,13 @@ app.get(['/api/notifications/preferences','/notifications/preferences'], require
 app.post(['/api/notifications/inbox','/notifications/inbox'], requireAuth, (req, res) => {
   const n = { id: 'n' + Date.now(), type: req.body?.type || 'info', message: req.body?.message || '', createdAt: new Date().toISOString(), read: false };
   state.notifications.unshift(n);
+  debouncedSave();
   res.status(201).json({ notification: n });
 });
 app.post(['/api/notifications/:id/read','/notifications/:id/read'], requireAuth, (req, res) => {
   state.notifications = state.notifications.map(n => n.id === req.params.id ? { ...n, read: true } : n);
   const n = state.notifications.find(n => n.id === req.params.id);
+  debouncedSave();
   res.json({ notification: n });
 });
 
@@ -744,6 +749,7 @@ app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
   const { parc } = req.params;
   state.vehicles = state.vehicles.map(v => (v.parc === parc ? { ...v, ...req.body } : v));
   const v = state.vehicles.find(v => v.parc === parc);
+  debouncedSave();
   res.json({ vehicle: v });
 });
 // Usages (historique pointages)
@@ -754,11 +760,13 @@ app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (r
 app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (req, res) => {
   const usage = { id: uid(), parc: req.params.parc, startedAt: new Date().toISOString(), conducteur: req.body?.conducteur || 'Conducteur', note: req.body?.note || '' };
   state.vehicleUsages.push(usage);
+  debouncedSave();
   res.status(201).json(usage);
 });
 app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, (req, res) => {
   state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, endedAt: new Date().toISOString() } : u);
   const u = state.vehicleUsages.find(u => u.id === req.params.id);
+  debouncedSave();
   res.json(u);
 });
 // Maintenance
@@ -769,6 +777,7 @@ app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requi
 app.post(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, (req, res) => {
   const item = { id: uid(), parc: req.params.parc, date: new Date().toISOString(), status: req.body?.status || 'completed', ...req.body };
   state.vehicleMaintenance.unshift(item);
+  debouncedSave();
   res.status(201).json(item);
 });
 // Service schedule
@@ -779,6 +788,7 @@ app.get(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedul
 app.post(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedule'], requireAuth, (req, res) => {
   const item = { id: uid(), parc: req.params.parc, status: 'pending', plannedDate: new Date().toISOString(), ...req.body };
   state.vehicleServiceSchedule.unshift(item);
+  debouncedSave();
   res.status(201).json(item);
 });
 // Maintenance summary
@@ -831,6 +841,7 @@ app.post(['/vehicles/:parc/cg','/api/vehicles/:parc/cg'], requireAuth, (req, res
   }
   
   cg.notes = notes || cg.notes;
+  debouncedSave();
   res.json(cg);
 });
 
@@ -839,6 +850,7 @@ app.put(['/vehicles/:parc/cg/mark-old-barred','/api/vehicles/:parc/cg/mark-old-b
   const cg = state.vehicleCarteGrise.find(c => c.parc === parc);
   if (!cg) return res.status(404).json({ error: 'CG not found' });
   cg.oldCGBarred = true;
+  debouncedSave();
   res.json(cg);
 });
 
@@ -876,6 +888,7 @@ app.post(['/vehicles/:parc/assurance','/api/vehicles/:parc/assurance'], requireA
   const endDate = assurance.dateValidityEnd ? new Date(assurance.dateValidityEnd) : null;
   assurance.isActive = endDate ? endDate > now : false;
   
+  debouncedSave();
   res.json(assurance);
 });
 
@@ -906,6 +919,7 @@ app.post(['/vehicles/:parc/ct','/api/vehicles/:parc/ct'], requireAuth, (req, res
   };
   
   state.vehicleControleTechnique.push(ct);
+  debouncedSave();
   res.status(201).json(ct);
 });
 
@@ -935,6 +949,7 @@ app.post(['/vehicles/:parc/certificat-cession','/api/vehicles/:parc/certificat-c
   
   if (!existing) state.vehicleCertificatCession.push(cert);
   
+  debouncedSave();
   res.json(cert);
 });
 
@@ -965,6 +980,7 @@ app.post(['/vehicles/:parc/echancier','/api/vehicles/:parc/echancier'], requireA
   };
   
   state.vehicleEchancier.push(item);
+  debouncedSave();
   res.status(201).json(item);
 });
 
@@ -978,6 +994,7 @@ app.put(['/vehicles/:parc/echancier/:id','/api/vehicles/:parc/echancier/:id'], r
   if (status) item.status = status;
   if (notes !== undefined) item.notes = notes;
   
+  debouncedSave();
   res.json(item);
 });
 
@@ -987,6 +1004,7 @@ app.delete(['/vehicles/:parc/echancier/:id','/api/vehicles/:parc/echancier/:id']
   if (idx === -1) return res.status(404).json({ error: 'Item not found' });
   
   const deleted = state.vehicleEchancier.splice(idx, 1)[0];
+  debouncedSave();
   res.json(deleted);
 });
 
@@ -1031,6 +1049,7 @@ app.post(['/api/retro-requests'], requireAuth, (req, res) => {
     type: 'news'
   };
   state.retroNews.push(request);
+  debouncedSave();
   res.status(201).json(request);
 });
 
@@ -1046,11 +1065,13 @@ app.put(['/api/retro-requests/:id'], requireAuth, (req, res) => {
     author: req.body.author || state.retroNews[idx].author,
     updatedAt: new Date().toISOString()
   };
+  debouncedSave();
   res.json(state.retroNews[idx]);
 });
 
 app.delete(['/api/retro-requests/:id'], requireAuth, (req, res) => {
   state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -1059,6 +1080,7 @@ app.post(['/api/retro-requests/:id/status'], requireAuth, (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Request not found' });
   
   state.retroNews[idx].status = req.body.status;
+  debouncedSave();
   res.json({ ok: true, news: state.retroNews[idx] });
 });
 
@@ -1077,6 +1099,7 @@ app.post(['/api/retro-news'], requireAuth, (req, res) => {
     author: req.body.author || req.user?.id || 'anonyme'
   };
   state.retroNews.push(news);
+  debouncedSave();
   res.status(201).json(news);
 });
 
@@ -1091,11 +1114,13 @@ app.put(['/api/retro-news/:id'], requireAuth, (req, res) => {
     status: req.body.status || state.retroNews[idx].status,
     updatedAt: new Date().toISOString()
   };
+  debouncedSave();
   res.json(state.retroNews[idx]);
 });
 
 app.delete(['/api/retro-news/:id'], requireAuth, (req, res) => {
   state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -1112,6 +1137,7 @@ app.get(['/api/members/me'], requireAuth, (req, res) => {
 app.post(['/api/members','/members'], requireAuth, (req, res) => {
   const member = { id: uid(), status: 'active', createdAt: new Date().toISOString(), ...req.body };
   state.members.push(member);
+  debouncedSave();
   res.status(201).json({ member });
 });
 app.put(['/api/members','/members'], requireAuth, (req, res) => {
@@ -1163,6 +1189,7 @@ app.post('/api/members/:id/link-access', requireAuth, (req, res) => {
     lastModified: new Date().toISOString()
   };
   
+  debouncedSave();
   res.json({ 
     ok: true, 
     message: 'Accès lié avec succès',
@@ -1293,6 +1320,7 @@ app.post('/api/members/:id/permissions', requireAuth, (req, res) => {
   
   state.userPermissions[id].lastModified = new Date().toISOString();
   
+  debouncedSave();
   res.json({ 
     ok: true, 
     message: 'Permission ajoutée',
@@ -1313,6 +1341,7 @@ app.delete('/api/members/:id/permissions/:resource', requireAuth, (req, res) => 
   );
   state.userPermissions[id].lastModified = new Date().toISOString();
   
+  debouncedSave();
   res.json({ 
     ok: true, 
     message: 'Permission supprimée',
@@ -1379,12 +1408,14 @@ app.get('/api/documents/member/:memberId', requireAuth, (req, res) => {
 });
 app.delete('/api/documents/:id', requireAuth, (req, res) => {
   state.documents = state.documents.filter(d => d.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 app.put('/api/documents/:id/status', requireAuth, (req, res) => {
   const { id } = req.params; const { status } = req.body;
   state.documents = state.documents.map(d => d.id === id ? { ...d, status } : d);
   const doc = state.documents.find(d => d.id === id);
+  debouncedSave();
   res.json({ document: doc });
 });
 app.get('/api/documents/expiring', requireAuth, (req, res) => {
@@ -1414,10 +1445,15 @@ app.post(['/events', '/api/events'], requireAuth, (req, res) => {
 app.put(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
   state.events = state.events.map(e => e.id === req.params.id ? { ...e, ...req.body } : e);
   const ev = state.events.find(e => e.id === req.params.id);
+  
+  // Persister dans le backup JSON
+  debouncedSave();
+  
   res.json({ event: ev });
 });
 app.delete(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
   state.events = state.events.filter(e => e.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -1432,6 +1468,7 @@ app.get(['/finance/bank-balance', '/api/finance/bank-balance'], requireAuth, (re
 });
 app.post(['/finance/bank-balance', '/api/finance/bank-balance'], requireAuth, (req, res) => {
   state.bankBalance = Number(req.body.balance || 0);
+  debouncedSave();
   res.json({ data: { balance: state.bankBalance } });
 });
 
@@ -1445,15 +1482,18 @@ app.get(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requ
 app.post(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requireAuth, (req, res) => {
   const op = { id: uid(), ...req.body };
   state.scheduled.push(op);
+  debouncedSave();
   res.status(201).json(op);
 });
 app.put(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, (req, res) => {
   state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body } : o);
   const op = state.scheduled.find(o => o.id === req.params.id);
+  debouncedSave();
   res.json(op);
 });
 app.delete(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, (req, res) => {
   state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 app.post('/finance/scheduled-expenses/:id/execute', requireAuth, (req, res) => {
@@ -1465,6 +1505,7 @@ app.post('/finance/scheduled-expenses/:id/execute', requireAuth, (req, res) => {
     state.scheduled = state.scheduled.filter(o => o.id !== op.id);
   }
   if (tx.type === 'recette') state.bankBalance += tx.amount; else state.bankBalance -= tx.amount;
+  debouncedSave();
   res.json({ ok: true, transaction: tx });
 });
 
@@ -1481,15 +1522,18 @@ app.post('/finance/transactions', requireAuth, (req, res) => {
   const tx = { id: uid(), date: today(), ...req.body };
   state.transactions.unshift(tx);
   if (tx.type === 'recette') state.bankBalance += Number(tx.amount||0); else state.bankBalance -= Number(tx.amount||0);
+  debouncedSave();
   res.status(201).json(tx);
 });
 app.put('/finance/transactions/:id', requireAuth, (req, res) => {
   state.transactions = state.transactions.map(t => t.id === req.params.id ? { ...t, ...req.body } : t);
   const tx = state.transactions.find(t => t.id === req.params.id);
+  debouncedSave();
   res.json(tx);
 });
 app.delete('/finance/transactions/:id', requireAuth, (req, res) => {
   state.transactions = state.transactions.filter(t => t.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -1702,16 +1746,19 @@ app.get('/api/quote-templates', requireAuth, (req, res) => {
 app.post('/api/quote-templates', requireAuth, (req, res) => {
   const template = { id: uid(), ...req.body, createdAt: new Date().toISOString() };
   state.quoteTemplates.push(template);
+  debouncedSave();
   res.status(201).json(template);
 });
 app.put('/api/quote-templates/:id', requireAuth, (req, res) => {
   const idx = state.quoteTemplates.findIndex(t => t.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   state.quoteTemplates[idx] = { ...state.quoteTemplates[idx], ...req.body, updatedAt: new Date().toISOString() };
+  debouncedSave();
   res.json(state.quoteTemplates[idx]);
 });
 app.delete('/api/quote-templates/:id', requireAuth, (req, res) => {
   state.quoteTemplates = state.quoteTemplates.filter(t => t.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -1737,6 +1784,7 @@ app.post('/api/devis-lines', requireAuth, (req, res) => {
     createdAt: new Date().toISOString()
   };
   state.devisLines.push(line);
+  debouncedSave();
   res.status(201).json(line);
 });
 
@@ -1744,11 +1792,13 @@ app.put('/api/devis-lines/:lineId', requireAuth, (req, res) => {
   const idx = state.devisLines.findIndex(l => l.id === req.params.lineId);
   if (idx === -1) return res.status(404).json({ error: 'Line not found' });
   state.devisLines[idx] = { ...state.devisLines[idx], ...req.body, updatedAt: new Date().toISOString() };
+  debouncedSave();
   res.json(state.devisLines[idx]);
 });
 
 app.delete('/api/devis-lines/:lineId', requireAuth, (req, res) => {
   state.devisLines = state.devisLines.filter(l => l.id !== req.params.lineId);
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -1764,6 +1814,7 @@ app.post('/api/financial-documents', requireAuth, (req, res) => {
     createdAt: new Date().toISOString()
   };
   state.financialDocuments.push(doc);
+  debouncedSave();
   res.status(201).json(doc);
 });
 
@@ -1771,11 +1822,13 @@ app.put('/api/financial-documents/:docId', requireAuth, (req, res) => {
   const idx = state.financialDocuments.findIndex(d => d.id === req.params.docId);
   if (idx === -1) return res.status(404).json({ error: 'Document not found' });
   state.financialDocuments[idx] = { ...state.financialDocuments[idx], ...req.body, updatedAt: new Date().toISOString() };
+  debouncedSave();
   res.json(state.financialDocuments[idx]);
 });
 
 app.delete('/api/financial-documents/:docId', requireAuth, (req, res) => {
   state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.docId);
+  debouncedSave();
   res.json({ ok: true });
 });
 
@@ -1833,6 +1886,7 @@ app.post('/api/admin/users/:userId/make-admin', requireAuth, (req, res) => {
   // Update role in siteUsers
   siteUser.role = 'ADMIN';
   
+  debouncedSave();
   console.log(`✅ Admin permissions granted to ${siteUser.firstName} ${siteUser.lastName}`);
   
   res.json({
