@@ -20,8 +20,8 @@ const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
 // Try to load pg package dynamically
 async function initPgClient() {
   try {
-    const pkg = await import('pg');
-    const { Client } = pkg;
+    const { default: pg } = await import('pg');
+    const { Client } = pg;
     
     // Utiliser l'URL interne si on est sur Railway, sinon l'URL publique
     let connectionConfig;
@@ -215,19 +215,19 @@ async function initializeFromPostgres() {
     
     // Load vehicles
     const vehiclesRes = await pgClient.query(`
-      SELECT id, "parkingNumber", brand, model, status, "fuelLevel", "createdAt"
+      SELECT id, parc, marque, modele, etat, fuel, "createdAt"
       FROM "Vehicle"
       LIMIT 100
     `);
     
     if (vehiclesRes.rows.length > 0) {
       state.vehicles = vehiclesRes.rows.map(v => ({
-        parc: v.parkingNumber,
-        marque: v.brand,
-        modele: v.model,
-        etat: v.status,
-        fuel: v.fuelLevel || 0,
-        caracteristiques: [{ label: 'Niveau carburant', value: String(v.fuelLevel || 0) }],
+        parc: v.parc,
+        marque: v.marque,
+        modele: v.modele,
+        etat: v.etat,
+        fuel: v.fuel || 0,
+        caracteristiques: [{ label: 'Niveau carburant', value: String(v.fuel || 0) }],
         id: v.id,
         createdAt: v.createdAt?.toISOString() || new Date().toISOString()
       }));
