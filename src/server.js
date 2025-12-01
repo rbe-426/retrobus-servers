@@ -260,6 +260,188 @@ async function initializeFromPostgres() {
       console.log(`   📅 ${state.events.length} événements chargés depuis PostgreSQL`);
     }
     
+    // Load financial categories
+    const categoriesRes = await pgClient.query(`
+      SELECT id, name, type FROM finance_categories LIMIT 50
+    `);
+    
+    if (categoriesRes.rows.length > 0) {
+      state.categories = categoriesRes.rows.map(c => ({
+        id: c.id,
+        name: c.name,
+        type: c.type || 'depense'
+      }));
+      console.log(`   💰 ${state.categories.length} catégories financières chargées`);
+    }
+    
+    // Load financial transactions
+    const transactionsRes = await pgClient.query(`
+      SELECT id, category, amount, description, date, "createdAt", "createdBy"
+      FROM finance_transactions
+      LIMIT 500
+    `);
+    
+    if (transactionsRes.rows.length > 0) {
+      state.transactions = transactionsRes.rows.map(t => ({
+        id: t.id,
+        category: t.category,
+        amount: t.amount,
+        description: t.description,
+        date: t.date,
+        createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
+        createdBy: t.createdBy
+      }));
+      console.log(`   📊 ${state.transactions.length} transactions chargées`);
+    }
+    
+    // Load financial balance
+    const balanceRes = await pgClient.query(`
+      SELECT amount FROM finance_balances ORDER BY "updatedAt" DESC LIMIT 1
+    `);
+    
+    if (balanceRes.rows.length > 0) {
+      state.bankBalance = balanceRes.rows[0].amount || 0;
+      console.log(`   🏦 Solde: ${state.bankBalance}€`);
+    }
+    
+    // Load expense reports
+    const expenseRes = await pgClient.query(`
+      SELECT id, title, description, amount, status, "createdAt", "createdBy"
+      FROM finance_expense_reports
+      LIMIT 100
+    `);
+    
+    if (expenseRes.rows.length > 0) {
+      state.expenseReports = expenseRes.rows.map(e => ({
+        id: e.id,
+        title: e.title,
+        description: e.description,
+        amount: e.amount,
+        status: e.status,
+        createdAt: e.createdAt?.toISOString() || new Date().toISOString(),
+        createdBy: e.createdBy
+      }));
+      console.log(`   📋 ${state.expenseReports.length} rapports de dépenses chargés`);
+    }
+    
+    // Load user permissions
+    const permissionsRes = await pgClient.query(`
+      SELECT id, "userId", resource, actions, "membershipType", "linkedAt"
+      FROM user_permissions
+      LIMIT 200
+    `);
+    
+    if (permissionsRes.rows.length > 0) {
+      permissionsRes.rows.forEach(p => {
+        if (!state.userPermissions[p.userId]) {
+          state.userPermissions[p.userId] = { permissions: [] };
+        }
+        state.userPermissions[p.userId].permissions.push({
+          id: p.id,
+          resource: p.resource,
+          actions: p.actions || [],
+          membershipType: p.membershipType,
+          linkedAt: p.linkedAt
+        });
+      });
+      console.log(`   🔐 ${Object.keys(state.userPermissions).length} utilisateurs avec permissions chargés`);
+    }
+    
+    // Load RetroNews
+    const newsRes = await pgClient.query(`
+      SELECT id, title, body, status, "publishedAt", "createdAt"
+      FROM "RetroNews"
+      LIMIT 50
+    `);
+    
+    if (newsRes.rows.length > 0) {
+      state.retroNews = newsRes.rows.map(n => ({
+        id: n.id,
+        title: n.title,
+        body: n.body,
+        status: n.status,
+        publishedAt: n.publishedAt?.toISOString() || new Date().toISOString(),
+        createdAt: n.createdAt?.toISOString() || new Date().toISOString()
+      }));
+      console.log(`   📰 ${state.retroNews.length} actualités chargées`);
+    }
+    
+    // Load Flashes
+    const flashRes = await pgClient.query(`
+      SELECT id, title, message, active, "createdAt"
+      FROM "Flash"
+      LIMIT 50
+    `);
+    
+    if (flashRes.rows.length > 0) {
+      state.flashes = flashRes.rows.map(f => ({
+        id: f.id,
+        title: f.title,
+        message: f.message,
+        active: f.active,
+        createdAt: f.createdAt?.toISOString() || new Date().toISOString()
+      }));
+      console.log(`   ⚡ ${state.flashes.length} flashes chargées`);
+    }
+    
+    // Load Documents
+    const docsRes = await pgClient.query(`
+      SELECT id, title, path, "mimeType", size, "createdAt"
+      FROM "Document"
+      LIMIT 100
+    `);
+    
+    if (docsRes.rows.length > 0) {
+      state.documents = docsRes.rows.map(d => ({
+        id: d.id,
+        title: d.title,
+        path: d.path,
+        mimeType: d.mimeType,
+        size: d.size,
+        createdAt: d.createdAt?.toISOString() || new Date().toISOString()
+      }));
+      console.log(`   📄 ${state.documents.length} documents chargés`);
+    }
+    
+    // Load Vehicle Maintenance
+    const maintenanceRes = await pgClient.query(`
+      SELECT id, "vehicleId", type, description, cost, status, date
+      FROM vehicle_maintenance
+      LIMIT 200
+    `);
+    
+    if (maintenanceRes.rows.length > 0) {
+      state.vehicleMaintenance = maintenanceRes.rows.map(m => ({
+        id: m.id,
+        vehicleId: m.vehicleId,
+        type: m.type,
+        description: m.description,
+        cost: m.cost,
+        status: m.status,
+        date: m.date
+      }));
+      console.log(`   🔧 ${state.vehicleMaintenance.length} maintenances de véhicules chargées`);
+    }
+    
+    // Load Vehicle Service Schedule
+    const scheduleRes = await pgClient.query(`
+      SELECT id, "vehicleId", type, description, frequency, status
+      FROM vehicle_service_schedule
+      LIMIT 100
+    `);
+    
+    if (scheduleRes.rows.length > 0) {
+      state.vehicleServiceSchedule = scheduleRes.rows.map(s => ({
+        id: s.id,
+        vehicleId: s.vehicleId,
+        type: s.type,
+        description: s.description,
+        frequency: s.frequency,
+        status: s.status
+      }));
+      console.log(`   📅 ${state.vehicleServiceSchedule.length} services programmés chargés`);
+    }
+    
     // ✅ Marquer l'import comme terminé
     postgresDataImported = true;
     console.log('✅ Initialisation PostgreSQL terminée - données verrouillées en mémoire');
