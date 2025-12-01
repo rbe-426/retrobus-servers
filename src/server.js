@@ -643,6 +643,18 @@ app.get('/public/vehicles/:id/events', (req, res) => {
   res.json([]);
 });
 
+// Internal events endpoints (requireAuth)
+app.get(['/events','/api/events'], requireAuth, (req, res) => {
+  res.json({ events: state.events });
+});
+
+app.get(['/events/:id','/api/events/:id'], requireAuth, (req, res) => {
+  const { id } = req.params;
+  const event = state.events.find(e => e.id === id);
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+  res.json({ event });
+});
+
 // FLASHES
 app.get(['/flashes','/api/flashes'], (req, res) => {
   res.json(state.flashes.filter(f => f.active));
@@ -1474,7 +1486,7 @@ app.delete('/api/finance/scheduled-operations/:id', requireAuth, (req, res) => {
 
 // /api/finance/documents -> returns all documents (finance perspective)
 app.get('/api/finance/documents', requireAuth, (req, res) => {
-  res.json({ documents: state.documents || [] });
+  res.json({ documents: state.financialDocuments || [] });
 });
 
 // Quote templates endpoint - retourner les templates depuis le backup
@@ -1536,7 +1548,7 @@ app.delete('/api/devis-lines/:lineId', requireAuth, (req, res) => {
 
 // Financial documents endpoint (devis, factures, documents)
 app.get('/api/financial-documents', requireAuth, (req, res) => {
-  res.json(state.financialDocuments || []);
+  res.json({ financialDocuments: state.financialDocuments || [] });
 });
 
 app.post('/api/financial-documents', requireAuth, (req, res) => {
