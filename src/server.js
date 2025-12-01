@@ -92,6 +92,9 @@ const state = {
     { id: 'm1', email: 'admin@rbe.test', firstName: 'Admin', lastName: 'RBE', status: 'active', permissions: ['drive_vehicles','access_myrbe'], createdAt: new Date().toISOString() }
   ],
   documents: [],
+  devisLines: [],          // Lignes de devis
+  quoteTemplates: [],      // Templates de devis
+  financialDocuments: [],  // Documents financiers
   flashes: [
     { id: 'f1', title: 'Maintenance serveur', message: 'Redémarrage 02:00 CET', active: true, createdAt: new Date().toISOString() },
     { id: 'f2', title: 'Nouvelle page', message: 'Photothèque RBE', active: false, createdAt: new Date().toISOString() }
@@ -361,6 +364,24 @@ async function initializeFromBackup() {
         uploadedAt: d.uploadedAt || new Date().toISOString()
       }));
       console.log(`   📄 ${state.documents.length} documents restaurés`);
+    }
+
+    // Load Devis Lines
+    if (backupData.tables.DevisLine?.data && backupData.tables.DevisLine.data.length > 0) {
+      state.devisLines = backupData.tables.DevisLine.data;
+      console.log(`   ✍️  ${state.devisLines.length} lignes de devis restaurées`);
+    }
+
+    // Load Quote Templates
+    if (backupData.tables.QuoteTemplate?.data && backupData.tables.QuoteTemplate.data.length > 0) {
+      state.quoteTemplates = backupData.tables.QuoteTemplate.data;
+      console.log(`   📋 ${state.quoteTemplates.length} templates de devis restaurés`);
+    }
+
+    // Load Financial Documents
+    if (backupData.tables.financial_documents?.data && backupData.tables.financial_documents.data.length > 0) {
+      state.financialDocuments = backupData.tables.financial_documents.data;
+      console.log(`   💰 ${state.financialDocuments.length} documents financiers restaurés`);
     }
     
     // Load Vehicle Maintenance

@@ -45,7 +45,10 @@ const tablesToBackup = [
   'StockMovement',
   'Usage',
   'Report',
-  'Changelog'
+  'Changelog',
+  'DevisLine',       // Lignes de devis
+  'QuoteTemplate',   // Templates de devis
+  'financial_documents'  // Documents financiers
 ];
 
 async function backupDatabase() {

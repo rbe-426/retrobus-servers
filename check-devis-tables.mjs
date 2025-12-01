@@ -29,13 +29,19 @@ try {
     });
   }
 
-  // Also check for generic document table
-  const docRes = await client.query(`
-    SELECT COUNT(*) FROM "Document"
-  `);
-  console.log(`\n📄 Documents dans la table Document: ${docRes.rows[0].count}`);
+  // Check tables with data
+  const tables = ['DevisLine', 'QuoteTemplate', 'financial_documents'];
   
-  // List all tables
+  for (const table of tables) {
+    const countRes = await client.query(`SELECT COUNT(*) FROM "${table}"`);
+    const count = countRes.rows[0].count;
+    console.log(`📊 ${table}: ${count} rows`);
+    
+    if (count > 0) {
+      const dataRes = await client.query(`SELECT * FROM "${table}" LIMIT 3`);
+      console.log(`  Sample:`, dataRes.rows);
+    }
+  }
   const allTables = await client.query(`
     SELECT table_name 
     FROM information_schema.tables 
