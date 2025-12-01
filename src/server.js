@@ -792,6 +792,52 @@ app.delete('/api/members/:id/permissions/:resource', requireAuth, (req, res) => 
   });
 });
 
+// PERMISSIONS ENDPOINT - Lookup user role and permissions by memberId or userId
+// Must come BEFORE the /api/user-permissions/:id endpoint with requireAuth
+// because Express matches routes in order and both patterns match
+app.get('/api/user-permissions/:userId', (req, res) => {
+  const userId = req.params.userId;
+  console.log(`🔍 Recherche permissions pour userId: ${userId}`);
+  
+  // Try direct lookup first (if userId is a site_users ID)
+  let userPerms = state.userPermissions[userId];
+  let siteUser = null;
+  
+  // If not found, try to find via linkedMemberId in site_users
+  // This handles the case where userId is a memberId
+  if (!userPerms && state.siteUsers) {
+    console.log(`   🔄 Recherche dans site_users avec linkedMemberId...`);
+    siteUser = state.siteUsers.find(u => u.linkedMemberId === userId);
+    if (siteUser) {
+      console.log(`   ✅ Trouvé site_user: ${siteUser.id}`);
+      userPerms = state.userPermissions[siteUser.id];
+    }
+  }
+  
+  // If no permissions found, return empty with MEMBER role
+  if (!userPerms || !userPerms.permissions || userPerms.permissions.length === 0) {
+    console.log(`   ❌ Aucune permission trouvée - rôle par défaut: MEMBER`);
+    return res.json({ permissions: [], role: 'MEMBER' });
+  }
+  
+  // Build permissions array with resource + actions
+  const permissions = userPerms.permissions.map(p => ({
+    resource: p.resource,
+    actions: p.actions
+  }));
+  
+  // Determine role from permissions: if has ADMIN action in any resource, role is ADMIN
+  const hasAdminPerms = userPerms.permissions.some(p => 
+    p.actions.includes('ADMIN') || p.resource === 'admin'
+  );
+  
+  const role = siteUser?.role || (hasAdminPerms ? 'ADMIN' : 'MEMBER');
+  
+  console.log(`   ✅ Permissions trouvées: ${permissions.length}, rôle: ${role}`);
+  
+  res.json({ permissions, role });
+});
+
 // GET all user permissions (admin endpoint)
 app.get('/api/user-permissions', requireAuth, (req, res) => {
   const allPerms = Object.values(state.userPermissions || {});
@@ -1088,6 +1134,7 @@ app.get('/newsletter/export', requireAuth, (req, res) => {
   }
 });
 
+// New endpoint to check user permissions (no auth required for initial load)
 // Generic error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error', err);
