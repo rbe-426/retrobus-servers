@@ -65,13 +65,23 @@ const today = () => new Date().toISOString().split('T')[0];
 const allowedOrigins = [
   'https://www.retrobus-interne.fr',
   'https://retrobus-interne.fr',
+  'https://www.association-rbe.fr',
+  'https://association-rbe.fr',
   'https://attractive-kindness-rbe-serveurs.up.railway.app',
   'http://localhost:5173',
-  'http://127.0.0.1:5173'
+  'http://127.0.0.1:5173',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001'
 ];
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, origin || true);
+    // Allow requests with no origin (mobile apps, curl requests)
+    if (!origin) return cb(null, true);
+    // Allow if in whitelist
+    if (allowedOrigins.includes(origin)) return cb(null, origin);
+    // Allow all requests in development (comment out in production)
+    if (process.env.NODE_ENV !== 'production') return cb(null, origin);
+    // Reject in production if not in whitelist
     return cb(new Error('CORS bloque: origine non autorisée'));
   },
   credentials: true,
