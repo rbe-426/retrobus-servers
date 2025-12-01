@@ -14,23 +14,47 @@ const pathRoot = process.cwd();
 let pgClient = null;
 let pgAvailable = false;
 
+// Déterminer si on est sur Railway
+const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
+
 // Try to load pg package dynamically
 async function initPgClient() {
   try {
     const pkg = await import('pg');
     const { Client } = pkg;
-    pgClient = new Client({
-      host: process.env.DB_HOST || 'yamanote.proxy.rlwy.net',
-      port: process.env.DB_PORT || 18663,
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
-      database: process.env.DB_NAME || 'railway',
-      ssl: false
-    });
+    
+    // Utiliser l'URL interne si on est sur Railway, sinon l'URL publique
+    let connectionConfig;
+    
+    if (isRailway) {
+      // En production Railway: utiliser la connexion interne (plus rapide et sûre)
+      connectionConfig = {
+        host: process.env.DB_HOST || 'postgres.railway.internal',
+        port: process.env.DB_PORT || 5432,
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
+        database: process.env.DB_NAME || 'railway',
+        ssl: false
+      };
+      console.log('🚀 Utilisation de la connexion PostgreSQL interne Railway');
+    } else {
+      // En développement local: utiliser le proxy public
+      connectionConfig = {
+        host: process.env.DB_HOST || 'yamanote.proxy.rlwy.net',
+        port: process.env.DB_PORT || 18663,
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
+        database: process.env.DB_NAME || 'railway',
+        ssl: false
+      };
+      console.log('💻 Utilisation de la connexion PostgreSQL publique');
+    }
+    
+    pgClient = new Client(connectionConfig);
     pgAvailable = true;
-    console.log('✅ PostgreSQL module loaded successfully');
+    console.log('✅ Client PostgreSQL initialisé avec succès');
   } catch (error) {
-    console.warn('⚠️  PostgreSQL package not available:', error.message);
+    console.warn('⚠️  Paquet PostgreSQL non disponible:', error.message);
     pgAvailable = false;
   }
 }
@@ -165,8 +189,9 @@ async function initializeFromPostgres() {
   }
   
   try {
+    console.log('🔗 Tentative de connexion à PostgreSQL...');
     await pgClient.connect();
-    console.log('✅ Connected to PostgreSQL - loading data...');
+    console.log('✅ Connecté à PostgreSQL - chargement des données...');
     
     // Load members
     const membersRes = await pgClient.query(`
@@ -185,7 +210,7 @@ async function initializeFromPostgres() {
         permissions: ['view_dashboard', 'view_vehicles'],
         createdAt: m.createdAt?.toISOString() || new Date().toISOString()
       }));
-      console.log(`   📌 Loaded ${state.members.length} members from PostgreSQL`);
+      console.log(`   👥 ${state.members.length} membres chargés depuis PostgreSQL`);
     }
     
     // Load vehicles
@@ -206,7 +231,7 @@ async function initializeFromPostgres() {
         id: v.id,
         createdAt: v.createdAt?.toISOString() || new Date().toISOString()
       }));
-      console.log(`   🚌 Loaded ${state.vehicles.length} vehicles from PostgreSQL`);
+      console.log(`   🚌 ${state.vehicles.length} véhicules chargés depuis PostgreSQL`);
     }
     
     // Load events
@@ -225,14 +250,16 @@ async function initializeFromPostgres() {
         status: e.status,
         createdAt: e.createdAt?.toISOString() || new Date().toISOString()
       }));
-      console.log(`   📅 Loaded ${state.events.length} events from PostgreSQL`);
+      console.log(`   📅 ${state.events.length} événements chargés depuis PostgreSQL`);
     }
     
-    console.log('✅ Data initialization from PostgreSQL complete');
+    console.log('✅ Initialisation PostgreSQL terminée avec succès');
+    await pgClient.end();
     
   } catch (error) {
-    console.error('⚠️  Could not load from PostgreSQL:', error.message);
-    console.log('   Using fallback in-memory data...');
+    console.error('❌ Erreur lors du chargement PostgreSQL:', error.message);
+    console.error('Détails:', error);
+    console.log('📝 Utilisation des données par défaut en mémoire');
   }
 }
 
