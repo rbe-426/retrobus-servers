@@ -81,7 +81,8 @@ const state = {
   ],
   vehicleServiceSchedule: [
     // { id, parc, serviceType, description, frequency, priority, status, plannedDate }
-  ]
+  ],
+  userPermissions: {}  // { userId: { permissions: [...], membershipType, linkedAt } }
 };
 
 // Helpers
@@ -483,7 +484,143 @@ app.post('/api/members/:id/terminate', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 app.post('/api/members/:id/link-access', requireAuth, (req, res) => {
-  res.json({ ok: true, link: `https://example.com/access/${req.params.id}` });
+  const { id } = req.params;
+  const { email, membershipType = 'STANDARD', permissions = [] } = req.body || {};
+  
+  // Find or create user permissions for this member
+  if (!state.userPermissions) state.userPermissions = {};
+  
+  state.userPermissions[id] = {
+    id,
+    email: email || state.members.find(m => m.id === id)?.email,
+    membershipType,
+    permissions: Array.isArray(permissions) ? permissions : [],
+    linkedAt: new Date().toISOString(),
+    lastModified: new Date().toISOString()
+  };
+  
+  res.json({ 
+    ok: true, 
+    message: 'Accès lié avec succès',
+    userPermissions: state.userPermissions[id]
+  });
+});
+
+// GET member permissions
+app.get('/api/members/:id/permissions', requireAuth, (req, res) => {
+  const { id } = req.params;
+  const member = state.members.find(m => m.id === id);
+  if (!member) return res.status(404).json({ error: 'Member not found' });
+  
+  const userPerms = state.userPermissions?.[id] || {
+    id,
+    email: member.email,
+    membershipType: member.membershipType || 'STANDARD',
+    permissions: member.permissions || [],
+    linkedAt: member.createdAt,
+    lastModified: new Date().toISOString()
+  };
+  
+  res.json(userPerms);
+});
+
+// PUT update member permissions
+app.put('/api/members/:id/permissions', requireAuth, (req, res) => {
+  const { id } = req.params;
+  const { permissions = [], membershipType } = req.body || {};
+  
+  const member = state.members.find(m => m.id === id);
+  if (!member) return res.status(404).json({ error: 'Member not found' });
+  
+  // Update in state
+  if (!state.userPermissions) state.userPermissions = {};
+  
+  state.userPermissions[id] = {
+    id,
+    email: member.email,
+    membershipType: membershipType || member.membershipType || 'STANDARD',
+    permissions: Array.isArray(permissions) ? permissions : [],
+    linkedAt: state.userPermissions[id]?.linkedAt || member.createdAt,
+    lastModified: new Date().toISOString()
+  };
+  
+  // Also update member permissions
+  state.members = state.members.map(m => 
+    m.id === id ? { ...m, permissions: Array.isArray(permissions) ? permissions : [] } : m
+  );
+  
+  res.json({ 
+    ok: true, 
+    message: 'Permissions mises à jour',
+    userPermissions: state.userPermissions[id]
+  });
+});
+
+// POST add permission to member
+app.post('/api/members/:id/permissions', requireAuth, (req, res) => {
+  const { id } = req.params;
+  const { resource, actions = ['READ'], expiresAt } = req.body || {};
+  
+  if (!resource) return res.status(400).json({ error: 'Resource required' });
+  
+  const member = state.members.find(m => m.id === id);
+  if (!member) return res.status(404).json({ error: 'Member not found' });
+  
+  if (!state.userPermissions) state.userPermissions = {};
+  if (!state.userPermissions[id]) {
+    state.userPermissions[id] = {
+      id,
+      email: member.email,
+      membershipType: member.membershipType || 'STANDARD',
+      permissions: [],
+      linkedAt: member.createdAt,
+      lastModified: new Date().toISOString()
+    };
+  }
+  
+  // Add or update permission
+  const permIndex = state.userPermissions[id].permissions.findIndex(p => p.resource === resource);
+  const newPerm = { resource, actions, expiresAt };
+  
+  if (permIndex >= 0) {
+    state.userPermissions[id].permissions[permIndex] = newPerm;
+  } else {
+    state.userPermissions[id].permissions.push(newPerm);
+  }
+  
+  state.userPermissions[id].lastModified = new Date().toISOString();
+  
+  res.json({ 
+    ok: true, 
+    message: 'Permission ajoutée',
+    userPermissions: state.userPermissions[id]
+  });
+});
+
+// DELETE permission from member
+app.delete('/api/members/:id/permissions/:resource', requireAuth, (req, res) => {
+  const { id, resource } = req.params;
+  
+  if (!state.userPermissions?.[id]) {
+    return res.status(404).json({ error: 'User permissions not found' });
+  }
+  
+  state.userPermissions[id].permissions = state.userPermissions[id].permissions.filter(
+    p => p.resource !== resource
+  );
+  state.userPermissions[id].lastModified = new Date().toISOString();
+  
+  res.json({ 
+    ok: true, 
+    message: 'Permission supprimée',
+    userPermissions: state.userPermissions[id]
+  });
+});
+
+// GET all user permissions (admin endpoint)
+app.get('/api/user-permissions', requireAuth, (req, res) => {
+  const allPerms = Object.values(state.userPermissions || {});
+  res.json(allPerms);
 });
 
 // DOCUMENTS
