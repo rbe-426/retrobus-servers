@@ -680,6 +680,10 @@ app.get(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, 
 app.get(['/vehicles/:parc/background','/api/vehicles/:parc/background'], requireAuth, (req, res) => {
   res.json({ background: null });
 });
+app.get(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, (req, res) => {
+  // Return expense reports potentially related to this vehicle
+  res.json({ reports: state.expenseReports.filter(r => r.parc === req.params.parc || !r.parc) });
+});
 
 // MEMBERS
 app.get(['/api/members','/members'], requireAuth, (req, res) => {
