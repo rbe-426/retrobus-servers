@@ -13,6 +13,7 @@ const pathRoot = process.cwd();
 // PostgreSQL connection for data recovery (optional)
 let pgClient = null;
 let pgAvailable = false;
+let postgresDataImported = false;  // Flag pour tracker si import déjà fait
 
 // Déterminer si on est sur Railway
 const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
@@ -181,8 +182,14 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
-// Function to load data from PostgreSQL
+// Function to load data from PostgreSQL (only once)
 async function initializeFromPostgres() {
+  // ⚠️ Ne faire l'import qu'une seule fois au démarrage du serveur
+  if (postgresDataImported) {
+    console.log('📌 Import PostgreSQL déjà effectué - données conservées en mémoire');
+    return;
+  }
+  
   if (!pgAvailable || !pgClient) {
     console.log('⚠️  PostgreSQL not available, using in-memory data');
     return;
@@ -253,7 +260,9 @@ async function initializeFromPostgres() {
       console.log(`   📅 ${state.events.length} événements chargés depuis PostgreSQL`);
     }
     
-    console.log('✅ Initialisation PostgreSQL terminée avec succès');
+    // ✅ Marquer l'import comme terminé
+    postgresDataImported = true;
+    console.log('✅ Initialisation PostgreSQL terminée - données verrouillées en mémoire');
     await pgClient.end();
     
   } catch (error) {
