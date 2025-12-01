@@ -748,6 +748,28 @@ app.get('/api/members/:id', requireAuth, (req, res) => {
   res.json(member);
 });
 
+// PUT /api/members/:id - Update member
+app.put(['/api/members/:id', '/members/:id'], requireAuth, (req, res) => {
+  const { id } = req.params;
+  const memberIndex = state.members.findIndex(m => m.id === id);
+  
+  if (memberIndex === -1) {
+    return res.status(404).json({ error: 'Member not found' });
+  }
+  
+  // Update member with provided data
+  const updatedMember = {
+    ...state.members[memberIndex],
+    ...req.body,
+    id: id, // Don't allow changing ID
+    updatedAt: new Date().toISOString()
+  };
+  
+  state.members[memberIndex] = updatedMember;
+  
+  res.json({ success: true, member: updatedMember });
+});
+
 app.get('/api/members/:id/permissions', requireAuth, (req, res) => {
   const { id } = req.params;
   const member = state.members.find(m => m.id === id);
