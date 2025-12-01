@@ -12,20 +12,31 @@ const pathRoot = process.cwd();
 
 // PostgreSQL connection for data recovery (optional)
 let pgClient = null;
-try {
-  const pkg = await import('pg');
-  const { Client } = pkg;
-  pgClient = new Client({
-    host: process.env.DB_HOST || 'yamanote.proxy.rlwy.net',
-    port: process.env.DB_PORT || 18663,
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
-    database: process.env.DB_NAME || 'railway',
-    ssl: false
-  });
-} catch (error) {
-  console.warn('⚠️  PostgreSQL package not available, will use in-memory storage');
+let pgAvailable = false;
+
+// Try to load pg package dynamically
+async function initPgClient() {
+  try {
+    const pkg = await import('pg');
+    const { Client } = pkg;
+    pgClient = new Client({
+      host: process.env.DB_HOST || 'yamanote.proxy.rlwy.net',
+      port: process.env.DB_PORT || 18663,
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
+      database: process.env.DB_NAME || 'railway',
+      ssl: false
+    });
+    pgAvailable = true;
+    console.log('✅ PostgreSQL module loaded successfully');
+  } catch (error) {
+    console.warn('⚠️  PostgreSQL package not available:', error.message);
+    pgAvailable = false;
+  }
 }
+
+// Initialize immediately
+await initPgClient();
 
 // In-memory stores (reconstruction). À migrer vers Prisma ensuite.
 const state = {
@@ -147,8 +158,8 @@ const requireAuth = (req, res, next) => {
 
 // Function to load data from PostgreSQL
 async function initializeFromPostgres() {
-  if (!pgClient) {
-    console.log('⚠️  PostgreSQL client not available, using in-memory data');
+  if (!pgAvailable || !pgClient) {
+    console.log('⚠️  PostgreSQL not available, using in-memory data');
     return;
   }
   
