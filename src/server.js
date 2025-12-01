@@ -694,6 +694,115 @@ app.get(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, 
   res.json({ reports: state.expenseReports.filter(r => r.parc === req.params.parc || !r.parc) });
 });
 
+// RETRO REQUESTS & NEWS (RetroAssistant, RétroDemandes)
+app.get(['/api/retro-requests'], requireAuth, (req, res) => {
+  // Map RetroNews to retro-requests format
+  const requests = state.retroNews.map(news => ({
+    id: news.id,
+    title: news.title,
+    body: news.body,
+    status: news.status || 'draft',
+    createdAt: news.publishedAt || news.createdAt,
+    author: news.author || 'anonyme',
+    type: 'news'
+  }));
+  res.json(requests);
+});
+
+app.get(['/api/retro-requests/admin/all'], requireAuth, (req, res) => {
+  // Return all retro requests with admin metadata
+  const requests = state.retroNews.map(news => ({
+    id: news.id,
+    title: news.title,
+    body: news.body,
+    status: news.status || 'draft',
+    createdAt: news.publishedAt || news.createdAt,
+    author: news.author || 'anonyme',
+    type: 'news',
+    adminOnly: true
+  }));
+  res.json(requests);
+});
+
+app.post(['/api/retro-requests'], requireAuth, (req, res) => {
+  const request = {
+    id: uid(),
+    title: req.body.title,
+    body: req.body.body,
+    status: req.body.status || 'draft',
+    author: req.body.author || req.user?.id || 'anonyme',
+    createdAt: new Date().toISOString(),
+    type: 'news'
+  };
+  state.retroNews.push(request);
+  res.status(201).json(request);
+});
+
+app.put(['/api/retro-requests/:id'], requireAuth, (req, res) => {
+  const idx = state.retroNews.findIndex(r => r.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Request not found' });
+  
+  state.retroNews[idx] = {
+    ...state.retroNews[idx],
+    title: req.body.title || state.retroNews[idx].title,
+    body: req.body.body || state.retroNews[idx].body,
+    status: req.body.status || state.retroNews[idx].status,
+    author: req.body.author || state.retroNews[idx].author,
+    updatedAt: new Date().toISOString()
+  };
+  res.json(state.retroNews[idx]);
+});
+
+app.delete(['/api/retro-requests/:id'], requireAuth, (req, res) => {
+  state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
+  res.json({ ok: true });
+});
+
+app.post(['/api/retro-requests/:id/status'], requireAuth, (req, res) => {
+  const idx = state.retroNews.findIndex(r => r.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Request not found' });
+  
+  state.retroNews[idx].status = req.body.status;
+  res.json({ ok: true, news: state.retroNews[idx] });
+});
+
+// RETRO NEWS (content management)
+app.get(['/api/retro-news'], requireAuth, (req, res) => {
+  res.json(state.retroNews || []);
+});
+
+app.post(['/api/retro-news'], requireAuth, (req, res) => {
+  const news = {
+    id: uid(),
+    title: req.body.title,
+    body: req.body.body,
+    status: req.body.status || 'published',
+    publishedAt: new Date().toISOString(),
+    author: req.body.author || req.user?.id || 'anonyme'
+  };
+  state.retroNews.push(news);
+  res.status(201).json(news);
+});
+
+app.put(['/api/retro-news/:id'], requireAuth, (req, res) => {
+  const idx = state.retroNews.findIndex(r => r.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'News not found' });
+  
+  state.retroNews[idx] = {
+    ...state.retroNews[idx],
+    title: req.body.title || state.retroNews[idx].title,
+    body: req.body.body || state.retroNews[idx].body,
+    status: req.body.status || state.retroNews[idx].status,
+    updatedAt: new Date().toISOString()
+  };
+  res.json(state.retroNews[idx]);
+});
+
+app.delete(['/api/retro-news/:id'], requireAuth, (req, res) => {
+  state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
+  res.json({ ok: true });
+});
+
 // MEMBERS
 app.get(['/api/members','/members'], requireAuth, (req, res) => {
   const limit = Number(req.query.limit || state.members.length);
@@ -1274,13 +1383,88 @@ app.get('/api/finance/documents', requireAuth, (req, res) => {
   res.json({ documents: state.documents || [] });
 });
 
-// Quote templates endpoint (returns empty array - stored locally in frontend)
+// Quote templates endpoint - retourner les templates depuis le backup
 app.get('/api/quote-templates', requireAuth, (req, res) => {
-  res.json([]);
+  res.json(state.quoteTemplates || []);
 });
 app.post('/api/quote-templates', requireAuth, (req, res) => {
-  const template = { id: uid(), ...req.body };
+  const template = { id: uid(), ...req.body, createdAt: new Date().toISOString() };
+  state.quoteTemplates.push(template);
   res.status(201).json(template);
+});
+app.put('/api/quote-templates/:id', requireAuth, (req, res) => {
+  const idx = state.quoteTemplates.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  state.quoteTemplates[idx] = { ...state.quoteTemplates[idx], ...req.body, updatedAt: new Date().toISOString() };
+  res.json(state.quoteTemplates[idx]);
+});
+app.delete('/api/quote-templates/:id', requireAuth, (req, res) => {
+  state.quoteTemplates = state.quoteTemplates.filter(t => t.id !== req.params.id);
+  res.json({ ok: true });
+});
+
+// Devis Lines endpoints
+app.get('/api/devis-lines/:devisId', requireAuth, (req, res) => {
+  // Retourner les lignes du devis spécifique, ou toutes si devisId = "all"
+  if (req.params.devisId === 'all') {
+    return res.json(state.devisLines || []);
+  }
+  const lines = state.devisLines.filter(l => l.devisId === req.params.devisId);
+  res.json({ lines });
+});
+
+app.get('/api/devis-lines', requireAuth, (req, res) => {
+  // Retourner toutes les lignes de devis
+  res.json(state.devisLines || []);
+});
+
+app.post('/api/devis-lines', requireAuth, (req, res) => {
+  const line = { 
+    id: uid(), 
+    ...req.body,
+    createdAt: new Date().toISOString()
+  };
+  state.devisLines.push(line);
+  res.status(201).json(line);
+});
+
+app.put('/api/devis-lines/:lineId', requireAuth, (req, res) => {
+  const idx = state.devisLines.findIndex(l => l.id === req.params.lineId);
+  if (idx === -1) return res.status(404).json({ error: 'Line not found' });
+  state.devisLines[idx] = { ...state.devisLines[idx], ...req.body, updatedAt: new Date().toISOString() };
+  res.json(state.devisLines[idx]);
+});
+
+app.delete('/api/devis-lines/:lineId', requireAuth, (req, res) => {
+  state.devisLines = state.devisLines.filter(l => l.id !== req.params.lineId);
+  res.json({ ok: true });
+});
+
+// Financial documents endpoint (devis, factures, documents)
+app.get('/api/financial-documents', requireAuth, (req, res) => {
+  res.json(state.financialDocuments || []);
+});
+
+app.post('/api/financial-documents', requireAuth, (req, res) => {
+  const doc = { 
+    id: uid(), 
+    ...req.body,
+    createdAt: new Date().toISOString()
+  };
+  state.financialDocuments.push(doc);
+  res.status(201).json(doc);
+});
+
+app.put('/api/financial-documents/:docId', requireAuth, (req, res) => {
+  const idx = state.financialDocuments.findIndex(d => d.id === req.params.docId);
+  if (idx === -1) return res.status(404).json({ error: 'Document not found' });
+  state.financialDocuments[idx] = { ...state.financialDocuments[idx], ...req.body, updatedAt: new Date().toISOString() };
+  res.json(state.financialDocuments[idx]);
+});
+
+app.delete('/api/financial-documents/:docId', requireAuth, (req, res) => {
+  state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.docId);
+  res.json({ ok: true });
 });
 
 // Email templates endpoint
