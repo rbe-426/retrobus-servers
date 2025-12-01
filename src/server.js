@@ -276,7 +276,7 @@ async function initializeFromPostgres() {
     
     // Load financial transactions
     const transactionsRes = await pgClient.query(`
-      SELECT id, category, amount, description, date, "createdAt", "createdBy"
+      SELECT id, category, type, amount, description, date, "createdAt"
       FROM finance_transactions
       LIMIT 500
     `);
@@ -285,28 +285,28 @@ async function initializeFromPostgres() {
       state.transactions = transactionsRes.rows.map(t => ({
         id: t.id,
         category: t.category,
+        type: t.type,
         amount: t.amount,
         description: t.description,
         date: t.date,
-        createdAt: t.createdAt?.toISOString() || new Date().toISOString(),
-        createdBy: t.createdBy
+        createdAt: t.createdAt?.toISOString() || new Date().toISOString()
       }));
       console.log(`   📊 ${state.transactions.length} transactions chargées`);
     }
     
     // Load financial balance
     const balanceRes = await pgClient.query(`
-      SELECT amount FROM finance_balances ORDER BY "updatedAt" DESC LIMIT 1
+      SELECT balance FROM finance_balances ORDER BY "createdAt" DESC LIMIT 1
     `);
     
     if (balanceRes.rows.length > 0) {
-      state.bankBalance = balanceRes.rows[0].amount || 0;
+      state.bankBalance = balanceRes.rows[0].balance || 0;
       console.log(`   🏦 Solde: ${state.bankBalance}€`);
     }
     
     // Load expense reports
     const expenseRes = await pgClient.query(`
-      SELECT id, title, description, amount, status, "createdAt", "createdBy"
+      SELECT id, description, amount, status, date, "createdAt", "requestedByName", "requestedByEmail"
       FROM finance_expense_reports
       LIMIT 100
     `);
@@ -314,19 +314,19 @@ async function initializeFromPostgres() {
     if (expenseRes.rows.length > 0) {
       state.expenseReports = expenseRes.rows.map(e => ({
         id: e.id,
-        title: e.title,
         description: e.description,
         amount: e.amount,
         status: e.status,
+        date: e.date,
         createdAt: e.createdAt?.toISOString() || new Date().toISOString(),
-        createdBy: e.createdBy
+        requestedBy: e.requestedByName || e.requestedByEmail
       }));
       console.log(`   📋 ${state.expenseReports.length} rapports de dépenses chargés`);
     }
     
     // Load user permissions
     const permissionsRes = await pgClient.query(`
-      SELECT id, "userId", resource, actions, "membershipType", "linkedAt"
+      SELECT id, "userId", resource, actions, "createdAt", "grantedBy"
       FROM user_permissions
       LIMIT 200
     `);
@@ -339,9 +339,9 @@ async function initializeFromPostgres() {
         state.userPermissions[p.userId].permissions.push({
           id: p.id,
           resource: p.resource,
-          actions: p.actions || [],
-          membershipType: p.membershipType,
-          linkedAt: p.linkedAt
+          actions: Array.isArray(p.actions) ? p.actions : (p.actions ? [p.actions] : []),
+          grantedAt: p.createdAt,
+          grantedBy: p.grantedBy
         });
       });
       console.log(`   🔐 ${Object.keys(state.userPermissions).length} utilisateurs avec permissions chargés`);
@@ -349,7 +349,7 @@ async function initializeFromPostgres() {
     
     // Load RetroNews
     const newsRes = await pgClient.query(`
-      SELECT id, title, body, status, "publishedAt", "createdAt"
+      SELECT id, title, content, excerpt, "imageUrl", author, published, featured, "createdAt", "publishedAt"
       FROM "RetroNews"
       LIMIT 50
     `);
@@ -358,17 +358,21 @@ async function initializeFromPostgres() {
       state.retroNews = newsRes.rows.map(n => ({
         id: n.id,
         title: n.title,
-        body: n.body,
-        status: n.status,
-        publishedAt: n.publishedAt?.toISOString() || new Date().toISOString(),
-        createdAt: n.createdAt?.toISOString() || new Date().toISOString()
+        content: n.content,
+        excerpt: n.excerpt,
+        imageUrl: n.imageUrl,
+        author: n.author,
+        published: n.published,
+        featured: n.featured,
+        createdAt: n.createdAt?.toISOString() || new Date().toISOString(),
+        publishedAt: n.publishedAt?.toISOString() || new Date().toISOString()
       }));
       console.log(`   📰 ${state.retroNews.length} actualités chargées`);
     }
     
     // Load Flashes
     const flashRes = await pgClient.query(`
-      SELECT id, title, message, active, "createdAt"
+      SELECT id, content, type, active, "createdAt"
       FROM "Flash"
       LIMIT 50
     `);
@@ -376,8 +380,8 @@ async function initializeFromPostgres() {
     if (flashRes.rows.length > 0) {
       state.flashes = flashRes.rows.map(f => ({
         id: f.id,
-        title: f.title,
-        message: f.message,
+        content: f.content,
+        type: f.type,
         active: f.active,
         createdAt: f.createdAt?.toISOString() || new Date().toISOString()
       }));
@@ -386,7 +390,7 @@ async function initializeFromPostgres() {
     
     // Load Documents
     const docsRes = await pgClient.query(`
-      SELECT id, title, path, "mimeType", size, "createdAt"
+      SELECT id, "fileName", "filePath", "fileSize", "mimeType", type, status, "uploadedAt"
       FROM "Document"
       LIMIT 100
     `);
@@ -394,18 +398,20 @@ async function initializeFromPostgres() {
     if (docsRes.rows.length > 0) {
       state.documents = docsRes.rows.map(d => ({
         id: d.id,
-        title: d.title,
-        path: d.path,
+        fileName: d.fileName,
+        filePath: d.filePath,
+        fileSize: d.fileSize,
         mimeType: d.mimeType,
-        size: d.size,
-        createdAt: d.createdAt?.toISOString() || new Date().toISOString()
+        type: d.type,
+        status: d.status,
+        uploadedAt: d.uploadedAt?.toISOString() || new Date().toISOString()
       }));
       console.log(`   📄 ${state.documents.length} documents chargés`);
     }
     
     // Load Vehicle Maintenance
     const maintenanceRes = await pgClient.query(`
-      SELECT id, "vehicleId", type, description, cost, status, date
+      SELECT id, "vehicleId", type, description, cost, status, date, "performedBy", location, notes
       FROM vehicle_maintenance
       LIMIT 200
     `);
@@ -418,14 +424,17 @@ async function initializeFromPostgres() {
         description: m.description,
         cost: m.cost,
         status: m.status,
-        date: m.date
+        date: m.date,
+        performedBy: m.performedBy,
+        location: m.location,
+        notes: m.notes
       }));
       console.log(`   🔧 ${state.vehicleMaintenance.length} maintenances de véhicules chargées`);
     }
     
     // Load Vehicle Service Schedule
     const scheduleRes = await pgClient.query(`
-      SELECT id, "vehicleId", type, description, frequency, status
+      SELECT id, "vehicleId", "serviceType", description, frequency, status, priority, notes, "plannedDate"
       FROM vehicle_service_schedule
       LIMIT 100
     `);
@@ -434,10 +443,13 @@ async function initializeFromPostgres() {
       state.vehicleServiceSchedule = scheduleRes.rows.map(s => ({
         id: s.id,
         vehicleId: s.vehicleId,
-        type: s.type,
+        serviceType: s.serviceType,
         description: s.description,
         frequency: s.frequency,
-        status: s.status
+        status: s.status,
+        priority: s.priority,
+        notes: s.notes,
+        plannedDate: s.plannedDate
       }));
       console.log(`   📅 ${state.vehicleServiceSchedule.length} services programmés chargés`);
     }
