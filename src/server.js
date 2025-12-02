@@ -1966,6 +1966,62 @@ app.get(['/vehicles', '/api/vehicles'], requireAuth, async (req, res) => {
   res.status(503).json({ error: 'Prisma unavailable' });
 });
 
+app.post(['/vehicles', '/api/vehicles'], requireAuth, async (req, res) => {
+  try {
+    const { parc, type, modele, marque, subtitle, immat, etat, miseEnCirculation, energie, description, history, caracteristiques, gallery, backgroundImage, backgroundPosition, isPublic, fuel, mileage } = req.body;
+    
+    if (!parc) {
+      return res.status(400).json({ error: 'Parc number is required' });
+    }
+    
+    // Check if vehicle already exists
+    const existing = await prisma.vehicle.findUnique({
+      where: { parc }
+    });
+    
+    if (existing) {
+      return res.status(409).json({ error: 'Vehicle with this parc number already exists' });
+    }
+    
+    // Create vehicle in Prisma
+    const vehicle = await prisma.vehicle.create({
+      data: {
+        parc,
+        type: type || 'Véhicule',
+        modele: modele || '',
+        marque: marque || null,
+        subtitle: subtitle || null,
+        immat: immat || null,
+        etat: etat || 'actif',
+        miseEnCirculation: miseEnCirculation ? new Date(miseEnCirculation) : null,
+        energie: energie || null,
+        description: description || null,
+        history: history || null,
+        caracteristiques: caracteristiques || null,
+        gallery: gallery || null,
+        backgroundImage: backgroundImage || null,
+        backgroundPosition: backgroundPosition || null,
+        isPublic: isPublic || false,
+        fuel: fuel ? parseFloat(fuel) : null,
+        mileage: mileage ? parseFloat(mileage) : null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    
+    // Also add to state for in-memory access
+    state.vehicles.push(vehicle);
+    debouncedSave();
+    
+    const normalized = normalizeVehicleWithCaracteristiques(vehicle);
+    console.log(`✅ Vehicle créé: ${parc}`);
+    res.status(201).json({ vehicle: normalized });
+  } catch (e) {
+    console.error('❌ POST /vehicles error:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicle', details: e.message });
+  }
+});
+
 app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res) => {
   try {
     const idCandidate = Number(req.params.parc);
@@ -1980,6 +2036,81 @@ app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res
   } catch (e) {
     console.error('❌ GET /vehicles/:parc error:', e.message);
     res.status(500).json({ error: 'Failed to fetch vehicle', details: e.message });
+  }
+});
+
+app.put(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    
+    // Find vehicle by parc or id
+    const idCandidate = Number(parc);
+    const filters = [{ parc }];
+    if (!Number.isNaN(idCandidate)) {
+      filters.push({ id: idCandidate });
+    }
+    
+    const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+    
+    // Update vehicle in Prisma
+    const updated = await prisma.vehicle.update({
+      where: { id: existing.id },
+      data: {
+        ...req.body,
+        miseEnCirculation: req.body.miseEnCirculation ? new Date(req.body.miseEnCirculation) : undefined,
+        fuel: req.body.fuel ? parseFloat(req.body.fuel) : undefined,
+        mileage: req.body.mileage ? parseFloat(req.body.mileage) : undefined,
+        updatedAt: new Date()
+      }
+    });
+    
+    // Also update in state
+    const stateIdx = state.vehicles.findIndex(v => v.id === existing.id);
+    if (stateIdx !== -1) state.vehicles[stateIdx] = updated;
+    debouncedSave();
+    
+    const normalized = normalizeVehicleWithCaracteristiques(updated);
+    console.log(`✅ Vehicle ${parc} mis à jour`);
+    res.json({ vehicle: normalized });
+  } catch (e) {
+    console.error('❌ PUT /vehicles/:parc error:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicle', details: e.message });
+  }
+});
+
+app.delete(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    
+    // Find vehicle by parc or id
+    const idCandidate = Number(parc);
+    const filters = [{ parc }];
+    if (!Number.isNaN(idCandidate)) {
+      filters.push({ id: idCandidate });
+    }
+    
+    const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+    
+    // Delete from Prisma
+    await prisma.vehicle.delete({
+      where: { id: existing.id }
+    });
+    
+    // Also remove from state
+    state.vehicles = state.vehicles.filter(v => v.id !== existing.id);
+    debouncedSave();
+    
+    console.log(`✅ Vehicle ${parc} supprimé`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /vehicles/:parc error:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicle', details: e.message });
   }
 });
 
