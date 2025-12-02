@@ -1873,129 +1873,68 @@ app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res
 
 // EVENTS CRUD - PRISMA avec fallback
 app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
-  const basePayload = {
-    title: req.body.title || 'Nouvel événement',
-    description: req.body.description,
-    date: req.body.date ? new Date(req.body.date) : null,
-    status: req.body.status || 'DRAFT'
-  };
+  try {
+    const basePayload = {
+      title: req.body.title || 'Nouvel événement',
+      description: req.body.description,
+      date: req.body.date ? new Date(req.body.date) : null,
+      status: req.body.status || 'DRAFT'
+    };
 
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'extras')) {
-    const extrasValue = normalizeExtrasValue(req.body.extras);
-    if (extrasValue !== undefined) {
-      basePayload.extras = extrasValue;
-    }
-  }
-
-  const prismaOnline = prisma;
-  if (prismaOnline) {
-    try {
-      const event = await prisma.event.create({ data: basePayload });
-      const synced = upsertEventInMemory(event) || event;
-      debouncedSave();
-      console.log('✅ Event créé:', event.id, event.title);
-      return res.status(201).json({ event: synced, source: 'prisma' });
-    } catch (e) {
-      console.error('Erreur POST /events (Prisma):', e.message);
-      if (!ENABLE_MEMORY_FALLBACK) {
-        return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'extras')) {
+      const extrasValue = normalizeExtrasValue(req.body.extras);
+      if (extrasValue !== undefined) {
+        basePayload.extras = extrasValue;
       }
     }
-  } else if (!ENABLE_MEMORY_FALLBACK) {
-    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
-  }
 
-  const fallbackEventPayload = buildStateEventUpdateData({
-    id: req.body?.id || uid(),
-    ...req.body,
-    title: req.body?.title || basePayload.title,
-    status: req.body?.status || basePayload.status
-  });
-  if (!fallbackEventPayload.id) fallbackEventPayload.id = uid();
-  if (!fallbackEventPayload.status) fallbackEventPayload.status = 'DRAFT';
-  if (!fallbackEventPayload.title) fallbackEventPayload.title = 'Nouvel événement';
-  const fallbackEvent = upsertEventInMemory(fallbackEventPayload);
-  debouncedSave();
-  return res.status(201).json({ event: fallbackEvent, source: 'memory' });
+    const event = await prisma.event.create({ data: basePayload });
+    console.log('✅ Event créé:', event.id, event.title);
+    res.status(201).json({ event, source: 'prisma' });
+  } catch (e) {
+    console.error('❌ POST /events error:', e.message);
+    res.status(500).json({ error: 'Failed to create event', details: e.message });
+  }
 });
 
 app.put(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
-  const prismaData = buildPrismaEventUpdateData(req.body || {});
-  const canUsePrisma = prisma && Object.keys(prismaData).length > 0;
-
-  if (canUsePrisma) {
-    try {
-      const event = await prisma.event.update({
-        where: { id: req.params.id },
-        data: prismaData
-      });
-      const synced = upsertEventInMemory(event) || event;
-      debouncedSave();
-      console.log('✅ Event modifié:', event.id, event.title);
-      return res.json({ event: synced, source: 'prisma' });
-    } catch (e) {
-      console.error('Erreur PUT /events/:id (Prisma):', e.message);
-      if (!ENABLE_MEMORY_FALLBACK) {
-        const status = e?.code === 'P2025' ? 404 : 503;
-        return res.status(status).json({ error: status === 404 ? 'Event not found' : 'Prisma indisponible et fallback mémoire désactivé' });
-      }
+  try {
+    const prismaData = buildPrismaEventUpdateData(req.body || {});
+    
+    if (Object.keys(prismaData).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
     }
-  } else if (!ENABLE_MEMORY_FALLBACK) {
-    return res.status(400).json({ error: 'Aucun champ valide pour mise à jour Prisma' });
-  }
 
-  if (!ENABLE_MEMORY_FALLBACK) {
-    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
+    const event = await prisma.event.update({
+      where: { id: req.params.id },
+      data: prismaData
+    });
+    console.log('✅ Event modifié:', event.id, event.title);
+    res.json({ event, source: 'prisma' });
+  } catch (e) {
+    console.error('❌ PUT /events/:id error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    res.status(500).json({ error: 'Failed to update event', details: e.message });
   }
-
-  const stateUpdate = buildStateEventUpdateData(req.body || {});
-  const fallbackEvent = updateEventInMemory(req.params.id, stateUpdate);
-  if (fallbackEvent) {
-    debouncedSave();
-    console.log('🧠 Event modifié en mémoire:', req.params.id);
-    return res.json({ event: fallbackEvent, source: 'memory' });
-  }
-
-  res.status(404).json({ error: 'Event not found' });
 });
 
 app.delete(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
-  const prismaOnline = prisma;
-  if (prismaOnline) {
-    try {
-      await prisma.event.delete({
-        where: { id: req.params.id }
-      });
-      const before = state.events?.length || 0;
-      state.events = (state.events || []).filter(ev => ev.id !== req.params.id);
-      if ((state.events?.length || 0) !== before) {
-        debouncedSave();
-      }
-      console.log('✅ Event supprimé (Prisma):', req.params.id);
-      return res.json({ ok: true });
-    } catch (e) {
-      console.error('Erreur DELETE /events/:id (Prisma):', e.message);
-      if (!ENABLE_MEMORY_FALLBACK) {
-        const status = e?.code === 'P2025' ? 404 : 503;
-        return res.status(status).json({ error: status === 404 ? 'Event not found' : 'Prisma indisponible et fallback mémoire désactivé' });
-      }
+  try {
+    await prisma.event.delete({
+      where: { id: req.params.id }
+    });
+    console.log('✅ Event supprimé:', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /events/:id error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Event not found' });
     }
-  } else if (!ENABLE_MEMORY_FALLBACK) {
-    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
+    res.status(500).json({ error: 'Failed to delete event', details: e.message });
   }
-
-  if (!ENABLE_MEMORY_FALLBACK) {
-    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
-  }
-
-  // Fallback mémoire
-  const before = state.events?.length || 0;
-  state.events = (state.events || []).filter(ev => ev.id !== req.params.id);
-  if (state.events.length < before) {
-    debouncedSave();
-    console.log('🧠 Event supprimé en mémoire:', req.params.id);
-    return res.json({ ok: true, source: 'memory' });
-  }
+});
 
   res.status(500).json({ error: 'Database error' });
 });
