@@ -588,7 +588,7 @@ app.get(['/api/export/state', '/export/state'], async (req, res) => {
   try {
     // En mode Prisma, récupérer les données depuis la base de données
     const [members, vehicles, events, retroNews, flashes, transactions, expenseReports, documents, maintenances, usages] = await Promise.all([
-      prisma.member.findMany(),
+      prisma.members.findMany(),
       prisma.vehicle.findMany(),
       prisma.event.findMany(),
       prisma.retroNews.findMany(),
