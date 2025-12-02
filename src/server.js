@@ -2100,7 +2100,7 @@ app.get('/api/admin/users', requireAuth, (req, res) => {
 
 app.post('/api/admin/users', requireAuth, async (req, res) => {
   try {
-    const { email, firstName, lastName, role } = req.body;
+    const { email, firstName, lastName, matricule, password, role } = req.body;
     
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
@@ -2118,7 +2118,9 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       email,
       firstName: firstName || '',
       lastName: lastName || '',
+      matricule: matricule || '',
       role: role || 'USER',
+      password: password || '',
       status: 'active',
       permissions: [],
       createdAt: new Date().toISOString()
@@ -2127,7 +2129,7 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
     state.members.push(newMember);
     debouncedSave();
     
-    console.log('✅ User créé:', newMember.id, email);
+    console.log('✅ User créé:', newMember.id, email, 'matricule:', matricule);
     res.status(201).json({ user: newMember });
   } catch (e) {
     console.error('❌ POST /api/admin/users error:', e.message);
