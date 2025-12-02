@@ -2955,6 +2955,42 @@ app.listen(PORT, async () => {
     console.warn('⚠️ Failed to load contrôles techniques from Prisma:', e.message);
   }
 
+  // Load vehicles from Prisma
+  try {
+    const prismaVehicles = await prisma.vehicle.findMany();
+    state.vehicles = prismaVehicles;
+    console.log(`✅ Loaded ${state.vehicles.length} vehicles from Prisma`);
+  } catch (e) {
+    console.warn('⚠️ Failed to load vehicles from Prisma:', e.message);
+  }
+
+  // Load events from Prisma
+  try {
+    const prismaEvents = await prisma.event.findMany();
+    state.events = prismaEvents;
+    console.log(`✅ Loaded ${state.events.length} events from Prisma`);
+  } catch (e) {
+    console.warn('⚠️ Failed to load events from Prisma:', e.message);
+  }
+
+  // Load retro news from Prisma
+  try {
+    const prismaNews = await prisma.retroNews.findMany();
+    state.retroNews = prismaNews;
+    console.log(`✅ Loaded ${state.retroNews.length} retro news from Prisma`);
+  } catch (e) {
+    console.warn('⚠️ Failed to load retro news from Prisma:', e.message);
+  }
+
+  // Load flashes from Prisma
+  try {
+    const prismaFlashes = await prisma.flash.findMany();
+    state.flashes = prismaFlashes;
+    console.log(`✅ Loaded ${state.flashes.length} flashes from Prisma`);
+  } catch (e) {
+    console.warn('⚠️ Failed to load flashes from Prisma:', e.message);
+  }
+
   console.log('');
   console.log(`🌐 API accessible sur: http://localhost:${PORT}`);
   console.log('');
