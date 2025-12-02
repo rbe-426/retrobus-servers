@@ -75,6 +75,7 @@ const state = {
   notificationPreferences: [],
   vehicleMaintenance: [],
   vehicleServiceSchedule: [],
+  vehicleScheduleItem: [],
   vehicleUsage: [],
   scheduledOperations: [],
   scheduledOperationPayments: [],
@@ -2095,10 +2096,24 @@ app.post(['/vehicles/:parc/inspection','/api/vehicles/:parc/inspection'], requir
 // Échéancier - GET tous les échéanciers pour un véhicule
 app.get(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAuth, async (req, res) => {
   try {
-    const schedule = await prisma.vehicleScheduleItem.findMany({
-      where: { vehicleId: req.params.parc },
-      orderBy: { dueDate: 'asc' }
-    });
+    // Essayer avec Prisma d'abord
+    if (prismaAvailable) {
+      try {
+        const schedule = await prisma.vehicleScheduleItem.findMany({
+          where: { vehicleId: req.params.parc },
+          orderBy: { dueDate: 'asc' }
+        });
+        return res.json({ schedule });
+      } catch (e) {
+        console.warn('Prisma indisponible, fallback en mémoire');
+      }
+    }
+    
+    // Fallback: récupérer depuis la mémoire
+    const schedule = (state.vehicleScheduleItem || [])
+      .filter(item => item.vehicleId === req.params.parc)
+      .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    
     res.json({ schedule });
   } catch (e) {
     console.error('Erreur lecture échéancier:', e);
@@ -2109,9 +2124,22 @@ app.get(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAuth
 // Échéancier - GET global tous les véhicules
 app.get(['/vehicles/schedule/all','/api/vehicles/schedule/all'], requireAuth, async (req, res) => {
   try {
-    const schedule = await prisma.vehicleScheduleItem.findMany({
-      orderBy: { dueDate: 'asc' }
-    });
+    // Essayer avec Prisma d'abord
+    if (prismaAvailable) {
+      try {
+        const schedule = await prisma.vehicleScheduleItem.findMany({
+          orderBy: { dueDate: 'asc' }
+        });
+        return res.json({ schedule });
+      } catch (e) {
+        console.warn('Prisma indisponible, fallback en mémoire');
+      }
+    }
+    
+    // Fallback: récupérer tous depuis la mémoire
+    const schedule = (state.vehicleScheduleItem || [])
+      .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    
     res.json({ schedule });
   } catch (e) {
     console.error('Erreur lecture échéancier global:', e);
@@ -2123,21 +2151,51 @@ app.get(['/vehicles/schedule/all','/api/vehicles/schedule/all'], requireAuth, as
 app.post(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAuth, async (req, res) => {
   try {
     const { type, description, dueDate, dueTime, priority, notes } = req.body;
-    const item = await prisma.vehicleScheduleItem.create({
-      data: {
-        vehicleId: req.params.parc,
-        type,
-        description,
-        dueDate,
-        dueTime,
-        priority: priority || 'normal',
-        status: 'pending',
-        notes
+    
+    // Essayer avec Prisma d'abord
+    if (prismaAvailable) {
+      try {
+        const item = await prisma.vehicleScheduleItem.create({
+          data: {
+            vehicleId: req.params.parc,
+            type,
+            description,
+            dueDate: dueDate ? new Date(dueDate) : null,
+            dueTime,
+            priority: priority || 'normal',
+            status: 'pending',
+            notes
+          }
+        });
+        return res.status(201).json(item);
+      } catch (e) {
+        console.warn('Prisma indisponible, fallback en mémoire');
       }
-    });
+    }
+    
+    // Fallback: créer en mémoire
+    const item = {
+      id: uid(),
+      vehicleId: req.params.parc,
+      type,
+      description,
+      dueDate: dueDate ? new Date(dueDate) : null,
+      dueTime,
+      priority: priority || 'normal',
+      status: 'pending',
+      notes,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    
+    if (!state.vehicleScheduleItem) {
+      state.vehicleScheduleItem = [];
+    }
+    state.vehicleScheduleItem.unshift(item);
+    
     res.status(201).json(item);
   } catch (e) {
-    console.error('Erreur création ligne échéancier:', e);
+    console.error('Erreur création ligne échéancier:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2146,13 +2204,61 @@ app.post(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAut
 app.put(['/vehicles/schedule/:itemId','/api/vehicles/schedule/:itemId'], requireAuth, async (req, res) => {
   try {
     const { status } = req.body;
-    const item = await prisma.vehicleScheduleItem.update({
-      where: { id: req.params.itemId },
-      data: { status }
-    });
-    res.json(item);
+    
+    // Essayer avec Prisma d'abord
+    if (prismaAvailable) {
+      try {
+        const item = await prisma.vehicleScheduleItem.update({
+          where: { id: req.params.itemId },
+          data: { status }
+        });
+        return res.json(item);
+      } catch (e) {
+        console.warn('Prisma indisponible, fallback en mémoire');
+      }
+    }
+    
+    // Fallback: mettre à jour en mémoire
+    const index = state.vehicleScheduleItem?.findIndex(item => item.id === req.params.itemId);
+    if (index !== undefined && index >= 0) {
+      const item = state.vehicleScheduleItem[index];
+      item.status = status;
+      item.updatedAt = new Date();
+      return res.json(item);
+    }
+    
+    res.status(404).json({ error: 'Échéancier non trouvé' });
   } catch (e) {
     console.error('Erreur mise à jour échéancier:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Échéancier - DELETE supprimer une ligne
+app.delete(['/vehicles/schedule/:itemId','/api/vehicles/schedule/:itemId'], requireAuth, async (req, res) => {
+  try {
+    // Essayer avec Prisma d'abord
+    if (prismaAvailable) {
+      try {
+        await prisma.vehicleScheduleItem.delete({
+          where: { id: req.params.itemId }
+        });
+        return res.json({ success: true });
+      } catch (e) {
+        console.warn('Prisma indisponible, fallback en mémoire');
+      }
+    }
+    
+    // Fallback: supprimer de la mémoire
+    const index = state.vehicleScheduleItem?.findIndex(item => item.id === req.params.itemId);
+    if (index !== undefined && index >= 0) {
+      state.vehicleScheduleItem.splice(index, 1);
+      return res.json({ success: true });
+    }
+    
+    res.status(404).json({ error: 'Échéancier non trouvé' });
+  } catch (e) {
+    console.error('Erreur suppression échéancier:', e);
     res.status(500).json({ error: e.message });
   }
 });
