@@ -360,9 +360,9 @@
   },
   {
     "name": "backup_2025-12-02T00-21-42",
-    "timestamp": "2025-12-02T00:21:43.093Z",
+    "timestamp": "2025-12-02T00:25:24.807Z",
     "type": "FULL_EXPORT",
-    "description": "Export complet des tables critiques pour restauration autonome",
+    "description": "Dernière modification: 02/12/2025 01:25:24",
     "statistics": {
       "totalRows": 49,
       "tablesRequested": 21,
