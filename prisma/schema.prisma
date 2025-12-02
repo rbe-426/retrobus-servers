@@ -1,8 +1,8 @@
 // Prisma schema complet pour RétroBus Essonne
-// SQLite pour développement local et déploiement
+// PostgreSQL pour Railway/production, SQLite local via .env
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
