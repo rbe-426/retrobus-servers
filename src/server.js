@@ -662,6 +662,42 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
   const token = 'stub.' + Buffer.from(email).toString('base64');
   res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, role: role, permissions: member.permissions || [] } });
 });
+
+// Member login endpoint - accepts identifier (email or username) and password
+app.post(['/auth/member-login','/api/auth/member-login'], (req, res) => {
+  const { identifier, password } = req.body || {};
+  if (!identifier || !password) return res.status(400).json({ error: 'identifier & password requis' });
+  
+  // Try to find member by email or firstName.toLowerCase() or lastName.toLowerCase()
+  let member = state.members.find(m => 
+    m.email === identifier || 
+    m.email?.toLowerCase().startsWith(identifier.toLowerCase()) ||
+    `${m.firstName || ''}${m.lastName || ''}`.toLowerCase().includes(identifier.toLowerCase())
+  );
+  
+  // If not found and identifier looks like email format, return error
+  if (!member && identifier.includes('@')) {
+    return res.status(401).json({ error: 'Identifiants invalides' });
+  }
+  
+  // For development: accept any identifier found in database with any password
+  // (password validation would require hashed passwords in database)
+  if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
+  
+  // Find user's role from site_users via linkedMemberId
+  let role = 'MEMBER'; // default
+  if (state.siteUsers && member.id) {
+    const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
+    if (siteUser) {
+      role = siteUser.role || 'MEMBER';
+    }
+  }
+  
+  const email = member.email || '';
+  const token = 'stub.' + Buffer.from(email).toString('base64');
+  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, lastName: member.lastName, role: role, permissions: member.permissions || [] } });
+});
+
 app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
   const member = state.members.find(m => m.email === req.user.email) || null;
   if (!member) {
