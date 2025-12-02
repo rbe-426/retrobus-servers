@@ -672,6 +672,25 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 // PUBLIC ENDPOINTS (no authentication required)
+app.get('/health', async (req, res) => {
+  try {
+    // Test Prisma connection
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ 
+      status: 'OK',
+      database: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('❌ Health check failed:', e.message);
+    res.status(503).json({ 
+      status: 'ERROR',
+      database: 'disconnected',
+      error: e.message
+    });
+  }
+});
+
 app.get('/site-config', (req, res) => {
   res.json({
     siteName: 'RétroBus Essonne',
@@ -712,17 +731,12 @@ app.get('/public/events/:id', async (req, res) => {
 // Public vehicles endpoint - avec fallback en mémoire
 app.get('/public/vehicles', async (req, res) => {
   try {
-    if (prismaAvailable) {
-      const vehicles = await prisma.vehicle.findMany();
-      return res.json(vehicles);
-    }
+    const vehicles = await prisma.vehicle.findMany();
+    res.json(vehicles);
   } catch (e) {
-    console.error('Erreur GET /public/vehicles (Prisma):', e.message);
+    console.error('❌ GET /public/vehicles error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicles', details: e.message });
   }
-  if (ENABLE_MEMORY_FALLBACK) {
-    return res.json(state.vehicles || []);
-  }
-  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
 app.get('/public/vehicles/:id', async (req, res) => {
@@ -733,13 +747,8 @@ app.get('/public/vehicles/:id', async (req, res) => {
     if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
     res.json(vehicle);
   } catch (e) {
-    console.error('Erreur GET /public/vehicles/:id (Prisma):', e.message);
-    if (ENABLE_MEMORY_FALLBACK) {
-      const vehicle = (state.vehicles || []).find(v => v.parc === req.params.id || String(v.id) === req.params.id);
-      if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
-      return res.json(vehicle);
-    }
-    res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
+    console.error('❌ GET /public/vehicles/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle', details: e.message });
   }
 });
 
