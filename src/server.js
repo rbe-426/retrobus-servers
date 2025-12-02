@@ -1477,6 +1477,36 @@ app.get(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
   if (!ev) return res.status(404).json({ error: 'Not found' });
   res.json({ event: ev });
 });
+// EVENTS - MEMOIRE (fallback principal)
+app.get(['/events', '/api/events'], requireAuth, (req, res) => {
+  const events = (state.events || []).map(event => ({
+    ...event,
+    extras: typeof event.extras === 'string' ? event.extras : JSON.stringify(event.extras || {})
+  }));
+  res.json({ events });
+});
+
+app.get(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
+  const event = (state.events || []).find(e => e.id === req.params.id);
+  if (!event) return res.status(404).json({ error: 'Not found' });
+  const normalized = {
+    ...event,
+    extras: typeof event.extras === 'string' ? event.extras : JSON.stringify(event.extras || {})
+  };
+  res.json({ event: normalized });
+});
+
+// VEHICLES - MEMOIRE (fallback principal)
+app.get(['/vehicles', '/api/vehicles'], requireAuth, (req, res) => {
+  res.json({ vehicles: state.vehicles || [] });
+});
+
+app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, (req, res) => {
+  const vehicle = (state.vehicles || []).find(v => v.parc === req.params.parc || String(v.id) === req.params.parc);
+  if (!vehicle) return res.status(404).json({ error: 'Not found' });
+  res.json({ vehicle });
+});
+
 // EVENTS CRUD - PRISMA avec fallback
 app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
   try {
@@ -1518,16 +1548,28 @@ app.put(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
 });
 
 app.delete(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
-  try {
-    await prisma.event.delete({
-      where: { id: req.params.id }
-    });
-    console.log('✅ Event supprimé:', req.params.id);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('Erreur DELETE /events/:id (Prisma):', e.message);
-    res.status(500).json({ error: 'Database error' });
+  if (prismaAvailable) {
+    try {
+      await prisma.event.delete({
+        where: { id: req.params.id }
+      });
+      console.log('✅ Event supprimé (Prisma):', req.params.id);
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error('Erreur DELETE /events/:id (Prisma):', e.message);
+    }
   }
+
+  // Fallback mémoire
+  const before = state.events?.length || 0;
+  state.events = (state.events || []).filter(ev => ev.id !== req.params.id);
+  if (state.events.length < before) {
+    debouncedSave();
+    console.log('🧠 Event supprimé en mémoire:', req.params.id);
+    return res.json({ ok: true, source: 'memory' });
+  }
+
+  res.status(500).json({ error: 'Database error' });
 });
 
 // FINANCE
