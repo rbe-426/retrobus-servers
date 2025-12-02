@@ -1593,7 +1593,8 @@ app.post(['/api/retro-requests'], requireAuth, async (req, res) => {
         category: category || 'GENERAL',
         priority: priority || 'NORMAL',
         status: 'PENDING',
-        details: details || {}
+        details: details || {},
+        updatedAt: new Date()
       }
     });
     
