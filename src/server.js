@@ -1853,10 +1853,12 @@ app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res
 app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
   try {
     const basePayload = {
+      id: uid(),
       title: req.body.title || 'Nouvel événement',
       description: req.body.description,
-      date: req.body.date ? new Date(req.body.date) : null,
-      status: req.body.status || 'DRAFT'
+      date: req.body.date ? new Date(req.body.date) : new Date(),
+      status: req.body.status || 'DRAFT',
+      updatedAt: new Date()
     };
 
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'extras')) {
