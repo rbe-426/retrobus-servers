@@ -174,7 +174,7 @@ const normalizeEventExtras = (event = {}) => {
 
 const normalizeEventCollection = (events = []) => events.map(ev => normalizeEventExtras(ev));
 
-const prismaEventFieldAllowList = new Set(['title', 'description', 'date', 'status', 'extras']);
+const prismaEventFieldAllowList = new Set(['title', 'description', 'date', 'time', 'location', 'helloAssoUrl', 'adultPrice', 'childPrice', 'status', 'vehicleId', 'extras']);
 
 const buildPrismaEventUpdateData = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return {};
@@ -1857,8 +1857,14 @@ app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
       title: req.body.title || 'Nouvel événement',
       description: req.body.description,
       date: req.body.date ? new Date(req.body.date) : new Date(),
+      time: req.body.time || null,
+      location: req.body.location || null,
+      helloAssoUrl: req.body.helloAssoUrl || null,
+      adultPrice: req.body.adultPrice ? parseFloat(req.body.adultPrice) : null,
+      childPrice: req.body.childPrice ? parseFloat(req.body.childPrice) : null,
       status: req.body.status || 'DRAFT',
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      vehicleId: req.body.vehicleId || null
     };
 
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'extras')) {
