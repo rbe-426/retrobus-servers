@@ -810,8 +810,19 @@ app.get('/public/vehicles/:id', async (req, res) => {
 });
 
 app.get('/public/vehicles/:id/events', async (req, res) => {
-  // Return empty array for now - would need to link vehicles to events
-  res.json([]);
+  try {
+    const events = await prisma.event.findMany({
+      where: {
+        vehicleId: req.params.id,
+        status: 'PUBLISHED'
+      },
+      orderBy: { date: 'desc' }
+    });
+    res.json(events);
+  } catch (e) {
+    console.error('❌ GET /public/vehicles/:id/events error:', e.message);
+    res.json([]);
+  }
 });
 
 // ⛔ ENDPOINT DÉPLACÉ - Voir ligne ~1443 pour version avec fallback mémoire
