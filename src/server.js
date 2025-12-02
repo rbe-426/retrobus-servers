@@ -232,13 +232,12 @@ const updateEventInMemory = (eventId, updatePayload = {}) => {
 
 // VEHICLE HELPERS ---------------------------------------------------------
 const prismaVehicleFieldAllowList = new Set([
-  'marque','modele','type','etat','subtitle','description','history','isPublic',
-  'immat','energie','miseEnCirculation','longueur','placesAssises','placesDebout',
-  'ufr','moteur','boiteVitesses','nombrePortes','climatisation','girouette',
-  'normeEuro','livree','statut','preservePar','fuel','caracteristiques'
+  'id', 'parc', 'type', 'modele', 'marque', 'subtitle', 'immat', 'etat',
+  'miseEnCirculation', 'energie', 'description', 'history', 'caracteristiques',
+  'gallery', 'backgroundImage', 'backgroundPosition', 'isPublic', 'fuel', 'mileage'
 ]);
 
-const numericVehicleFields = new Set(['placesAssises','placesDebout','nombrePortes','fuel']);
+const numericVehicleFields = new Set(['fuel', 'mileage']);
 const dateVehicleFields = new Set(['miseEnCirculation']);
 const booleanVehicleFields = new Set(['isPublic']);
 
