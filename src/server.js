@@ -1109,7 +1109,7 @@ app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res)
 // Usages (historique pointages) - PRISMA avec fallback
 app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, async (req, res) => {
   try {
-    const usages = await prisma.vehicleUsage.findMany({
+    const usages = await prisma.usage.findMany({
       where: { parc: req.params.parc },
       orderBy: { startedAt: 'desc' }
     });
@@ -1122,9 +1122,10 @@ app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, as
 
 app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, async (req, res) => {
   try {
-    const usage = await prisma.vehicleUsage.create({
+    const usage = await prisma.usage.create({
       data: {
         parc: req.params.parc,
+        startedAt: new Date(),
         conducteur: req.body?.conducteur || 'Conducteur',
         note: req.body?.note || ''
       }
@@ -1139,8 +1140,8 @@ app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, a
 
 app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, async (req, res) => {
   try {
-    const usage = await prisma.vehicleUsage.update({
-      where: { id: req.params.id },
+    const usage = await prisma.usage.update({
+      where: { id: parseInt(req.params.id) },
       data: { endedAt: new Date() }
     });
     res.json(usage);
@@ -1153,8 +1154,8 @@ app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end']
 // Maintenance - PRISMA avec fallback
 app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, async (req, res) => {
   try {
-    const maintenance = await prisma.vehicleMaintenance.findMany({
-      where: { parc: req.params.parc },
+    const maintenance = await prisma.vehicle_maintenance.findMany({
+      where: { Vehicle: { parc: req.params.parc } },
       orderBy: { date: 'desc' }
     });
     res.json(maintenance);
@@ -1166,13 +1167,19 @@ app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requi
 
 app.post(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, async (req, res) => {
   try {
-    const item = await prisma.vehicleMaintenance.create({
+    // Get vehicle by parc code
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: req.params.parc } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    
+    const item = await prisma.vehicle_maintenance.create({
       data: {
-        parc: req.params.parc,
-        type: req.body?.type,
-        description: req.body?.description,
+        id: Math.random().toString(36).substr(2, 9),
+        vehicleId: vehicle.id,
+        type: req.body?.type || 'other',
+        description: req.body?.description || '',
         cost: req.body?.cost ? parseFloat(req.body.cost) : 0,
-        status: req.body?.status || 'completed'
+        status: req.body?.status || 'completed',
+        date: req.body?.date ? new Date(req.body.date) : new Date()
       }
     });
     console.log('✅ Maintenance créée:', item.id);
@@ -1186,8 +1193,12 @@ app.post(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requ
 // Service schedule - PRISMA avec fallback
 app.get(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedule'], requireAuth, async (req, res) => {
   try {
+    // Get vehicle by parc code
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: req.params.parc } });
+    if (!vehicle) return res.json([]);
+    
     const schedule = await prisma.vehicle_service_schedule.findMany({
-      where: { parc: req.params.parc },
+      where: { vehicleId: vehicle.id },
       orderBy: { plannedDate: 'asc' }
     });
     res.json(schedule);
@@ -1199,14 +1210,19 @@ app.get(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedul
 
 app.post(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedule'], requireAuth, async (req, res) => {
   try {
+    // Get vehicle by parc code
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: req.params.parc } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    
     const item = await prisma.vehicle_service_schedule.create({
       data: {
-        parc: req.params.parc,
-        serviceType: req.body?.serviceType,
-        description: req.body?.description,
-        frequency: req.body?.frequency,
-        priority: req.body?.priority || 'normal',
-        status: 'pending',
+        id: Math.random().toString(36).substr(2, 9),
+        vehicleId: vehicle.id,
+        serviceType: req.body?.serviceType || 'other',
+        description: req.body?.description || '',
+        frequency: req.body?.frequency || 'yearly',
+        priority: req.body?.priority || 'medium',
+        status: req.body?.status || 'pending',
         plannedDate: req.body?.plannedDate ? new Date(req.body.plannedDate) : new Date()
       }
     });
@@ -1222,8 +1238,12 @@ app.post(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedu
 app.get(['/vehicles/:parc/maintenance-summary','/api/vehicles/:parc/maintenance-summary'], requireAuth, async (req, res) => {
   try {
     const parc = req.params.parc;
-    const maintenance = await prisma.vehicleMaintenance.findMany({ where: { parc } });
-    const schedule = await prisma.vehicleServiceSchedule.findMany({ where: { parc } });
+    // Get vehicle by parc code
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc } });
+    if (!vehicle) return res.json({ totalCost: 0, maintenanceCount: 0, overdueTasks: 0, pendingTasks: 0 });
+    
+    const maintenance = await prisma.vehicle_maintenance.findMany({ where: { vehicleId: vehicle.id } });
+    const schedule = await prisma.vehicle_service_schedule.findMany({ where: { vehicleId: vehicle.id } });
     
     const totalCost = maintenance.reduce((s, m) => s + (m.cost || 0), 0);
     const maintenanceCount = maintenance.length;
