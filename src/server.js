@@ -692,14 +692,8 @@ app.post(['/auth/member-login','/api/auth/member-login'], (req, res) => {
   // If not found, return error
   if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
   
-  // Find user's role from site_users via linkedMemberId
-  let role = 'MEMBER'; // default
-  if (state.siteUsers && member.id) {
-    const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
-    if (siteUser) {
-      role = siteUser.role || 'MEMBER';
-    }
-  }
+  // Get role from member.role first, fall back to site_users if needed
+  let role = member.role || 'MEMBER';
   
   const email = member.email || '';
   const token = 'stub.' + Buffer.from(email).toString('base64');
@@ -712,14 +706,8 @@ app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
     return res.json({ user: null });
   }
   
-  // Find user's role from site_users via linkedMemberId
-  let role = 'MEMBER'; // default
-  if (state.siteUsers && member.id) {
-    const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
-    if (siteUser) {
-      role = siteUser.role || 'MEMBER';
-    }
-  }
+  // Get role from member.role first, fall back to site_users if needed
+  let role = member.role || 'MEMBER';
   
   res.json({ user: { id: member.id, email: member.email, role: role, permissions: member.permissions || [] } });
 });
@@ -731,14 +719,8 @@ app.get('/api/me', requireAuth, (req, res) => {
     return res.json({ user: null });
   }
 
-  // Try to find the user's site_users record to get the role
-  let role = 'MEMBER'; // default
-  if (state.siteUsers && member.id) {
-    const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
-    if (siteUser) {
-      role = siteUser.role || 'MEMBER';
-    }
-  }
+  // Get role from member.role first, fall back to site_users if needed
+  let role = member.role || 'MEMBER';
 
   res.json({ 
     user: { 
