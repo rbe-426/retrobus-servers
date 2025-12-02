@@ -63,7 +63,6 @@ model Vehicle {
   
   // Immatriculation et identification
   immat                 String?
-  constructeur          String?
   
   // Caractéristiques techniques
   energie               String?
@@ -171,7 +170,6 @@ model RetroNews {
   excerpt     String?
   imageUrl    String?
   author      String?
-  status      String?  @default("draft")
   published   Boolean  @default(false)
   featured    Boolean  @default(false)
   publishedAt DateTime?
