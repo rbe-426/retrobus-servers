@@ -5,7 +5,6 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getLatestBackup } from '../backup-utils.mjs';
 import { PrismaClient } from '@prisma/client';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,140 +18,32 @@ const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 4000;
 const pathRoot = process.cwd();
 
-// PostgreSQL connection for data recovery (optional) - DÉSACTIVÉ
-let pgClient = null;
-let pgAvailable = false;
-let postgresDataImported = false;  // Flag pour tracker si import déjà fait
-// ✅ À DÉMARRAGE: Charger depuis Prisma (pas depuis backup)
-const LOAD_FROM_BACKUP = false;  // ❌ Désactivé - on charge depuis Prisma maintenant
-
-// Déterminer si on est sur Railway
-const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
-
-// Try to load pg package dynamically
-async function initPgClient() {
-  // ✅ Mode NORMAL: charger depuis Prisma (database), pas de backup automatique
-  console.log('📦 Mode NORMAL - Données serveur chargées depuis Prisma/SQLite');
-  console.log('✅ PostgreSQL/Prisma ACTIVÉ - Les écritures persistent directement');
-  pgAvailable = false;
-  return;
-  
-  /* Code PostgreSQL désactivé pour éviter les conflits de sync
-  try {
-    const { default: pg } = await import('pg');
-    const { Client } = pg;
-    
-    // Utiliser l'URL interne si on est sur Railway, sinon l'URL publique
-    let connectionConfig;
-    
-    if (isRailway) {
-      // En production Railway: utiliser la connexion interne (plus rapide et sûre)
-      connectionConfig = {
-        host: process.env.DB_HOST || 'postgres.railway.internal',
-        port: process.env.DB_PORT || 5432,
-        user: process.env.DB_USER || 'postgres',
-        password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
-        database: process.env.DB_NAME || 'railway',
-        ssl: false
-      };
-      console.log('🚀 Utilisation de la connexion PostgreSQL interne Railway');
-    } else {
-      // En développement local: utiliser le proxy public
-      connectionConfig = {
-        host: process.env.DB_HOST || 'yamanote.proxy.rlwy.net',
-        port: process.env.DB_PORT || 18663,
-        user: process.env.DB_USER || 'postgres',
-        password: process.env.DB_PASSWORD || 'kufBlJfvgFQSHCnQyUgVqwGLthMXtyot',
-        database: process.env.DB_NAME || 'railway',
-        ssl: false
-      };
-      console.log('💻 Utilisation de la connexion PostgreSQL publique');
-    }
-    
-    pgClient = new Client(connectionConfig);
-    pgAvailable = true;
-    console.log('✅ Client PostgreSQL initialisé avec succès');
-  } catch (error) {
-    console.warn('⚠️  Paquet PostgreSQL non disponible:', error.message);
-    pgAvailable = false;
-  }
-  */
-}
-
-// Initialize immediately
-await initPgClient();
-
-// In-memory stores (reconstruction). À migrer vers Prisma ensuite.
-const state = {
-  bankBalance: 0,
-  categories: [
-    { id: 'adhesions', name: 'Adhésions', type: 'recette' },
-    { id: 'evenements', name: 'Événements', type: 'recette' },
-    { id: 'carburant', name: 'Carburant', type: 'depense' },
-    { id: 'maintenance', name: 'Maintenance', type: 'depense' },
-    { id: 'assurance', name: 'Assurance', type: 'depense' },
-    { id: 'materiel', name: 'Matériel', type: 'depense' },
-    { id: 'frais_admin', name: 'Frais administratifs', type: 'depense' },
-    { id: 'autres', name: 'Autres', type: 'both' }
-  ],
-  transactions: [],
-  scheduled: [],
-  expenseReports: [],
-  events: [],
-  members: [
-    { id: 'm1', email: 'admin@rbe.test', firstName: 'Admin', lastName: 'RBE', status: 'active', permissions: ['drive_vehicles','access_myrbe'], createdAt: new Date().toISOString() }
-  ],
-  documents: [],
-  devisLines: [],          // Lignes de devis
-  quoteTemplates: [],      // Templates de devis
-  financialDocuments: [],  // Documents financiers
-  flashes: [
-    { id: 'f1', title: 'Maintenance serveur', message: 'Redémarrage 02:00 CET', active: true, createdAt: new Date().toISOString() },
-    { id: 'f2', title: 'Nouvelle page', message: 'Photothèque RBE', active: false, createdAt: new Date().toISOString() }
-  ],
-  retroNews: [
-    { id: 'rn1', title: 'Bienvenue sur RétroBus', body: 'Plateforme reconstruite.', publishedAt: new Date().toISOString() }
-  ],
-  notifications: [
-    { id: 'n1', type: 'info', message: 'Serveur API reconstruit', createdAt: new Date().toISOString(), read: false }
-  ],
-  vehicles: [
-    { parc: 'RBE-001', marque: 'Renault', modele: 'Master', etat: 'disponible', fuel: 70, caracteristiques: [{ label: 'Niveau gasoil', value: '70' }] },
-    { parc: 'RBE-002', marque: 'Iveco', modele: 'Daily', etat: 'maintenance', fuel: 45, caracteristiques: [] }
-  ],
-  vehicleUsages: [
-    // { id, parc, startedAt, endedAt?, conducteur, note }
-  ],
-  vehicleMaintenance: [
-    // { id, parc, type, description, cost, mileage, performedBy, location, status, date, nextDueDate }
-  ],
-  vehicleServiceSchedule: [
-    // { id, parc, serviceType, description, frequency, priority, status, plannedDate }
-  ],
-  vehicleAdministration: [
-    // { id, parc, type: 'carteGrise'|'assurance'|'controleTechnique'|'certificatCession', documents: [], expiryDate, status, notes }
-  ],
-  vehicleCarteGrise: [
-    // { id, parc, oldCGPath, newCGPath, oldCGBarred, dateImport, notes }
-  ],
-  vehicleAssurance: [
-    // { id, parc, attestationPath, dateValidityStart, dateValidityEnd, timeValidityStart, timeValidityEnd, isActive, notes }
-  ],
-  vehicleControleTechnique: [
-    // { id, parc, attestationPath, ctDate, ctStatus: 'passed'|'contre-visite'|'failed', nextCtDate, mileage, notes }
-  ],
-  vehicleCertificatCession: [
-    // { id, parc, certificatPath, dateImport, notes, imported: true }
-  ],
-  vehicleEchancier: [
-    // { id, parc, type: 'assurance'|'ct'|'cg', description, dueDate, status: 'pending'|'done'|'expired', notes }
-  ],
-  userPermissions: {}  // { userId: { permissions: [...], membershipType, linkedAt } }
-};
+// ============================================================
+// 🚀 MODE DATABASE - TOUTES LES DONNÉES PERSISTÉES DANS PRISMA
+// ============================================================
+console.log('');
+console.log('═══════════════════════════════════════════════════════════');
+console.log('   🚀 RÉTROBUS ESSONNE - SERVEUR API');
+console.log('   📦 Mode: DATABASE (Prisma/SQLite)');
+console.log('   ✅ Toutes les modifications sont persistées en temps réel');
+console.log('═══════════════════════════════════════════════════════════');
+console.log('');
 
 // Helpers
 const uid = () => (global.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`);
 const today = () => new Date().toISOString().split('T')[0];
+
+// Catégories financières par défaut (en mémoire car rarement modifiées)
+const defaultCategories = [
+  { id: 'adhesions', name: 'Adhésions', type: 'recette' },
+  { id: 'evenements', name: 'Événements', type: 'recette' },
+  { id: 'carburant', name: 'Carburant', type: 'depense' },
+  { id: 'maintenance', name: 'Maintenance', type: 'depense' },
+  { id: 'assurance', name: 'Assurance', type: 'depense' },
+  { id: 'materiel', name: 'Matériel', type: 'depense' },
+  { id: 'frais_admin', name: 'Frais administratifs', type: 'depense' },
+  { id: 'autres', name: 'Autres', type: 'both' }
+];
 
 // CORS configuration - Allow frontend(s) and local dev
 const allowedOrigins = [
@@ -221,351 +112,6 @@ const requireAuth = (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   next();
 };
-
-// ✅ Fonction de sauvegarde persistante - sauvegarde les changements en mémoire dans le backup JSON
-let lastBackupPath = null;
-let lastBackupName = null;
-let saveDebounceTimer = null;
-
-function saveStateToBackup() {
-  if (!lastBackupPath) {
-    console.warn('⚠️  Chemin de backup non défini - impossible de sauvegarder');
-    return;
-  }
-  
-  try {
-    const backupData = {
-      timestamp: new Date().toISOString(),
-      description: 'Sauvegarde automatique des données en mémoire',
-      tables: {
-        members: {
-          count: state.members?.length || 0,
-          data: state.members || []
-        },
-        Vehicle: {
-          count: state.vehicles?.length || 0,
-          data: state.vehicles || []
-        },
-        Event: {
-          count: state.events?.length || 0,
-          data: state.events || []
-        },
-        site_users: {
-          count: state.siteUsers?.length || 0,
-          data: state.siteUsers || []
-        },
-        finance_transactions: {
-          count: state.transactions?.length || 0,
-          data: state.transactions || []
-        },
-        finance_expense_reports: {
-          count: state.expenseReports?.length || 0,
-          data: state.expenseReports || []
-        },
-        RetroNews: {
-          count: state.retroNews?.length || 0,
-          data: state.retroNews || []
-        },
-        Flash: {
-          count: state.flashes?.length || 0,
-          data: state.flashes || []
-        },
-        DevisLine: {
-          count: state.devisLines?.length || 0,
-          data: state.devisLines || []
-        },
-        QuoteTemplate: {
-          count: state.quoteTemplates?.length || 0,
-          data: state.quoteTemplates || []
-        },
-        financial_documents: {
-          count: state.financialDocuments?.length || 0,
-          data: state.financialDocuments || []
-        }
-      }
-    };
-    
-    fs.writeFileSync(lastBackupPath, JSON.stringify(backupData, null, 2), 'utf-8');
-    console.log(`✅ Données sauvegardées dans ${path.basename(path.dirname(lastBackupPath))}`);
-    
-    // 🔥 NOUVEAU: Aussi mettre à jour l'index.json avec un timestamp plus récent
-    // pour que le prochain redémarrage charge les modifications
-    if (lastBackupName) {
-      try {
-        const indexPath = path.join(__dirname, '..', 'backups', 'index.json');
-        let backups = [];
-        
-        if (fs.existsSync(indexPath)) {
-          backups = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-        }
-        
-        // Trouver et mettre à jour l'entrée du backup actuel avec un nouveau timestamp
-        const backupIndex = backups.findIndex(b => b.name === lastBackupName);
-        if (backupIndex !== -1) {
-          backups[backupIndex].timestamp = new Date().toISOString();
-          backups[backupIndex].description = 'Dernière modification: ' + new Date().toLocaleString('fr-FR');
-        }
-        
-        fs.writeFileSync(indexPath, JSON.stringify(backups, null, 2), 'utf-8');
-        console.log(`✅ Index.json mis à jour - timestamp du backup actualisé`);
-      } catch (error) {
-        console.warn('⚠️  Impossible de mettre à jour index.json:', error.message);
-      }
-    }
-  } catch (error) {
-    console.error('❌ Erreur lors de la sauvegarde:', error.message);
-  }
-}
-
-// Fonction debounce - DÉSACTIVÉE (pas de sauvegarde automatique)
-function debouncedSave() {
-  // ❌ Plus de sauvegarde automatique
-  // Les données restent en mémoire jusqu'au redémarrage du serveur
-  // L'utilisateur fait les backups manuellement s'il veut les conserver
-}
-
-// Function to load data from backup
-async function initializeFromBackup() {
-  // ⚠️ Ne faire l'import qu'une seule fois au démarrage du serveur
-  if (postgresDataImported) {
-    console.log('📌 Données déjà chargées - conservées en mémoire');
-    return;
-  }
-  
-  try {
-    console.log('🔄 Chargement des données depuis le backup...');
-    
-    const latestBackup = getLatestBackup();
-    
-    if (!latestBackup) {
-      console.log('⚠️  Aucun backup trouvé - utilisation des données par défaut');
-      return;
-    }
-    
-    const backupDir = path.join(__dirname, '..', 'backups');
-    const backupPath = path.join(backupDir, latestBackup.name, 'data.json');
-    
-    if (!fs.existsSync(backupPath)) {
-      console.log('⚠️  Fichier de backup introuvable - utilisation des données par défaut');
-      return;
-    }
-    
-    // ✅ Enregistrer le chemin du backup pour les futures sauvegardes
-    lastBackupPath = backupPath;
-    lastBackupName = latestBackup.name;
-    
-    const backupData = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
-    console.log(`✅ Backup chargé: ${latestBackup.name}`);
-    
-    // Load members
-    if (backupData.tables.members?.data) {
-      state.members = backupData.tables.members.data.map(m => ({
-        id: m.id,
-        email: m.email,
-        firstName: m.firstName,
-        lastName: m.lastName,
-        status: m.membershipStatus || 'active',
-        permissions: ['view_dashboard', 'view_vehicles'],
-        createdAt: m.createdAt || new Date().toISOString()
-      }));
-      console.log(`   👥 ${state.members.length} membres restaurés`);
-    }
-    
-    // Load vehicles
-    if (backupData.tables.Vehicle?.data) {
-      state.vehicles = backupData.tables.Vehicle.data.map(v => ({
-        parc: v.parc,
-        marque: v.marque,
-        modele: v.modele,
-        etat: v.etat,
-        fuel: v.fuel || 0,
-        caracteristiques: [{ label: 'Niveau carburant', value: String(v.fuel || 0) }],
-        id: v.id,
-        createdAt: v.createdAt || new Date().toISOString()
-      }));
-      console.log(`   🚌 ${state.vehicles.length} véhicules restaurés`);
-    }
-    
-    // Load events
-    if (backupData.tables.Event?.data) {
-      state.events = backupData.tables.Event.data.map(e => ({
-        id: e.id,
-        title: e.title,
-        description: e.description,
-        date: e.date,
-        status: e.status,
-        createdAt: e.createdAt || new Date().toISOString()
-      }));
-      console.log(`   📅 ${state.events.length} événements restaurés`);
-    }
-    
-    // Load financial categories
-    if (backupData.tables.finance_categories?.data && backupData.tables.finance_categories.data.length > 0) {
-      state.categories = backupData.tables.finance_categories.data.map(c => ({
-        id: c.id,
-        name: c.name,
-        type: c.type || 'depense'
-      }));
-      console.log(`   💰 ${state.categories.length} catégories financières restaurées`);
-    }
-    
-    // Load financial transactions
-    if (backupData.tables.finance_transactions?.data) {
-      state.transactions = backupData.tables.finance_transactions.data.map(t => ({
-        id: t.id,
-        category: t.category,
-        type: t.type,
-        amount: t.amount,
-        description: t.description,
-        date: t.date,
-        createdAt: t.createdAt || new Date().toISOString()
-      }));
-      console.log(`   📊 ${state.transactions.length} transactions restaurées`);
-    }
-    
-    // Load financial balance
-    if (backupData.tables.finance_balances?.data?.length > 0) {
-      state.bankBalance = backupData.tables.finance_balances.data[0].balance || 0;
-      console.log(`   🏦 Solde: ${state.bankBalance}€`);
-    }
-    
-    // Load expense reports
-    if (backupData.tables.finance_expense_reports?.data) {
-      state.expenseReports = backupData.tables.finance_expense_reports.data.map(e => ({
-        id: e.id,
-        description: e.description,
-        amount: e.amount,
-        status: e.status,
-        date: e.date,
-        createdAt: e.createdAt || new Date().toISOString()
-      }));
-      console.log(`   📋 ${state.expenseReports.length} rapports de dépenses restaurés`);
-    }
-    
-    // Load user permissions (CRITICAL!)
-    if (backupData.tables.user_permissions?.data) {
-      backupData.tables.user_permissions.data.forEach(p => {
-        if (!state.userPermissions[p.userId]) {
-          state.userPermissions[p.userId] = { permissions: [] };
-        }
-        state.userPermissions[p.userId].permissions.push({
-          id: p.id,
-          resource: p.resource,
-          actions: Array.isArray(p.actions) ? p.actions : (typeof p.actions === 'string' ? JSON.parse(p.actions) : []),
-          grantedAt: p.grantedAt || p.createdAt
-        });
-      });
-      console.log(`   🔐 ${Object.keys(state.userPermissions).length} utilisateurs avec permissions restaurés`);
-    }
-    
-    // Load RetroNews
-    if (backupData.tables.RetroNews?.data) {
-      state.retroNews = backupData.tables.RetroNews.data.map(n => ({
-        id: n.id,
-        title: n.title,
-        content: n.content,
-        excerpt: n.excerpt,
-        imageUrl: n.imageUrl,
-        author: n.author,
-        published: n.published,
-        featured: n.featured,
-        createdAt: n.createdAt || new Date().toISOString()
-      }));
-      console.log(`   📰 ${state.retroNews.length} actualités restaurées`);
-    }
-    
-    // Load Flashes
-    if (backupData.tables.Flash?.data) {
-      state.flashes = backupData.tables.Flash.data.map(f => ({
-        id: f.id,
-        content: f.content,
-        type: f.type,
-        active: f.active,
-        createdAt: f.createdAt || new Date().toISOString()
-      }));
-      console.log(`   ⚡ ${state.flashes.length} flashes restaurées`);
-    }
-    
-    // Load Documents
-    if (backupData.tables.Document?.data && backupData.tables.Document.data.length > 0) {
-      state.documents = backupData.tables.Document.data.map(d => ({
-        id: d.id,
-        fileName: d.fileName,
-        filePath: d.filePath,
-        fileSize: d.fileSize,
-        mimeType: d.mimeType,
-        type: d.type,
-        status: d.status,
-        uploadedAt: d.uploadedAt || new Date().toISOString()
-      }));
-      console.log(`   📄 ${state.documents.length} documents restaurés`);
-    }
-
-    // Load Devis Lines
-    if (backupData.tables.DevisLine?.data && backupData.tables.DevisLine.data.length > 0) {
-      state.devisLines = backupData.tables.DevisLine.data;
-      console.log(`   ✍️  ${state.devisLines.length} lignes de devis restaurées`);
-    }
-
-    // Load Quote Templates
-    if (backupData.tables.QuoteTemplate?.data && backupData.tables.QuoteTemplate.data.length > 0) {
-      state.quoteTemplates = backupData.tables.QuoteTemplate.data;
-      console.log(`   📋 ${state.quoteTemplates.length} templates de devis restaurés`);
-    }
-
-    // Load Financial Documents
-    if (backupData.tables.financial_documents?.data && backupData.tables.financial_documents.data.length > 0) {
-      state.financialDocuments = backupData.tables.financial_documents.data;
-      console.log(`   💰 ${state.financialDocuments.length} documents financiers restaurés`);
-    }
-    
-    // Load Vehicle Maintenance
-    if (backupData.tables.vehicle_maintenance?.data && backupData.tables.vehicle_maintenance.data.length > 0) {
-      state.vehicleMaintenance = backupData.tables.vehicle_maintenance.data.map(m => ({
-        id: m.id,
-        vehicleId: m.vehicleId,
-        type: m.type,
-        description: m.description,
-        cost: m.cost,
-        status: m.status,
-        date: m.date
-      }));
-      console.log(`   🔧 ${state.vehicleMaintenance.length} maintenances de véhicules restaurées`);
-    }
-    
-    // Load Vehicle Service Schedule
-    if (backupData.tables.vehicle_service_schedule?.data && backupData.tables.vehicle_service_schedule.data.length > 0) {
-      state.vehicleServiceSchedule = backupData.tables.vehicle_service_schedule.data.map(s => ({
-        id: s.id,
-        vehicleId: s.vehicleId,
-        serviceType: s.serviceType,
-        description: s.description,
-        frequency: s.frequency,
-        status: s.status
-      }));
-      console.log(`   📅 ${state.vehicleServiceSchedule.length} services programmés restaurés`);
-    }
-    
-    // Load site_users for memberId → site_users ID mapping
-    if (backupData.tables.site_users?.data) {
-      state.siteUsers = backupData.tables.site_users.data.map(u => ({
-        id: u.id,
-        linkedMemberId: u.linkedMemberId,
-        email: u.email,
-        role: u.role
-      }));
-      console.log(`   👤 ${state.siteUsers.length} utilisateurs site chargés`);
-    }
-    
-    // ✅ Marquer l'import comme terminé
-    postgresDataImported = true;
-    console.log('✅ Initialisation depuis backup terminée - données verrouillées en mémoire');
-    
-  } catch (error) {
-    console.error('❌ Erreur lors du chargement du backup:', error.message);
-    console.log('📝 Utilisation des données par défaut en mémoire');
-  }
-}
 
 // Health & version
 app.get(['/api/health','/health'], (req, res) => res.json({ ok: true, time: new Date().toISOString(), version: 'rebuild-1' }));
@@ -647,100 +193,184 @@ app.get('/site-config', (req, res) => {
   });
 });
 
-// Public events endpoint
-app.get('/public/events', (req, res) => {
-  const publicEvents = state.events.filter(e => e.status === 'PUBLISHED').map(e => ({
-    id: e.id,
-    title: e.title,
-    description: e.description,
-    date: e.date,
-    status: e.status,
-    createdAt: e.createdAt
-  }));
-  res.json(publicEvents);
+// Public events endpoint - PRISMA
+app.get('/public/events', async (req, res) => {
+  try {
+    const events = await prisma.event.findMany({
+      where: { status: 'PUBLISHED' },
+      orderBy: { date: 'desc' }
+    });
+    res.json(events);
+  } catch (e) {
+    console.error('Erreur GET /public/events:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.get('/public/events/:id', (req, res) => {
-  const event = state.events.find(e => e.id === req.params.id && e.status === 'PUBLISHED');
-  if (!event) return res.status(404).json({ error: 'Event not found' });
-  res.json(event);
+app.get('/public/events/:id', async (req, res) => {
+  try {
+    const event = await prisma.event.findFirst({
+      where: { id: req.params.id, status: 'PUBLISHED' }
+    });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    res.json(event);
+  } catch (e) {
+    console.error('Erreur GET /public/events/:id:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// Public vehicles endpoint
-app.get('/public/vehicles', (req, res) => {
-  const publicVehicles = state.vehicles.map(v => ({
-    id: v.id || v.parc,
-    parc: v.parc,
-    marque: v.marque,
-    modele: v.modele,
-    etat: v.etat,
-    fuel: v.fuel,
-    caracteristiques: v.caracteristiques
-  }));
-  res.json(publicVehicles);
+// Public vehicles endpoint - PRISMA
+app.get('/public/vehicles', async (req, res) => {
+  try {
+    const vehicles = await prisma.vehicle.findMany();
+    res.json(vehicles);
+  } catch (e) {
+    console.error('Erreur GET /public/vehicles:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.get('/public/vehicles/:id', (req, res) => {
-  const vehicle = state.vehicles.find(v => v.id === req.params.id || v.parc === req.params.id);
-  if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
-  res.json(vehicle);
+app.get('/public/vehicles/:id', async (req, res) => {
+  try {
+    const vehicle = await prisma.vehicle.findFirst({
+      where: { OR: [{ id: parseInt(req.params.id) || 0 }, { parc: req.params.id }] }
+    });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json(vehicle);
+  } catch (e) {
+    console.error('Erreur GET /public/vehicles/:id:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.get('/public/vehicles/:id/events', (req, res) => {
+app.get('/public/vehicles/:id/events', async (req, res) => {
   // Return empty array for now - would need to link vehicles to events
   res.json([]);
 });
 
-// Internal events endpoints (requireAuth)
-app.get(['/events','/api/events'], requireAuth, (req, res) => {
-  res.json({ events: state.events });
+// Internal events endpoints (requireAuth) - PRISMA
+app.get(['/events','/api/events'], requireAuth, async (req, res) => {
+  try {
+    const events = await prisma.event.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ events });
+  } catch (e) {
+    console.error('Erreur GET /events:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.get(['/events/:id','/api/events/:id'], requireAuth, (req, res) => {
-  const { id } = req.params;
-  const event = state.events.find(e => e.id === id);
-  if (!event) return res.status(404).json({ error: 'Event not found' });
-  res.json({ event });
+app.get(['/events/:id','/api/events/:id'], requireAuth, async (req, res) => {
+  try {
+    const event = await prisma.event.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    res.json({ event });
+  } catch (e) {
+    console.error('Erreur GET /events/:id:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// FLASHES
-app.get(['/flashes','/api/flashes'], (req, res) => {
-  res.json(state.flashes.filter(f => f.active));
-});
-app.get(['/flashes/all','/api/flashes/all'], (req, res) => {
-  res.json(state.flashes);
-});
-app.post(['/flashes','/api/flashes'], requireAuth, (req, res) => {
-  const { title, message, active = false } = req.body || {};
-  const item = { id: 'f' + Date.now(), title, message, active: !!active, createdAt: new Date().toISOString() };
-  state.flashes.unshift(item);
-  debouncedSave();
-  res.status(201).json(item);
-});
-app.put(['/flashes/:id','/api/flashes/:id'], requireAuth, (req, res) => {
-  const idx = state.flashes.findIndex(f => f.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Flash introuvable' });
-  state.flashes[idx] = { ...state.flashes[idx], ...req.body };
-  debouncedSave();
-  res.json(state.flashes[idx]);
-});
-app.delete(['/flashes/:id','/api/flashes/:id'], requireAuth, (req, res) => {
-  const before = state.flashes.length;
-  state.flashes = state.flashes.filter(f => f.id !== req.params.id);
-  if (before === state.flashes.length) return res.status(404).json({ error: 'Flash introuvable' });
-  debouncedSave();
-  res.json({ ok: true });
+// FLASHES - PRISMA
+app.get(['/flashes','/api/flashes'], async (req, res) => {
+  try {
+    const flashes = await prisma.flash.findMany({
+      where: { active: true },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(flashes);
+  } catch (e) {
+    console.error('Erreur GET /flashes:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// RETRO NEWS
-app.get(['/api/retro-news','/retro-news'], (req, res) => {
-  res.json({ news: state.retroNews });
+app.get(['/flashes/all','/api/flashes/all'], async (req, res) => {
+  try {
+    const flashes = await prisma.flash.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(flashes);
+  } catch (e) {
+    console.error('Erreur GET /flashes/all:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.post(['/api/retro-news','/retro-news'], requireAuth, (req, res) => {
-  const item = { id: 'rn' + Date.now(), title: req.body?.title || 'News', body: req.body?.body || '', publishedAt: new Date().toISOString() };
-  state.retroNews.unshift(item);
-  debouncedSave();
-  res.status(201).json({ news: item });
+
+app.post(['/flashes','/api/flashes'], requireAuth, async (req, res) => {
+  try {
+    const { title, message, active = false } = req.body || {};
+    const flash = await prisma.flash.create({
+      data: { title, message, active: !!active }
+    });
+    console.log('✅ Flash créé:', flash.id);
+    res.status(201).json(flash);
+  } catch (e) {
+    console.error('Erreur POST /flashes:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) => {
+  try {
+    const flash = await prisma.flash.update({
+      where: { id: req.params.id },
+      data: req.body
+    });
+    console.log('✅ Flash modifié:', flash.id);
+    res.json(flash);
+  } catch (e) {
+    console.error('Erreur PUT /flashes/:id:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) => {
+  try {
+    await prisma.flash.delete({
+      where: { id: req.params.id }
+    });
+    console.log('✅ Flash supprimé:', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Erreur DELETE /flashes/:id:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// RETRO NEWS - PRISMA
+app.get(['/api/retro-news','/retro-news'], async (req, res) => {
+  try {
+    const news = await prisma.retroNews.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ news });
+  } catch (e) {
+    console.error('Erreur GET /retro-news:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post(['/api/retro-news','/retro-news'], requireAuth, async (req, res) => {
+  try {
+    const news = await prisma.retroNews.create({
+      data: {
+        title: req.body?.title || 'News',
+        body: req.body?.body || '',
+        status: 'published',
+        publishedAt: new Date()
+      }
+    });
+    console.log('✅ RetroNews créé:', news.id);
+    res.status(201).json({ news });
+  } catch (e) {
+    console.error('Erreur POST /retro-news:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // NOTIFICATIONS
@@ -764,73 +394,175 @@ app.post(['/api/notifications/:id/read','/notifications/:id/read'], requireAuth,
   res.json({ notification: n });
 });
 
-// VEHICLES
-app.get(['/vehicles','/api/vehicles'], requireAuth, (req, res) => {
-  res.json({ vehicles: state.vehicles });
+// VEHICLES - PRISMA
+app.get(['/vehicles','/api/vehicles'], requireAuth, async (req, res) => {
+  try {
+    const vehicles = await prisma.vehicle.findMany();
+    res.json({ vehicles });
+  } catch (e) {
+    console.error('Erreur GET /vehicles:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.get(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
-  const { parc } = req.params;
-  const v = state.vehicles.find(v => v.parc === parc);
-  if (!v) return res.status(404).json({ error: 'Vehicle not found' });
-  res.json({ vehicle: v });
+
+app.get(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res) => {
+  try {
+    const vehicle = await prisma.vehicle.findUnique({
+      where: { parc: req.params.parc }
+    });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json({ vehicle });
+  } catch (e) {
+    console.error('Erreur GET /vehicles/:parc:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, (req, res) => {
-  const { parc } = req.params;
-  state.vehicles = state.vehicles.map(v => (v.parc === parc ? { ...v, ...req.body } : v));
-  const v = state.vehicles.find(v => v.parc === parc);
-  debouncedSave();
-  res.json({ vehicle: v });
+
+app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res) => {
+  try {
+    const vehicle = await prisma.vehicle.update({
+      where: { parc: req.params.parc },
+      data: req.body
+    });
+    console.log('✅ Vehicle modifié:', vehicle.parc);
+    res.json({ vehicle });
+  } catch (e) {
+    console.error('Erreur PUT /vehicles/:parc:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-// Usages (historique pointages)
-app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (req, res) => {
-  const list = state.vehicleUsages.filter(u => u.parc === req.params.parc);
-  res.json(list);
+
+// Usages (historique pointages) - PRISMA
+app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, async (req, res) => {
+  try {
+    const usages = await prisma.vehicleUsage.findMany({
+      where: { parc: req.params.parc },
+      orderBy: { startedAt: 'desc' }
+    });
+    res.json(usages);
+  } catch (e) {
+    console.error('Erreur GET usages:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, (req, res) => {
-  const usage = { id: uid(), parc: req.params.parc, startedAt: new Date().toISOString(), conducteur: req.body?.conducteur || 'Conducteur', note: req.body?.note || '' };
-  state.vehicleUsages.push(usage);
-  debouncedSave();
-  res.status(201).json(usage);
+
+app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, async (req, res) => {
+  try {
+    const usage = await prisma.vehicleUsage.create({
+      data: {
+        parc: req.params.parc,
+        conducteur: req.body?.conducteur || 'Conducteur',
+        note: req.body?.note || ''
+      }
+    });
+    console.log('✅ Usage créé:', usage.id);
+    res.status(201).json(usage);
+  } catch (e) {
+    console.error('Erreur POST usages:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, (req, res) => {
-  state.vehicleUsages = state.vehicleUsages.map(u => u.id === req.params.id ? { ...u, endedAt: new Date().toISOString() } : u);
-  const u = state.vehicleUsages.find(u => u.id === req.params.id);
-  debouncedSave();
-  res.json(u);
+
+app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, async (req, res) => {
+  try {
+    const usage = await prisma.vehicleUsage.update({
+      where: { id: req.params.id },
+      data: { endedAt: new Date() }
+    });
+    res.json(usage);
+  } catch (e) {
+    console.error('Erreur end usage:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-// Maintenance
-app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, (req, res) => {
-  const list = state.vehicleMaintenance.filter(m => m.parc === req.params.parc);
-  res.json(list);
+
+// Maintenance - PRISMA
+app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, async (req, res) => {
+  try {
+    const maintenance = await prisma.vehicleMaintenance.findMany({
+      where: { parc: req.params.parc },
+      orderBy: { date: 'desc' }
+    });
+    res.json(maintenance);
+  } catch (e) {
+    console.error('Erreur GET maintenance:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.post(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, (req, res) => {
-  const item = { id: uid(), parc: req.params.parc, date: new Date().toISOString(), status: req.body?.status || 'completed', ...req.body };
-  state.vehicleMaintenance.unshift(item);
-  debouncedSave();
-  res.status(201).json(item);
+
+app.post(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleMaintenance.create({
+      data: {
+        parc: req.params.parc,
+        type: req.body?.type,
+        description: req.body?.description,
+        cost: req.body?.cost ? parseFloat(req.body.cost) : 0,
+        status: req.body?.status || 'completed'
+      }
+    });
+    console.log('✅ Maintenance créée:', item.id);
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('Erreur POST maintenance:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-// Service schedule
-app.get(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedule'], requireAuth, (req, res) => {
-  const list = state.vehicleServiceSchedule.filter(s => s.parc === req.params.parc);
-  res.json(list);
+
+// Service schedule - PRISMA
+app.get(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedule'], requireAuth, async (req, res) => {
+  try {
+    const schedule = await prisma.vehicleServiceSchedule.findMany({
+      where: { parc: req.params.parc },
+      orderBy: { plannedDate: 'asc' }
+    });
+    res.json(schedule);
+  } catch (e) {
+    console.error('Erreur GET service-schedule:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.post(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedule'], requireAuth, (req, res) => {
-  const item = { id: uid(), parc: req.params.parc, status: 'pending', plannedDate: new Date().toISOString(), ...req.body };
-  state.vehicleServiceSchedule.unshift(item);
-  debouncedSave();
-  res.status(201).json(item);
+
+app.post(['/vehicles/:parc/service-schedule','/api/vehicles/:parc/service-schedule'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleServiceSchedule.create({
+      data: {
+        parc: req.params.parc,
+        serviceType: req.body?.serviceType,
+        description: req.body?.description,
+        frequency: req.body?.frequency,
+        priority: req.body?.priority || 'normal',
+        status: 'pending',
+        plannedDate: req.body?.plannedDate ? new Date(req.body.plannedDate) : new Date()
+      }
+    });
+    console.log('✅ Service schedule créé:', item.id);
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('Erreur POST service-schedule:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-// Maintenance summary
-app.get(['/vehicles/:parc/maintenance-summary','/api/vehicles/:parc/maintenance-summary'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const maint = state.vehicleMaintenance.filter(m => m.parc === parc);
-  const schedule = state.vehicleServiceSchedule.filter(s => s.parc === parc);
-  const totalCost = maint.reduce((s,m)=> s + (Number(m.cost)||0),0);
-  const maintenanceCount = maint.length;
-  const overdueTasks = schedule.filter(s => s.status === 'overdue').length;
-  const pendingTasks = schedule.filter(s => s.status === 'pending').length;
-  res.json({ totalCost, maintenanceCount, overdueTasks, pendingTasks });
+
+// Maintenance summary - PRISMA
+app.get(['/vehicles/:parc/maintenance-summary','/api/vehicles/:parc/maintenance-summary'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const maintenance = await prisma.vehicleMaintenance.findMany({ where: { parc } });
+    const schedule = await prisma.vehicleServiceSchedule.findMany({ where: { parc } });
+    
+    const totalCost = maintenance.reduce((s, m) => s + (m.cost || 0), 0);
+    const maintenanceCount = maintenance.length;
+    const overdueTasks = schedule.filter(s => s.status === 'overdue').length;
+    const pendingTasks = schedule.filter(s => s.status === 'pending').length;
+    
+    res.json({ totalCost, maintenanceCount, overdueTasks, pendingTasks });
+  } catch (e) {
+    console.error('Erreur maintenance-summary:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
+
 // Gallery / background placeholders
 app.get(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, (req, res) => {
   res.json([]);
@@ -839,8 +571,7 @@ app.get(['/vehicles/:parc/background','/api/vehicles/:parc/background'], require
   res.json({ background: null });
 });
 app.get(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, (req, res) => {
-  // Return expense reports potentially related to this vehicle
-  res.json({ reports: state.expenseReports.filter(r => r.parc === req.params.parc || !r.parc) });
+  res.json({ reports: [] });
 });
 
 // ============ ADMINISTRATION VÉHICULES ============
@@ -1466,25 +1197,57 @@ app.get(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
   if (!ev) return res.status(404).json({ error: 'Not found' });
   res.json({ event: ev });
 });
-app.post(['/events', '/api/events'], requireAuth, (req, res) => {
-  const ev = { id: uid(), status: 'draft', createdAt: today(), ...req.body };
-  state.events.push(ev);
-  debouncedSave();
-  res.status(201).json({ event: ev });
+// EVENTS CRUD - PRISMA
+app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
+  try {
+    const event = await prisma.event.create({
+      data: {
+        title: req.body.title || 'Nouvel événement',
+        description: req.body.description,
+        date: req.body.date ? new Date(req.body.date) : null,
+        status: req.body.status || 'DRAFT',
+        extras: req.body.extras ? JSON.stringify(req.body.extras) : null
+      }
+    });
+    console.log('✅ Event créé:', event.id, event.title);
+    res.status(201).json({ event });
+  } catch (e) {
+    console.error('Erreur POST /events:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.put(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
-  state.events = state.events.map(e => e.id === req.params.id ? { ...e, ...req.body } : e);
-  const ev = state.events.find(e => e.id === req.params.id);
-  
-  // Persister dans le backup JSON
-  debouncedSave();
-  
-  res.json({ event: ev });
+
+app.put(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
+  try {
+    const updateData = { ...req.body };
+    if (updateData.date) updateData.date = new Date(updateData.date);
+    if (updateData.extras && typeof updateData.extras === 'object') {
+      updateData.extras = JSON.stringify(updateData.extras);
+    }
+    
+    const event = await prisma.event.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
+    console.log('✅ Event modifié:', event.id, event.title);
+    res.json({ event });
+  } catch (e) {
+    console.error('Erreur PUT /events/:id:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
-app.delete(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
-  state.events = state.events.filter(e => e.id !== req.params.id);
-  debouncedSave();
-  res.json({ ok: true });
+
+app.delete(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
+  try {
+    await prisma.event.delete({
+      where: { id: req.params.id }
+    });
+    console.log('✅ Event supprimé:', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Erreur DELETE /events/:id:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // FINANCE
@@ -2184,9 +1947,19 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`API reconstruction server running on port ${PORT}`);
-  // Initialize data from backup (with permissions)
-  await initializeFromBackup();
+  console.log('');
+  console.log(`🌐 API accessible sur: http://localhost:${PORT}`);
+  console.log('');
+  console.log('📊 Endpoints disponibles:');
+  console.log('   GET  /public/events     - Événements publiés');
+  console.log('   GET  /public/vehicles   - Véhicules');
+  console.log('   GET  /api/events        - Tous les événements (auth)');
+  console.log('   POST /api/events        - Créer événement (auth)');
+  console.log('   PUT  /api/events/:id    - Modifier événement (auth)');
+  console.log('   DEL  /api/events/:id    - Supprimer événement (auth)');
+  console.log('');
+  console.log('✅ Serveur prêt - toutes les modifications sont persistées');
+  console.log('═══════════════════════════════════════════════════════════');
 });
 
 // Graceful shutdown
