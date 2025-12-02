@@ -960,43 +960,27 @@ app.get(['/retromail/:filename.pdf'], requireAuth, (req, res) => {
 // ⛔ FIN ENDPOINTS DÉPLACÉS
 
 app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res) => {
-  const prismaData = buildPrismaVehicleUpdateData(req.body || {});
-  const canUsePrisma = prisma && Object.keys(prismaData).length > 0;
-
-  if (canUsePrisma) {
-    try {
-      const vehicle = await prisma.vehicle.update({
-        where: { parc: req.params.parc },
-        data: prismaData
-      });
-      const synced = upsertVehicleInMemory({ parc: vehicle.parc, ...vehicle }) || vehicle;
-      debouncedSave();
-      console.log('✅ Vehicle modifié:', vehicle.parc);
-      return res.json({ vehicle: synced, source: 'prisma' });
-    } catch (e) {
-      console.error('Erreur PUT /vehicles/:parc (Prisma):', e.message);
-      if (!ENABLE_MEMORY_FALLBACK) {
-        const status = e?.code === 'P2025' ? 404 : 503;
-        return res.status(status).json({ error: status === 404 ? 'Vehicle not found' : 'Prisma indisponible et fallback mémoire désactivé' });
-      }
+  try {
+    const prismaData = buildPrismaVehicleUpdateData(req.body || {});
+    
+    if (Object.keys(prismaData).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
     }
-  } else if (!ENABLE_MEMORY_FALLBACK) {
-    return res.status(400).json({ error: 'Aucun champ valide pour mise à jour Prisma' });
-  }
 
-  if (!ENABLE_MEMORY_FALLBACK) {
-    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
+    const vehicle = await prisma.vehicle.update({
+      where: { parc: req.params.parc },
+      data: prismaData
+    });
+    
+    console.log('✅ Vehicle updated via Prisma:', vehicle.parc);
+    res.json({ vehicle, source: 'prisma' });
+  } catch (e) {
+    console.error('❌ PUT /vehicles/:parc error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+    res.status(500).json({ error: 'Failed to update vehicle', details: e.message });
   }
-
-  const stateUpdate = buildStateVehicleUpdateData(req.body || {});
-  const fallbackVehicle = updateVehicleInMemory(req.params.parc, stateUpdate);
-  if (fallbackVehicle) {
-    debouncedSave();
-    console.log('🧠 Vehicle modifié en mémoire:', req.params.parc);
-    return res.json({ vehicle: fallbackVehicle, source: 'memory' });
-  }
-
-  res.status(404).json({ error: 'Vehicle not found' });
 });
 
 // Usages (historique pointages) - PRISMA avec fallback
