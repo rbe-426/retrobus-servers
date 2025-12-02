@@ -497,31 +497,33 @@ app.get('/public/vehicles/:id/events', async (req, res) => {
   res.json([]);
 });
 
-// Internal events endpoints (requireAuth) - PRISMA avec fallback
-app.get(['/events','/api/events'], requireAuth, async (req, res) => {
-  try {
-    const events = await prisma.event.findMany({
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json({ events });
-  } catch (e) {
-    console.error('Erreur GET /events (Prisma):', e.message);
-    res.json({ events: [] });
-  }
-});
+// ⛔ ENDPOINT DÉPLACÉ - Voir ligne ~1443 pour version avec fallback mémoire
+// app.get(['/events','/api/events'], requireAuth, async (req, res) => {
+//   try {
+//     const events = await prisma.event.findMany({
+//       orderBy: { createdAt: 'desc' }
+//     });
+//     res.json({ events });
+//   } catch (e) {
+//     console.error('Erreur GET /events (Prisma):', e.message);
+//     res.json({ events: [] });
+//   }
+// });
 
-app.get(['/events/:id','/api/events/:id'], requireAuth, async (req, res) => {
-  try {
-    const event = await prisma.event.findUnique({
-      where: { id: req.params.id }
-    });
-    if (!event) return res.status(404).json({ error: 'Event not found' });
-    res.json({ event });
-  } catch (e) {
-    console.error('Erreur GET /events/:id (Prisma):', e.message);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
+// ⛔ ENDPOINT DÉPLACÉ - Voir ligne ~1446 pour version avec fallback mémoire
+// app.get(['/events/:id','/api/events/:id'], requireAuth, async (req, res) => {
+//   try {
+//     const event = await prisma.event.findUnique({
+//       where: { id: req.params.id }
+//     });
+//     if (!event) return res.status(404).json({ error: 'Event not found' });
+//     res.json({ event });
+//   } catch (e) {
+//     console.error('Erreur GET /events/:id (Prisma):', e.message);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
+// ⛔ FIN ENDPOINT DÉPLACÉ
 
 // FLASHES - PRISMA avec fallback
 app.get(['/flashes','/api/flashes'], async (req, res) => {
@@ -591,38 +593,41 @@ app.delete(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) =>
 });
 
 // RETRO NEWS - PRISMA avec fallback
-app.get(['/api/retro-news','/retro-news'], async (req, res) => {
-  try {
-    const news = await prisma.retroNews.findMany({
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json({ news });
-  } catch (e) {
-    console.error('Erreur GET /retro-news (Prisma):', e.message);
-    res.json({ news: state.retroNews || [] });
-  }
-});
+// ⛔ ENDPOINT DÉPLACÉ avec fallback mémoire (voir ligne ~1410)
+// app.get(['/api/retro-news','/retro-news'], async (req, res) => {
+//   try {
+//     const news = await prisma.retroNews.findMany({
+//       orderBy: { createdAt: 'desc' }
+//     });
+//     res.json({ news });
+//   } catch (e) {
+//     console.error('Erreur GET /retro-news (Prisma):', e.message);
+//     res.json({ news: state.retroNews || [] });
+//   }
+// });
 
-app.post(['/api/retro-news','/retro-news'], requireAuth, async (req, res) => {
-  try {
-    const news = await prisma.retroNews.create({
-      data: {
-        title: req.body?.title || 'News',
-        body: req.body?.body || '',
-        status: 'published',
-        publishedAt: new Date()
-      }
-    });
-    console.log('✅ RetroNews créé:', news.id);
-    res.status(201).json({ news });
-  } catch (e) {
-    console.error('Erreur POST /retro-news (Prisma):', e.message);
-    // Fallback: créer en mémoire
-    const item = { id: 'rn' + Date.now(), title: req.body?.title || 'News', body: req.body?.body || '', publishedAt: new Date().toISOString() };
-    state.retroNews.unshift(item);
-    res.status(201).json({ news: item });
-  }
-});
+// ⛔ ENDPOINT DÉPLACÉ avec fallback mémoire
+// app.post(['/api/retro-news','/retro-news'], requireAuth, async (req, res) => {
+//   try {
+//     const news = await prisma.retroNews.create({
+//       data: {
+//         title: req.body?.title || 'News',
+//         body: req.body?.body || '',
+//         status: 'published',
+//         publishedAt: new Date()
+//       }
+//     });
+//     console.log('✅ RetroNews créé:', news.id);
+//     res.status(201).json({ news });
+//   } catch (e) {
+//     console.error('Erreur POST /retro-news (Prisma):', e.message);
+//     // Fallback: créer en mémoire
+//     const item = { id: 'rn' + Date.now(), title: req.body?.title || 'News', body: req.body?.body || '', publishedAt: new Date().toISOString() };
+//     state.retroNews.unshift(item);
+//     res.status(201).json({ news: item });
+//   }
+// });
+// ⛔ FIN ENDPOINT DÉPLACÉ
 
 // NOTIFICATIONS
 app.get(['/api/notifications/inbox','/notifications/inbox'], requireAuth, (req, res) => {
@@ -645,29 +650,31 @@ app.post(['/api/notifications/:id/read','/notifications/:id/read'], requireAuth,
   res.json({ notification: n });
 });
 
-// VEHICLES - PRISMA avec fallback
-app.get(['/vehicles','/api/vehicles'], requireAuth, async (req, res) => {
-  try {
-    const vehicles = await prisma.vehicle.findMany();
-    res.json({ vehicles });
-  } catch (e) {
-    console.error('Erreur GET /vehicles (Prisma):', e.message);
-    res.json({ vehicles: [] });
-  }
-});
+// VEHICLES - PRISMA avec fallback// ⛔ ENDPOINT DÉPLACÉ avec fallback mémoire (voir ligne ~1390)
+// app.get(['/vehicles','/api/vehicles'], requireAuth, async (req, res) => {
+//   try {
+//     const vehicles = await prisma.vehicle.findMany();
+//     res.json({ vehicles });
+//   } catch (e) {
+//     console.error('Erreur GET /vehicles (Prisma):', e.message);
+//     res.json({ vehicles: [] });
+//   }
+// });
 
-app.get(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res) => {
-  try {
-    const vehicle = await prisma.vehicle.findUnique({
-      where: { parc: req.params.parc }
-    });
-    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
-    res.json({ vehicle });
-  } catch (e) {
-    console.error('Erreur GET /vehicles/:parc (Prisma):', e.message);
-    res.status(500).json({ error: 'Database error' });
-  }
-});
+// ⛔ ENDPOINT DÉPLACÉ avec fallback mémoire
+// app.get(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res) => {
+//   try {
+//     const vehicle = await prisma.vehicle.findUnique({
+//       where: { parc: req.params.parc }
+//     });
+//     if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+//     res.json({ vehicle });
+//   } catch (e) {
+//     console.error('Erreur GET /vehicles/:parc (Prisma):', e.message);
+//     res.status(500).json({ error: 'Database error' });
+//   }
+// });
+// ⛔ FIN ENDPOINTS DÉPLACÉS
 
 app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res) => {
   try {
