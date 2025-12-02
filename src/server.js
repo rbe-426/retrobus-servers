@@ -668,12 +668,15 @@ app.post(['/auth/member-login','/api/auth/member-login'], (req, res) => {
   const { identifier, password } = req.body || {};
   if (!identifier || !password) return res.status(400).json({ error: 'identifier & password requis' });
   
-  // Try to find member by email (exact or partial), or firstname+lastname
+  // Try to find member by matricule, email (exact or partial), or firstname+lastname
   let member = state.members.find(m => {
     const id = identifier.toLowerCase();
+    const matricule = m.matricule?.toLowerCase() || '';
     const email = m.email?.toLowerCase() || '';
     const fullName = `${m.firstName || ''}${m.lastName || ''}`.toLowerCase();
     
+    // Exact matricule match (primary - this is the login field)
+    if (matricule === id) return true;
     // Exact email match
     if (email === id) return true;
     // Partial email match: identifier matches beginning of email (w.belaidi matches w.belaidi@...)
