@@ -64,20 +64,28 @@ const state = {
   vehicles: [],
   events: [],
   flashes: [],
-  vehicleCarteGrise: [],
-  vehicleAssurance: [],
-  vehicleControleTechnique: [],
-  vehicleCertificatCession: [],
-  vehicleEchancier: [],
   retroNews: [],
   transactions: [],
-  scheduled: [],
   expenseReports: [],
   documents: [],
   devisLines: [],
   quoteTemplates: [],
   financialDocuments: [],
   userPermissions: {},
+  notificationPreferences: [],
+  vehicleMaintenance: [],
+  vehicleServiceSchedule: [],
+  vehicleUsage: [],
+  scheduledOperations: [],
+  scheduledOperationPayments: [],
+  stock: [],
+  stockMovements: [],
+  vehicleCarteGrise: [],
+  vehicleAssurance: [],
+  vehicleControleTechnique: [],
+  vehicleCertificatCession: [],
+  vehicleEchancier: [],
+  scheduled: [],
   bankBalance: 0,
   categories: [
     { id: 'adhesions', name: 'Adhésions', type: 'recette' },
@@ -184,6 +192,57 @@ function loadBackupAtStartup() {
     if (tables.financial_documents?.data) {
       state.financialDocuments = tables.financial_documents.data;
       console.log(`   ✅ ${state.financialDocuments.length} documents financiers`);
+    }
+    if (tables.Document?.data) {
+      state.documents = tables.Document.data;
+      console.log(`   ✅ ${state.documents.length} documents`);
+    }
+    if (tables.user_permissions?.data) {
+      state.userPermissions = tables.user_permissions.data;
+      console.log(`   ✅ ${state.userPermissions.length || Object.keys(state.userPermissions).length} permissions utilisateurs`);
+    }
+    if (tables.finance_categories?.data) {
+      // Merge avec les catégories par défaut
+      state.categories = [...state.categories, ...tables.finance_categories.data];
+      console.log(`   ✅ ${tables.finance_categories.data.length} catégories financières`);
+    }
+    if (tables.finance_balances?.data) {
+      if (tables.finance_balances.data[0]) {
+        state.bankBalance = tables.finance_balances.data[0].balance || 0;
+        console.log(`   ✅ Solde bancaire: ${state.bankBalance}€`);
+      }
+    }
+    if (tables.vehicle_maintenance?.data) {
+      state.vehicleMaintenance = tables.vehicle_maintenance.data;
+      console.log(`   ✅ ${state.vehicleMaintenance.length} maintenances véhicules`);
+    }
+    if (tables.vehicle_service_schedule?.data) {
+      state.vehicleServiceSchedule = tables.vehicle_service_schedule.data;
+      console.log(`   ✅ ${state.vehicleServiceSchedule.length} plannings services`);
+    }
+    if (tables.Usage?.data) {
+      state.vehicleUsage = tables.Usage.data;
+      console.log(`   ✅ ${state.vehicleUsage.length} utilisations véhicules`);
+    }
+    if (tables.notification_preferences?.data) {
+      state.notificationPreferences = tables.notification_preferences.data;
+      console.log(`   ✅ ${state.notificationPreferences.length} préférences notifications`);
+    }
+    if (tables.scheduled_operations?.data) {
+      state.scheduledOperations = tables.scheduled_operations.data;
+      console.log(`   ✅ ${state.scheduledOperations.length} opérations planifiées`);
+    }
+    if (tables.scheduled_operation_payments?.data) {
+      state.scheduledOperationPayments = tables.scheduled_operation_payments.data;
+      console.log(`   ✅ ${state.scheduledOperationPayments.length} paiements planifiés`);
+    }
+    if (tables.Stock?.data) {
+      state.stock = tables.Stock.data;
+      console.log(`   ✅ ${state.stock.length} articles de stock`);
+    }
+    if (tables.StockMovement?.data) {
+      state.stockMovements = tables.StockMovement.data;
+      console.log(`   ✅ ${state.stockMovements.length} mouvements de stock`);
     }
     
     console.log('✨ Backup chargé avec succès en mémoire\n');
