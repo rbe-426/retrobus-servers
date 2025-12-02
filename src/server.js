@@ -2098,6 +2098,43 @@ app.get('/api/admin/users', requireAuth, (req, res) => {
   res.json(users);
 });
 
+app.post('/api/admin/users', requireAuth, async (req, res) => {
+  try {
+    const { email, firstName, lastName, role } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+    
+    // Check if user already exists
+    const existingUser = state.members.find(m => m.email === email);
+    if (existingUser) {
+      return res.status(409).json({ error: 'User with this email already exists' });
+    }
+    
+    // Create new user/member
+    const newMember = {
+      id: uid(),
+      email,
+      firstName: firstName || '',
+      lastName: lastName || '',
+      role: role || 'USER',
+      status: 'active',
+      permissions: [],
+      createdAt: new Date().toISOString()
+    };
+    
+    state.members.push(newMember);
+    debouncedSave();
+    
+    console.log('✅ User créé:', newMember.id, email);
+    res.status(201).json({ user: newMember });
+  } catch (e) {
+    console.error('❌ POST /api/admin/users error:', e.message);
+    res.status(500).json({ error: 'Failed to create user', details: e.message });
+  }
+});
+
 app.get(['/api/admin/users/:id/permissions', '/api/user-permissions/:id'], requireAuth, (req, res) => {
   const member = state.members.find(m => m.id === req.params.id);
   if (!member) return res.status(404).json({ error: 'User not found' });
