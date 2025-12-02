@@ -12,7 +12,28 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
-const prisma = new PrismaClient();
+// ============================================================
+// 🔧 INITIALISATION PRISMA avec détection d'erreur
+// ============================================================
+let prisma = null;
+let prismaAvailable = false;
+
+try {
+  prisma = new PrismaClient();
+  // Test rapide de connexion
+  const dbUrl = process.env.DATABASE_URL || '';
+  if (dbUrl.startsWith('file:') || dbUrl.startsWith('postgresql://') || dbUrl.startsWith('postgres://')) {
+    prismaAvailable = true;
+    console.log('✅ Prisma initialisé - DATABASE_URL valide');
+  } else {
+    console.warn('⚠️  DATABASE_URL invalide ou manquante - mode mémoire activé');
+    prismaAvailable = false;
+  }
+} catch (e) {
+  console.warn('⚠️  Prisma non disponible:', e.message);
+  prismaAvailable = false;
+}
+
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 4000;
@@ -24,8 +45,8 @@ const pathRoot = process.cwd();
 console.log('');
 console.log('═══════════════════════════════════════════════════════════');
 console.log('   🚀 RÉTROBUS ESSONNE - SERVEUR API');
-console.log('   📦 Mode: HYBRIDE (Prisma + Mémoire)');
-console.log('   ✅ Données principales persistées via Prisma');
+console.log('   📦 Mode:', prismaAvailable ? 'HYBRIDE (Prisma + Mémoire)' : 'MÉMOIRE SEULE');
+console.log('   ✅', prismaAvailable ? 'Données persistées via Prisma' : 'Données en mémoire uniquement');
 console.log('═══════════════════════════════════════════════════════════');
 console.log('');
 
