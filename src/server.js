@@ -1797,38 +1797,24 @@ app.get('/api/documents/:id/download', requireAuth, (req, res) => {
 
 // EVENTS - PRISMA avec fallback optionnel
 app.get(['/events', '/api/events'], requireAuth, async (req, res) => {
-  if (prisma) {
-    try {
-      const events = await prisma.event.findMany({ orderBy: { date: 'desc' } });
-      return res.json({ events });
-    } catch (e) {
-      console.error('Erreur GET /events (Prisma):', e.message);
-    }
+  try {
+    const events = await prisma.event.findMany({ orderBy: { date: 'desc' } });
+    res.json({ events });
+  } catch (e) {
+    console.error('❌ GET /events error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch events', details: e.message });
   }
-  if (ENABLE_MEMORY_FALLBACK) {
-    const events = normalizeEventCollection(state.events || []);
-    return res.json({ events });
-  }
-  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
 app.get(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
-  if (prisma) {
-    try {
-      const event = await prisma.event.findUnique({ where: { id: req.params.id } });
-      if (!event) return res.status(404).json({ error: 'Not found' });
-      return res.json({ event: normalizeEventExtras(event) });
-    } catch (e) {
-      console.error('Erreur GET /events/:id (Prisma):', e.message);
-    }
+  try {
+    const event = await prisma.event.findUnique({ where: { id: req.params.id } });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    res.json({ event: normalizeEventExtras(event) });
+  } catch (e) {
+    console.error('❌ GET /events/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch event', details: e.message });
   }
-  if (ENABLE_MEMORY_FALLBACK) {
-    const event = (state.events || []).find(e => e.id === req.params.id);
-    if (!event) return res.status(404).json({ error: 'Not found' });
-    const normalized = normalizeEventExtras(event);
-    return res.json({ event: normalized });
-  }
-  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
 // VEHICLES - PRISMA avec fallback optionnel
@@ -1847,28 +1833,20 @@ app.get(['/vehicles', '/api/vehicles'], requireAuth, async (req, res) => {
 });
 
 app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res) => {
-  if (prisma) {
-    try {
-      const idCandidate = Number(req.params.parc);
-      const filters = [{ parc: req.params.parc }];
-      if (!Number.isNaN(idCandidate)) {
-        filters.push({ id: idCandidate });
-      }
-      const vehicle = await prisma.vehicle.findFirst({ where: { OR: filters } });
-      if (!vehicle) return res.status(404).json({ error: 'Not found' });
-      const normalized = normalizeVehicleWithCaracteristiques(vehicle);
-      return res.json({ vehicle: normalized });
-    } catch (e) {
-      console.error('❌ GET /vehicles/:parc error:', e.message);
-      return res.status(500).json({ error: 'Failed to fetch vehicle', details: e.message });
+  try {
+    const idCandidate = Number(req.params.parc);
+    const filters = [{ parc: req.params.parc }];
+    if (!Number.isNaN(idCandidate)) {
+      filters.push({ id: idCandidate });
     }
+    const vehicle = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    const normalized = normalizeVehicleWithCaracteristiques(vehicle);
+    res.json({ vehicle: normalized });
+  } catch (e) {
+    console.error('❌ GET /vehicles/:parc error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle', details: e.message });
   }
-  if (ENABLE_MEMORY_FALLBACK) {
-    const vehicle = (state.vehicles || []).find(v => v.parc === req.params.parc || String(v.id) === req.params.parc);
-    if (!vehicle) return res.status(404).json({ error: 'Not found' });
-    return res.json({ vehicle });
-  }
-  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
 // EVENTS CRUD - PRISMA avec fallback
@@ -2534,54 +2512,27 @@ app.post(['/vehicles/:parc/inspection','/api/vehicles/:parc/inspection'], requir
 // Échéancier - GET tous les échéanciers pour un véhicule
 app.get(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAuth, async (req, res) => {
   try {
-    // Essayer avec Prisma d'abord
-    if (prismaAvailable) {
-      try {
-        const schedule = await prisma.vehicleScheduleItem.findMany({
-          where: { vehicleId: req.params.parc },
-          orderBy: { dueDate: 'asc' }
-        });
-        return res.json({ schedule });
-      } catch (e) {
-        console.warn('Prisma indisponible, fallback en mémoire');
-      }
-    }
-    
-    // Fallback: récupérer depuis la mémoire
-    const schedule = (state.vehicleScheduleItem || [])
-      .filter(item => item.vehicleId === req.params.parc)
-      .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-    
+    const schedule = await prisma.vehicleScheduleItem.findMany({
+      where: { vehicleId: req.params.parc },
+      orderBy: { dueDate: 'asc' }
+    });
     res.json({ schedule });
   } catch (e) {
-    console.error('Erreur lecture échéancier:', e);
-    res.status(500).json({ error: e.message });
+    console.error('❌ GET /vehicles/:parc/schedule error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch schedule', details: e.message });
   }
 });
 
 // Échéancier - GET global tous les véhicules
 app.get(['/vehicles/schedule/all','/api/vehicles/schedule/all'], requireAuth, async (req, res) => {
   try {
-    // Essayer avec Prisma d'abord
-    if (prismaAvailable) {
-      try {
-        const schedule = await prisma.vehicleScheduleItem.findMany({
-          orderBy: { dueDate: 'asc' }
-        });
-        return res.json({ schedule });
-      } catch (e) {
-        console.warn('Prisma indisponible, fallback en mémoire');
-      }
-    }
-    
-    // Fallback: récupérer tous depuis la mémoire
-    const schedule = (state.vehicleScheduleItem || [])
-      .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-    
+    const schedule = await prisma.vehicleScheduleItem.findMany({
+      orderBy: { dueDate: 'asc' }
+    });
     res.json({ schedule });
   } catch (e) {
-    console.error('Erreur lecture échéancier global:', e);
-    res.status(500).json({ error: e.message });
+    console.error('❌ GET /vehicles/schedule/all error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch schedules', details: e.message });
   }
 });
 
@@ -2589,52 +2540,22 @@ app.get(['/vehicles/schedule/all','/api/vehicles/schedule/all'], requireAuth, as
 app.post(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAuth, async (req, res) => {
   try {
     const { type, description, dueDate, dueTime, priority, notes } = req.body;
-    
-    // Essayer avec Prisma d'abord
-    if (prismaAvailable) {
-      try {
-        const item = await prisma.vehicleScheduleItem.create({
-          data: {
-            vehicleId: req.params.parc,
-            type,
-            description,
-            dueDate: dueDate ? new Date(dueDate) : null,
-            dueTime,
-            priority: priority || 'normal',
-            status: 'pending',
-            notes
-          }
-        });
-        return res.status(201).json(item);
-      } catch (e) {
-        console.warn('Prisma indisponible, fallback en mémoire');
+    const item = await prisma.vehicleScheduleItem.create({
+      data: {
+        vehicleId: req.params.parc,
+        type,
+        description,
+        dueDate: dueDate ? new Date(dueDate) : null,
+        dueTime,
+        priority: priority || 'normal',
+        status: 'pending',
+        notes
       }
-    }
-    
-    // Fallback: créer en mémoire
-    const item = {
-      id: uid(),
-      vehicleId: req.params.parc,
-      type,
-      description,
-      dueDate: dueDate ? new Date(dueDate) : null,
-      dueTime,
-      priority: priority || 'normal',
-      status: 'pending',
-      notes,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-    
-    if (!state.vehicleScheduleItem) {
-      state.vehicleScheduleItem = [];
-    }
-    state.vehicleScheduleItem.unshift(item);
-    
+    });
     res.status(201).json(item);
   } catch (e) {
-    console.error('Erreur création ligne échéancier:', e.message);
-    res.status(500).json({ error: e.message });
+    console.error('❌ POST /vehicles/:parc/schedule error:', e.message);
+    res.status(500).json({ error: 'Failed to create schedule item', details: e.message });
   }
 });
 
@@ -2642,62 +2563,33 @@ app.post(['/vehicles/:parc/schedule','/api/vehicles/:parc/schedule'], requireAut
 app.put(['/vehicles/schedule/:itemId','/api/vehicles/schedule/:itemId'], requireAuth, async (req, res) => {
   try {
     const { status } = req.body;
-    
-    // Essayer avec Prisma d'abord
-    if (prismaAvailable) {
-      try {
-        const item = await prisma.vehicleScheduleItem.update({
-          where: { id: req.params.itemId },
-          data: { status }
-        });
-        return res.json(item);
-      } catch (e) {
-        console.warn('Prisma indisponible, fallback en mémoire');
-      }
-    }
-    
-    // Fallback: mettre à jour en mémoire
-    const index = state.vehicleScheduleItem?.findIndex(item => item.id === req.params.itemId);
-    if (index !== undefined && index >= 0) {
-      const item = state.vehicleScheduleItem[index];
-      item.status = status;
-      item.updatedAt = new Date();
-      return res.json(item);
-    }
-    
-    res.status(404).json({ error: 'Échéancier non trouvé' });
+    const item = await prisma.vehicleScheduleItem.update({
+      where: { id: req.params.itemId },
+      data: { status }
+    });
+    res.json(item);
   } catch (e) {
-    console.error('Erreur mise à jour échéancier:', e);
-    res.status(500).json({ error: e.message });
+    console.error('❌ PUT /vehicles/schedule/:itemId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Schedule item not found' });
+    }
+    res.status(500).json({ error: 'Failed to update schedule item', details: e.message });
   }
 });
 
 // Échéancier - DELETE supprimer une ligne
 app.delete(['/vehicles/schedule/:itemId','/api/vehicles/schedule/:itemId'], requireAuth, async (req, res) => {
   try {
-    // Essayer avec Prisma d'abord
-    if (prismaAvailable) {
-      try {
-        await prisma.vehicleScheduleItem.delete({
-          where: { id: req.params.itemId }
-        });
-        return res.json({ success: true });
-      } catch (e) {
-        console.warn('Prisma indisponible, fallback en mémoire');
-      }
-    }
-    
-    // Fallback: supprimer de la mémoire
-    const index = state.vehicleScheduleItem?.findIndex(item => item.id === req.params.itemId);
-    if (index !== undefined && index >= 0) {
-      state.vehicleScheduleItem.splice(index, 1);
-      return res.json({ success: true });
-    }
-    
-    res.status(404).json({ error: 'Échéancier non trouvé' });
+    await prisma.vehicleScheduleItem.delete({
+      where: { id: req.params.itemId }
+    });
+    res.json({ success: true });
   } catch (e) {
-    console.error('Erreur suppression échéancier:', e);
-    res.status(500).json({ error: e.message });
+    console.error('❌ DELETE /vehicles/schedule/:itemId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Schedule item not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete schedule item', details: e.message });
   }
 });
 
