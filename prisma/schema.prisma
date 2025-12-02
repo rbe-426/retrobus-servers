@@ -758,7 +758,7 @@ model VehicleCessionCertificate {
   dateImport      DateTime @default(now())
   imported        Boolean  @default(false)
   createdAt       DateTime @default(now())
-  updatedAt       DateTime
+  updatedAt       DateTime @default(now())
 
   @@index([parc])
 }
