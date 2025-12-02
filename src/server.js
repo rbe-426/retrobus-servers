@@ -748,9 +748,16 @@ const normalizeVehicleWithCaracteristiques = (vehicle) => {
     try {
       const caract = JSON.parse(vehicle.caracteristiques);
       if (Array.isArray(caract)) {
-        // Create a map of label -> value for easier access
+        // Create a direct map for frontend compatibility
+        const caracMap = {};
+        
+        // Create mappings for various key formats
         caract.forEach(item => {
           if (item.label && item.value) {
+            // Keep original label as key for direct access
+            caracMap[item.label] = item.value;
+            
+            // Also create normalized key for programmatic access
             const key = item.label
               .toLowerCase()
               .replace(/é/g, 'e')
@@ -758,11 +765,16 @@ const normalizeVehicleWithCaracteristiques = (vehicle) => {
               .replace(/ç/g, 'c')
               .replace(/\s+/g, '_')
               .replace(/[^a-z0-9_]/g, '');
+            caracMap[key] = item.value;
+            
+            // Add to normalized object for direct access
             normalized[key] = item.value;
           }
         });
-        // Also keep the original array for compatibility
+        
+        // Keep as both object and array for compatibility
         normalized.caracteristiques = caract;
+        normalized.caracteristiquesMap = caracMap;
       }
     } catch (e) {
       console.warn('⚠️ Failed to parse caracteristiques for vehicle', vehicle.parc);
