@@ -958,7 +958,17 @@ app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res)
       return res.json({ vehicle: synced, source: 'prisma' });
     } catch (e) {
       console.error('Erreur PUT /vehicles/:parc (Prisma):', e.message);
+      if (!ENABLE_MEMORY_FALLBACK) {
+        const status = e?.code === 'P2025' ? 404 : 503;
+        return res.status(status).json({ error: status === 404 ? 'Vehicle not found' : 'Prisma indisponible et fallback mémoire désactivé' });
+      }
     }
+  } else if (!ENABLE_MEMORY_FALLBACK) {
+    return res.status(400).json({ error: 'Aucun champ valide pour mise à jour Prisma' });
+  }
+
+  if (!ENABLE_MEMORY_FALLBACK) {
+    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
   }
 
   const stateUpdate = buildStateVehicleUpdateData(req.body || {});
@@ -1728,28 +1738,79 @@ app.get('/api/documents/:id/download', requireAuth, (req, res) => {
   res.status(404).json({ error: 'Not implemented file storage' });
 });
 
-// EVENTS - MEMOIRE (fallback principal)
-app.get(['/events', '/api/events'], requireAuth, (req, res) => {
-  const events = normalizeEventCollection(state.events || []);
-  res.json({ events });
+// EVENTS - PRISMA avec fallback optionnel
+app.get(['/events', '/api/events'], requireAuth, async (req, res) => {
+  if (prismaAvailable && prisma) {
+    try {
+      const events = await prisma.event.findMany({ orderBy: { date: 'desc' } });
+      return res.json({ events });
+    } catch (e) {
+      console.error('Erreur GET /events (Prisma):', e.message);
+    }
+  }
+  if (ENABLE_MEMORY_FALLBACK) {
+    const events = normalizeEventCollection(state.events || []);
+    return res.json({ events });
+  }
+  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
-app.get(['/events/:id', '/api/events/:id'], requireAuth, (req, res) => {
-  const event = (state.events || []).find(e => e.id === req.params.id);
-  if (!event) return res.status(404).json({ error: 'Not found' });
-  const normalized = normalizeEventExtras(event);
-  res.json({ event: normalized });
+app.get(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
+  if (prismaAvailable && prisma) {
+    try {
+      const event = await prisma.event.findUnique({ where: { id: req.params.id } });
+      if (!event) return res.status(404).json({ error: 'Not found' });
+      return res.json({ event: normalizeEventExtras(event) });
+    } catch (e) {
+      console.error('Erreur GET /events/:id (Prisma):', e.message);
+    }
+  }
+  if (ENABLE_MEMORY_FALLBACK) {
+    const event = (state.events || []).find(e => e.id === req.params.id);
+    if (!event) return res.status(404).json({ error: 'Not found' });
+    const normalized = normalizeEventExtras(event);
+    return res.json({ event: normalized });
+  }
+  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
-// VEHICLES - MEMOIRE (fallback principal)
-app.get(['/vehicles', '/api/vehicles'], requireAuth, (req, res) => {
-  res.json({ vehicles: state.vehicles || [] });
+// VEHICLES - PRISMA avec fallback optionnel
+app.get(['/vehicles', '/api/vehicles'], requireAuth, async (req, res) => {
+  if (prismaAvailable && prisma) {
+    try {
+      const vehicles = await prisma.vehicle.findMany({ orderBy: { parc: 'asc' } });
+      return res.json({ vehicles });
+    } catch (e) {
+      console.error('Erreur GET /vehicles (Prisma):', e.message);
+    }
+  }
+  if (ENABLE_MEMORY_FALLBACK) {
+    return res.json({ vehicles: state.vehicles || [] });
+  }
+  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
-app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, (req, res) => {
-  const vehicle = (state.vehicles || []).find(v => v.parc === req.params.parc || String(v.id) === req.params.parc);
-  if (!vehicle) return res.status(404).json({ error: 'Not found' });
-  res.json({ vehicle });
+app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res) => {
+  if (prismaAvailable && prisma) {
+    try {
+      const idCandidate = Number(req.params.parc);
+      const filters = [{ parc: req.params.parc }];
+      if (!Number.isNaN(idCandidate)) {
+        filters.push({ id: idCandidate });
+      }
+      const vehicle = await prisma.vehicle.findFirst({ where: { OR: filters } });
+      if (!vehicle) return res.status(404).json({ error: 'Not found' });
+      return res.json({ vehicle });
+    } catch (e) {
+      console.error('Erreur GET /vehicles/:parc (Prisma):', e.message);
+    }
+  }
+  if (ENABLE_MEMORY_FALLBACK) {
+    const vehicle = (state.vehicles || []).find(v => v.parc === req.params.parc || String(v.id) === req.params.parc);
+    if (!vehicle) return res.status(404).json({ error: 'Not found' });
+    return res.json({ vehicle });
+  }
+  res.status(503).json({ error: 'Prisma indisponible et mémoire désactivée' });
 });
 
 // EVENTS CRUD - PRISMA avec fallback
@@ -1768,7 +1829,8 @@ app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
     }
   }
 
-  if (prismaAvailable && prisma) {
+  const prismaOnline = prismaAvailable && prisma;
+  if (prismaOnline) {
     try {
       const event = await prisma.event.create({ data: basePayload });
       const synced = upsertEventInMemory(event) || event;
@@ -1777,7 +1839,12 @@ app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
       return res.status(201).json({ event: synced, source: 'prisma' });
     } catch (e) {
       console.error('Erreur POST /events (Prisma):', e.message);
+      if (!ENABLE_MEMORY_FALLBACK) {
+        return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
+      }
     }
+  } else if (!ENABLE_MEMORY_FALLBACK) {
+    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
   }
 
   const fallbackEventPayload = buildStateEventUpdateData({
@@ -1810,7 +1877,17 @@ app.put(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
       return res.json({ event: synced, source: 'prisma' });
     } catch (e) {
       console.error('Erreur PUT /events/:id (Prisma):', e.message);
+      if (!ENABLE_MEMORY_FALLBACK) {
+        const status = e?.code === 'P2025' ? 404 : 503;
+        return res.status(status).json({ error: status === 404 ? 'Event not found' : 'Prisma indisponible et fallback mémoire désactivé' });
+      }
     }
+  } else if (!ENABLE_MEMORY_FALLBACK) {
+    return res.status(400).json({ error: 'Aucun champ valide pour mise à jour Prisma' });
+  }
+
+  if (!ENABLE_MEMORY_FALLBACK) {
+    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
   }
 
   const stateUpdate = buildStateEventUpdateData(req.body || {});
@@ -1825,7 +1902,8 @@ app.put(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
 });
 
 app.delete(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
-  if (prismaAvailable) {
+  const prismaOnline = prismaAvailable && prisma;
+  if (prismaOnline) {
     try {
       await prisma.event.delete({
         where: { id: req.params.id }
@@ -1839,7 +1917,17 @@ app.delete(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => 
       return res.json({ ok: true });
     } catch (e) {
       console.error('Erreur DELETE /events/:id (Prisma):', e.message);
+      if (!ENABLE_MEMORY_FALLBACK) {
+        const status = e?.code === 'P2025' ? 404 : 503;
+        return res.status(status).json({ error: status === 404 ? 'Event not found' : 'Prisma indisponible et fallback mémoire désactivé' });
+      }
     }
+  } else if (!ENABLE_MEMORY_FALLBACK) {
+    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
+  }
+
+  if (!ENABLE_MEMORY_FALLBACK) {
+    return res.status(503).json({ error: 'Prisma indisponible et fallback mémoire désactivé' });
   }
 
   // Fallback mémoire
