@@ -1,13 +1,14 @@
 const controle = {
-  parc: "R123",
-  datePassage: "2025-11-15",
-  dateExpiration: "2026-11-15",
-  resultat: "OK",
-  observations: "Tous les tests passés"
+  attestationPath: "/documents/R123_CT_2025.pdf",
+  ctDate: "2025-11-15",
+  ctStatus: "passed",
+  nextCtDate: "2026-11-15",
+  mileage: 45000,
+  notes: "Tous les tests passés"
 };
 
 try {
-  const response = await fetch('http://localhost:3001/vehicles/R123/controle-technique', {
+  const response = await fetch('http://localhost:3001/vehicles/R123/ct', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer stub.dGVzdEBlbWFpbC5jb20=',
@@ -18,12 +19,14 @@ try {
 
   const data = await response.json();
   console.log('Status:', response.status);
-  console.log('Response:', JSON.stringify(data, null, 2));
   
   if (response.ok) {
     console.log('\n✅ Contrôle technique sauvegardé!');
+    console.log('ID:', data.id);
+    console.log('Parc:', data.parc);
+    console.log('Statut:', data.ctStatus);
   } else {
-    console.log('Response code:', response.status);
+    console.log('❌ Erreur:', data.error);
   }
 } catch (e) {
   console.error('Error:', e.message);
