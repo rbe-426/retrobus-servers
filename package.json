@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node --watch ./src/server.js",
-    "start": "node ./src/server-simple.js",
+    "start": "node ./src/server.js",
     "build": "prisma generate",
     "postinstall": "prisma generate",
     "backup": "node backup-full.mjs",

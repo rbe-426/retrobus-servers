@@ -1,0 +1,142 @@
+[
+  {
+    "name": "backup_2025-12-02T13-38-18",
+    "timestamp": "2025-12-02T13:38:18.019Z",
+    "type": "FULL_EXPORT",
+    "description": "Export complet de l'état en mémoire",
+    "statistics": {
+      "totalRows": 0,
+      "tablesRequested": 19,
+      "tablesExported": 0,
+      "tablesFailed": 0,
+      "exportRate": "0.0%"
+    },
+    "tablesIncluded": [
+      "members",
+      "site_users",
+      "Vehicle",
+      "Event",
+      "RetroNews",
+      "Flash",
+      "finance_transactions",
+      "finance_expense_reports",
+      "Document",
+      "DevisLine",
+      "QuoteTemplate",
+      "financial_documents",
+      "user_permissions",
+      "vehicle_maintenance",
+      "vehicle_service_schedule",
+      "Usage",
+      "notification_preferences",
+      "scheduled_operations",
+      "scheduled_operation_payments"
+    ],
+    "usage": "Ce backup contient TOUTES les données en mémoire pour restauration autonome"
+  },
+  {
+    "name": "backup_2025-12-02T13-38-24",
+    "timestamp": "2025-12-02T13:38:24.049Z",
+    "type": "FULL_EXPORT",
+    "description": "Export complet de l'état en mémoire",
+    "statistics": {
+      "totalRows": 0,
+      "tablesRequested": 19,
+      "tablesExported": 0,
+      "tablesFailed": 0,
+      "exportRate": "0.0%"
+    },
+    "tablesIncluded": [
+      "members",
+      "site_users",
+      "Vehicle",
+      "Event",
+      "RetroNews",
+      "Flash",
+      "finance_transactions",
+      "finance_expense_reports",
+      "Document",
+      "DevisLine",
+      "QuoteTemplate",
+      "financial_documents",
+      "user_permissions",
+      "vehicle_maintenance",
+      "vehicle_service_schedule",
+      "Usage",
+      "notification_preferences",
+      "scheduled_operations",
+      "scheduled_operation_payments"
+    ],
+    "usage": "Ce backup contient TOUTES les données en mémoire pour restauration autonome"
+  },
+  {
+    "name": "backup_2025-12-02T13-39-41",
+    "timestamp": "2025-12-02T13:39:41.941Z",
+    "type": "FULL_EXPORT",
+    "description": "Export complet de l'état en mémoire",
+    "statistics": {
+      "totalRows": 0,
+      "tablesRequested": 19,
+      "tablesExported": 0,
+      "tablesFailed": 0,
+      "exportRate": "0.0%"
+    },
+    "tablesIncluded": [
+      "members",
+      "site_users",
+      "Vehicle",
+      "Event",
+      "RetroNews",
+      "Flash",
+      "finance_transactions",
+      "finance_expense_reports",
+      "Document",
+      "DevisLine",
+      "QuoteTemplate",
+      "financial_documents",
+      "user_permissions",
+      "vehicle_maintenance",
+      "vehicle_service_schedule",
+      "Usage",
+      "notification_preferences",
+      "scheduled_operations",
+      "scheduled_operation_payments"
+    ],
+    "usage": "Ce backup contient TOUTES les données en mémoire pour restauration autonome"
+  },
+  {
+    "name": "backup_2025-12-02T13-40-20",
+    "timestamp": "2025-12-02T13:40:20.860Z",
+    "type": "FULL_EXPORT",
+    "description": "Export complet de l'état en mémoire",
+    "statistics": {
+      "totalRows": 0,
+      "tablesRequested": 19,
+      "tablesExported": 0,
+      "tablesFailed": 0,
+      "exportRate": "0.0%"
+    },
+    "tablesIncluded": [
+      "members",
+      "site_users",
+      "Vehicle",
+      "Event",
+      "RetroNews",
+      "Flash",
+      "finance_transactions",
+      "finance_expense_reports",
+      "Document",
+      "DevisLine",
+      "QuoteTemplate",
+      "financial_documents",
+      "user_permissions",
+      "vehicle_maintenance",
+      "vehicle_service_schedule",
+      "Usage",
+      "notification_preferences",
+      "scheduled_operations",
+      "scheduled_operation_payments"
+    ],
+    "usage": "Ce backup contient TOUTES les données en mémoire pour restauration autonome"
+  }
+]

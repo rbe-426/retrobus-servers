@@ -1,0 +1,82 @@
+{
+  "timestamp": "2025-12-02T13:38:18.002Z",
+  "description": "Export complet de l'état en mémoire",
+  "tables": {
+    "members": {
+      "count": 0,
+      "data": []
+    },
+    "site_users": {
+      "count": 0,
+      "data": []
+    },
+    "Vehicle": {
+      "count": 0,
+      "data": []
+    },
+    "Event": {
+      "count": 0,
+      "data": []
+    },
+    "RetroNews": {
+      "count": 0,
+      "data": []
+    },
+    "Flash": {
+      "count": 0,
+      "data": []
+    },
+    "finance_transactions": {
+      "count": 0,
+      "data": []
+    },
+    "finance_expense_reports": {
+      "count": 0,
+      "data": []
+    },
+    "Document": {
+      "count": 0,
+      "data": []
+    },
+    "DevisLine": {
+      "count": 0,
+      "data": []
+    },
+    "QuoteTemplate": {
+      "count": 0,
+      "data": []
+    },
+    "financial_documents": {
+      "count": 0,
+      "data": []
+    },
+    "user_permissions": {
+      "count": 0,
+      "data": {}
+    },
+    "vehicle_maintenance": {
+      "count": 0,
+      "data": []
+    },
+    "vehicle_service_schedule": {
+      "count": 0,
+      "data": []
+    },
+    "Usage": {
+      "count": 0,
+      "data": []
+    },
+    "notification_preferences": {
+      "count": 0,
+      "data": []
+    },
+    "scheduled_operations": {
+      "count": 0,
+      "data": []
+    },
+    "scheduled_operation_payments": {
+      "count": 0,
+      "data": []
+    }
+  }
+}

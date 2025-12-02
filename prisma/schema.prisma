@@ -492,6 +492,11 @@ model members {
   hasLinkedAccess     Boolean     @default(false)
   newsletter          Boolean     @default(true)
   notes               String?
+  matricule           String?     @unique
+  password            String?
+  role                String      @default("USER")
+  status              String      @default("active")
+  permissions         Json?
   createdAt           DateTime    @default(now())
   updatedAt           DateTime
   createdBy           String?

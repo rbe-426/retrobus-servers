@@ -584,33 +584,53 @@ const requireAuth = (req, res, next) => {
 app.get(['/api/health','/health'], (req, res) => res.json({ ok: true, time: new Date().toISOString(), version: 'rebuild-1' }));
 
 // Export endpoint pour sauvegarde - accessible pour les scripts de backup
-app.get(['/api/export/state', '/export/state'], (req, res) => {
-  const exported = {
-    timestamp: new Date().toISOString(),
-    description: 'Export complet de l\'état en mémoire',
-    tables: {
-      members: { count: state.members.length, data: state.members },
-      site_users: { count: state.siteUsers.length, data: state.siteUsers },
-      Vehicle: { count: state.vehicles.length, data: state.vehicles },
-      Event: { count: state.events.length, data: state.events },
-      RetroNews: { count: state.retroNews.length, data: state.retroNews },
-      Flash: { count: state.flashes.length, data: state.flashes },
-      finance_transactions: { count: state.transactions.length, data: state.transactions },
-      finance_expense_reports: { count: state.expenseReports.length, data: state.expenseReports },
-      Document: { count: state.documents.length, data: state.documents },
-      DevisLine: { count: state.devisLines.length, data: state.devisLines },
-      QuoteTemplate: { count: state.quoteTemplates.length, data: state.quoteTemplates },
-      financial_documents: { count: state.financialDocuments.length, data: state.financialDocuments },
-      user_permissions: { count: Object.keys(state.userPermissions).length, data: state.userPermissions },
-      vehicle_maintenance: { count: state.vehicleMaintenance?.length || 0, data: state.vehicleMaintenance || [] },
-      vehicle_service_schedule: { count: state.vehicleServiceSchedule?.length || 0, data: state.vehicleServiceSchedule || [] },
-      Usage: { count: state.vehicleUsage?.length || 0, data: state.vehicleUsage || [] },
-      notification_preferences: { count: state.notificationPreferences?.length || 0, data: state.notificationPreferences || [] },
-      scheduled_operations: { count: state.scheduledOperations?.length || 0, data: state.scheduledOperations || [] },
-      scheduled_operation_payments: { count: state.scheduledOperationPayments?.length || 0, data: state.scheduledOperationPayments || [] }
-    }
-  };
-  res.json(exported);
+app.get(['/api/export/state', '/export/state'], async (req, res) => {
+  try {
+    // En mode Prisma, récupérer les données depuis la base de données
+    const [members, vehicles, events, retroNews, flashes, transactions, expenseReports, documents, maintenances, usages] = await Promise.all([
+      prisma.member.findMany(),
+      prisma.vehicle.findMany(),
+      prisma.event.findMany(),
+      prisma.retroNews.findMany(),
+      prisma.flash.findMany(),
+      prisma.financeTransaction.findMany(),
+      prisma.financeExpenseReport.findMany(),
+      prisma.document.findMany(),
+      prisma.vehicleMaintenance.findMany(),
+      prisma.vehicleUsage.findMany()
+    ]);
+
+    const exported = {
+      timestamp: new Date().toISOString(),
+      description: 'Export complet depuis Prisma (base de données)',
+      mode: 'PRISMA_DATABASE',
+      tables: {
+        members: { count: members.length, data: members },
+        site_users: { count: 0, data: [] },
+        Vehicle: { count: vehicles.length, data: vehicles },
+        Event: { count: events.length, data: events },
+        RetroNews: { count: retroNews.length, data: retroNews },
+        Flash: { count: flashes.length, data: flashes },
+        finance_transactions: { count: transactions.length, data: transactions },
+        finance_expense_reports: { count: expenseReports.length, data: expenseReports },
+        Document: { count: documents.length, data: documents },
+        DevisLine: { count: 0, data: [] },
+        QuoteTemplate: { count: 0, data: [] },
+        financial_documents: { count: 0, data: [] },
+        user_permissions: { count: 0, data: {} },
+        vehicle_maintenance: { count: maintenances.length, data: maintenances },
+        vehicle_service_schedule: { count: 0, data: [] },
+        Usage: { count: usages.length, data: usages },
+        notification_preferences: { count: 0, data: [] },
+        scheduled_operations: { count: 0, data: [] },
+        scheduled_operation_payments: { count: 0, data: [] }
+      }
+    };
+    res.json(exported);
+  } catch (e) {
+    console.error('❌ Error exporting state:', e.message);
+    res.status(500).json({ error: 'Failed to export state', details: e.message });
+  }
 });
 
 // AUTH
@@ -2085,17 +2105,41 @@ app.get(['/finance/export', '/api/finance/export'], requireAuth, (req, res) => {
 });
 
 // PERMISSIONS & ADMIN endpoints
-app.get('/api/admin/users', requireAuth, (req, res) => {
-  const users = state.members.map(m => ({
-    id: m.id,
-    email: m.email,
-    firstName: m.firstName,
-    lastName: m.lastName,
-    status: m.status || 'active',
-    permissions: m.permissions || [],
-    createdAt: m.createdAt
-  }));
-  res.json(users);
+app.get('/api/admin/users', requireAuth, async (req, res) => {
+  try {
+    // Read from Prisma (single source of truth)
+    const prismaUsers = await prisma.members.findMany({
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        matricule: true,
+        role: true,
+        status: true,
+        permissions: true,
+        createdAt: true
+      }
+    });
+    
+    // Convert to API response format
+    const users = prismaUsers.map(m => ({
+      id: m.id,
+      email: m.email,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      matricule: m.matricule,
+      role: m.role,
+      status: m.status || 'active',
+      permissions: m.permissions || [],
+      createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt
+    }));
+    
+    res.json(users);
+  } catch (e) {
+    console.error('❌ GET /api/admin/users error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch users', details: e.message });
+  }
 });
 
 app.post('/api/admin/users', requireAuth, async (req, res) => {
@@ -2106,27 +2150,45 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Email is required' });
     }
     
-    // Check if user already exists
-    const existingUser = state.members.find(m => m.email === email);
-    if (existingUser) {
+    // Check if user already exists in Prisma
+    const existingInPrisma = await prisma.members.findUnique({
+      where: { email }
+    });
+    
+    if (existingInPrisma) {
       return res.status(409).json({ error: 'User with this email already exists' });
     }
     
-    // Create new user/member
-    const newMember = {
-      id: uid(),
-      email,
-      firstName: firstName || '',
-      lastName: lastName || '',
-      matricule: matricule || '',
-      role: role || 'USER',
-      password: password || '',
-      status: 'active',
-      permissions: [],
-      createdAt: new Date().toISOString()
-    };
+    // Create in Prisma (single source of truth)
+    const newMember = await prisma.members.create({
+      data: {
+        id: uid(),
+        email,
+        firstName: firstName || '',
+        lastName: lastName || '',
+        matricule: matricule || '',
+        password: password || '',
+        role: role || 'USER',
+        status: 'active',
+        permissions: [],
+        createdAt: new Date()
+      }
+    });
     
-    state.members.push(newMember);
+    // Also add to state.members for in-memory access
+    state.members.push({
+      id: newMember.id,
+      email: newMember.email,
+      firstName: newMember.firstName,
+      lastName: newMember.lastName,
+      matricule: newMember.matricule,
+      password: newMember.password,
+      role: newMember.role,
+      status: newMember.status,
+      permissions: newMember.permissions || [],
+      createdAt: newMember.createdAt.toISOString()
+    });
+    
     debouncedSave();
     
     console.log('✅ User créé:', newMember.id, email, 'matricule:', matricule);
@@ -2373,24 +2435,38 @@ app.delete('/api/email-templates/:id', requireAuth, (req, res) => {
 
 // ===== ADMIN PROMOTION ENDPOINT =====
 // POST /api/admin/users/:id/permissions - Set user permissions
-app.post('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
+app.post('/api/admin/users/:id/permissions', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { permissions } = req.body;
     
-    // Find the member with this ID
-    const member = state.members.find(m => m.id === id);
+    // Find the member in Prisma
+    const member = await prisma.members.findUnique({
+      where: { id }
+    });
     
     if (!member) {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    // Update member permissions
-    member.permissions = permissions || [];
+    // Update in Prisma
+    const updatedMember = await prisma.members.update({
+      where: { id },
+      data: {
+        permissions: permissions || []
+      }
+    });
+    
+    // Also update in state.members
+    const stateUser = state.members.find(m => m.id === id);
+    if (stateUser) {
+      stateUser.permissions = permissions || [];
+    }
+    
     debouncedSave();
     
     console.log(`✅ Permissions updated for user ${id}`);
-    res.json({ ok: true, user: member });
+    res.json({ ok: true, user: updatedMember });
   } catch (e) {
     console.error('❌ POST /api/admin/users/:id/permissions error:', e.message);
     res.status(500).json({ error: 'Failed to update permissions', details: e.message });
@@ -2398,12 +2474,14 @@ app.post('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
 });
 
 // GET /api/admin/users/:id/permissions - Get user permissions
-app.get('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
+app.get('/api/admin/users/:id/permissions', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Find the member with this ID
-    const member = state.members.find(m => m.id === id);
+    // Find the member in Prisma
+    const member = await prisma.members.findUnique({
+      where: { id }
+    });
     
     if (!member) {
       return res.status(404).json({ error: 'User not found' });
@@ -2419,35 +2497,54 @@ app.get('/api/admin/users/:id/permissions', requireAuth, (req, res) => {
     res.status(500).json({ error: 'Failed to fetch permissions', details: e.message });
   }
 });
-app.post('/api/admin/users/:userId/make-admin', requireAuth, (req, res) => {
+app.post('/api/admin/users/:userId/make-admin', requireAuth, async (req, res) => {
   const { userId } = req.params;
   
   console.log(`👤 Admin promotion request for user: ${userId}`);
   
-  // Find the member with this ID
-  const member = state.members.find(m => m.id === userId);
-  
-  if (!member) {
-    return res.status(404).json({ error: 'User not found' });
+  try {
+    // Find the member in Prisma
+    const member = await prisma.members.findUnique({
+      where: { id: userId }
+    });
+    
+    if (!member) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Define admin resources
+    const adminResources = ['members', 'vehicles', 'events', 'finance', 'transactions', 'reports', 'permissions', 'users', 'news', 'documents', 'maintenance', 'admin'];
+    const adminActions = ['READ', 'CREATE', 'UPDATE', 'DELETE', 'ADMIN'];
+    
+    // Build admin permissions
+    const adminPermissions = adminResources.map(resource => ({
+      resource: resource,
+      actions: adminActions
+    }));
+    
+    // Update in Prisma
+    const updatedMember = await prisma.members.update({
+      where: { id: userId },
+      data: {
+        role: 'ADMIN',
+        permissions: adminPermissions
+      }
+    });
+    
+    // Also update in state.members for in-memory access
+    const stateUser = state.members.find(m => m.id === userId);
+    if (stateUser) {
+      stateUser.role = 'ADMIN';
+      stateUser.permissions = adminPermissions;
+    }
+    
+    debouncedSave();
+    console.log(`✅ User ${userId} promoted to ADMIN`);
+    res.json({ ok: true, user: updatedMember });
+  } catch (e) {
+    console.error('❌ Make-admin error:', e.message);
+    res.status(500).json({ error: 'Failed to promote user', details: e.message });
   }
-  
-  // Update member role to ADMIN
-  member.role = 'ADMIN';
-  member.permissions = member.permissions || [];
-  
-  // Define admin resources
-  const adminResources = ['members', 'vehicles', 'events', 'finance', 'transactions', 'reports', 'permissions', 'users', 'news', 'documents', 'maintenance', 'admin'];
-  const adminActions = ['READ', 'CREATE', 'UPDATE', 'DELETE', 'ADMIN'];
-  
-  // Add all admin permissions
-  member.permissions = adminResources.map(resource => ({
-    resource: resource,
-    actions: adminActions
-  }));
-  
-  debouncedSave();
-  console.log(`✅ User ${userId} promoted to ADMIN`);
-  res.json({ ok: true, user: member });
 });
 
 // ===== ENDPOINTS ADMINISTRATION VÉHICULES (PERSISTE DANS PRISMA) =====
@@ -2716,6 +2813,26 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, async () => {
+  // Load users from Prisma into state.members at startup
+  try {
+    const prismaMembers = await prisma.members.findMany();
+    state.members = prismaMembers.map(m => ({
+      id: m.id,
+      email: m.email,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      matricule: m.matricule,
+      password: m.password,
+      role: m.role,
+      status: m.status,
+      permissions: m.permissions || [],
+      createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt
+    }));
+    console.log(`✅ Loaded ${state.members.length} members from Prisma`);
+  } catch (e) {
+    console.warn('⚠️ Failed to load members from Prisma:', e.message);
+  }
+
   console.log('');
   console.log(`🌐 API accessible sur: http://localhost:${PORT}`);
   console.log('');
