@@ -12,19 +12,15 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
-// ============================================================
-// 🔒 DATA PERSISTENCE CONFIGURATION
-// ============================================================
-// CRITICAL: These flags control how data is loaded and persisted.
-// In PRODUCTION, always use:
-//   LOAD_BACKUP_AT_BOOT=false      (do NOT reload old backups)
-//   ENABLE_MEMORY_FALLBACK=false   (do NOT serve stale memory)
-//   ENABLE_RUNTIME_STATE_SAVE=false (do NOT save state to disk)
-// This ensures Prisma PostgreSQL is the ONLY source of truth.
-// ============================================================
-const LOAD_BACKUP_AT_BOOT = process.env.LOAD_BACKUP_AT_BOOT === 'true'; // Changed: default FALSE
+// 🔧 Modes avancés (désactivés par défaut en production)
+// - LOAD_BACKUP_AT_BOOT : recharge un backup JSON au démarrage (❌ à éviter en prod)
+// - ENABLE_RUNTIME_STATE_SAVE : écrit l'état mémoire dans runtime-state.json
+// - ENABLE_MEMORY_FALLBACK : bascule en mémoire si Prisma ne répond pas
+//
+// Par défaut TOUT est à false pour éviter les "données fantômes".
+const LOAD_BACKUP_AT_BOOT = process.env.LOAD_BACKUP_AT_BOOT === 'true';
 const ENABLE_MEMORY_FALLBACK = process.env.ENABLE_MEMORY_FALLBACK === 'true';
-const ENABLE_RUNTIME_STATE_SAVE = process.env.ENABLE_RUNTIME_STATE_SAVE === 'true'; // Changed: default FALSE
+const ENABLE_RUNTIME_STATE_SAVE = process.env.ENABLE_RUNTIME_STATE_SAVE === 'true';
 
 // ============================================================
 // 🔧 INITIALISATION PRISMA avec détection d'erreur
@@ -130,7 +126,10 @@ const ensureDirectoryExists = (dirPath) => {
 };
 
 const persistStateToDisk = () => {
-  if (!ENABLE_RUNTIME_STATE_SAVE) return;
+  if (!ENABLE_RUNTIME_STATE_SAVE) {
+    // Mode normal : on ne sauvegarde PAS l'état mémoire sur disque
+    return;
+  }
   try {
     ensureDirectoryExists(path.dirname(runtimeStatePath));
     fs.writeFileSync(runtimeStatePath, JSON.stringify({
@@ -342,8 +341,23 @@ const updateVehicleInMemory = (parc, updatePayload = {}) => {
 };
 
 // ============================================================
-// 💾 CHARGEMENT DU BACKUP AU DÉMARRAGE
+// ⚠️  ATTENTION - SYSTÈME DE BACKUP JSON
 // ============================================================
+// - Ce système charge un snapshot complet des données dans `state`
+//   à partir des fichiers présents dans le dossier `backups/`.
+// - En PRODUCTION, on ne doit PAS utiliser ce mécanisme comme
+//   persistance principale, car il peut réinjecter d'anciennes
+//   données à chaque redémarrage.
+// - La source de vérité en production doit être la base Prisma
+//   (DATABASE_URL) et non les fichiers JSON.
+//
+// Recommandation :
+//   LOAD_BACKUP_AT_BOOT = false
+//   ENABLE_RUNTIME_STATE_SAVE = false
+//   ENABLE_MEMORY_FALLBACK = false
+// ============================================================
+
+// 💾 CHARGEMENT DU BACKUP AU DÉMARRAGE
 function loadBackupAtStartup() {
   try {
     const backupDir = backupsDir;
@@ -493,11 +507,12 @@ function loadBackupAtStartup() {
 
 // Charger le backup au démarrage (optionnel)
 if (LOAD_BACKUP_AT_BOOT) {
+  console.log('⚠️  LOAD_BACKUP_AT_BOOT=true - tentative de chargement d\'un backup JSON');
   loadBackupAtStartup();
+  state.events = normalizeEventCollection(state.events || []);
 } else {
-  console.log('⏭️  LOAD_BACKUP_AT_BOOT=false - aucun backup chargé au démarrage');
+  console.log('⏭️  Aucun backup chargé au démarrage (LOAD_BACKUP_AT_BOOT=false)');
 }
-state.events = normalizeEventCollection(state.events || []);
 
 // CORS configuration - Allow frontend(s) and local dev
 const allowedOrigins = [
@@ -2772,15 +2787,29 @@ app.listen(PORT, async () => {
   console.log('═══════════════════════════════════════════════════════════');
 });
 
+// Utilitaire pour déconnecter Prisma proprement
+async function safeDisconnectPrisma() {
+  try {
+    if (prisma && prismaAvailable && typeof prisma.$disconnect === 'function') {
+      await prisma.$disconnect();
+      console.log('🔌 Prisma déconnecté proprement');
+    } else {
+      console.log('ℹ️ Prisma non initialisé ou indisponible, pas de déconnexion nécessaire');
+    }
+  } catch (e) {
+    console.warn('⚠️ Erreur lors de la déconnexion Prisma:', e.message);
+  }
+}
+
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Arrêt du serveur...');
-  await prisma.$disconnect();
+  await safeDisconnectPrisma();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Arrêt du serveur (SIGTERM)...');
-  await prisma.$disconnect();
+  await safeDisconnectPrisma();
   process.exit(0);
 });
