@@ -566,11 +566,21 @@ app.use(express.json());
 // Static files (serve uploaded content)
 app.use('/uploads', express.static(pathRoot + '/uploads'));
 
-// Auth placeholder
+// Auth middleware - decode token and extract email
 app.use((req, res, next) => {
   const auth = req.headers.authorization;
   if (auth && auth.startsWith('Bearer ')) {
-    req.user = { id: 'user', role: 'admin' }; // stub
+    const token = auth.slice(7);
+    try {
+      // Token format: 'stub.' + base64(email)
+      if (token.startsWith('stub.')) {
+        const emailB64 = token.slice(5);
+        const email = Buffer.from(emailB64, 'base64').toString('utf-8');
+        req.user = { email: email, id: 'authenticated' }; // pass email for member lookup
+      }
+    } catch (e) {
+      console.error('❌ Token decode error:', e.message);
+    }
   }
   next();
 });
@@ -637,7 +647,7 @@ app.get(['/api/export/state', '/export/state'], async (req, res) => {
 app.post(['/auth/login','/api/auth/login'], (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email & password requis' });
-  const member = state.members.find(m => m.email === email) || state.members[0];
+  const member = state.members.find(m => m.email === email);
   if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
   
   // Find user's role from site_users via linkedMemberId
@@ -653,7 +663,7 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
   res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, role: role, permissions: member.permissions || [] } });
 });
 app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
-  const member = state.members[0] || null;
+  const member = state.members.find(m => m.email === req.user.email) || null;
   if (!member) {
     return res.json({ user: null });
   }
@@ -672,7 +682,7 @@ app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
 
 // Session validation - /api/me endpoint
 app.get('/api/me', requireAuth, (req, res) => {
-  const member = state.members[0] || null;
+  const member = state.members.find(m => m.email === req.user.email) || null;
   if (!member) {
     return res.json({ user: null });
   }
@@ -1563,7 +1573,7 @@ app.get(['/api/members','/members'], requireAuth, async (req, res) => {
 });
 app.get(['/api/members/me'], requireAuth, (req, res) => {
   // stub current member from token
-  const m = state.members[0] || null;
+  const m = state.members.find(mem => mem.email === req.user.email) || null;
   return res.json({ member: m });
 });
 app.post(['/api/members','/members'], requireAuth, async (req, res) => {
