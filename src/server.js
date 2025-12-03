@@ -2822,6 +2822,85 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
   }
 });
 
+// PUT /api/admin/users/:id - Update user
+app.put('/api/admin/users/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { firstName, lastName, role } = req.body;
+
+    // Check if user exists
+    const existingUser = await prisma.members.findUnique({
+      where: { id }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Update in Prisma
+    const updatedMember = await prisma.members.update({
+      where: { id },
+      data: {
+        firstName: firstName !== undefined ? firstName : existingUser.firstName,
+        lastName: lastName !== undefined ? lastName : existingUser.lastName,
+        role: role !== undefined ? role : existingUser.role,
+        updatedAt: new Date()
+      }
+    });
+
+    // Also update in state.members
+    const stateIndex = state.members.findIndex(m => m.id === id);
+    if (stateIndex !== -1) {
+      state.members[stateIndex] = {
+        ...state.members[stateIndex],
+        firstName: updatedMember.firstName,
+        lastName: updatedMember.lastName,
+        role: updatedMember.role
+      };
+    }
+
+    debouncedSave();
+
+    console.log('✅ User updated:', id, firstName, lastName);
+    res.json({ user: updatedMember });
+  } catch (e) {
+    console.error('❌ PUT /api/admin/users/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to update user', details: e.message });
+  }
+});
+
+// DELETE /api/admin/users/:id - Delete user
+app.delete('/api/admin/users/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if user exists
+    const existingUser = await prisma.members.findUnique({
+      where: { id }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Delete from Prisma
+    await prisma.members.delete({
+      where: { id }
+    });
+
+    // Remove from state.members
+    state.members = state.members.filter(m => m.id !== id);
+
+    debouncedSave();
+
+    console.log('✅ User deleted:', id);
+    res.json({ success: true, message: 'User deleted' });
+  } catch (e) {
+    console.error('❌ DELETE /api/admin/users/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to delete user', details: e.message });
+  }
+});
+
 app.get(['/api/admin/users/:id/permissions', '/api/user-permissions/:id'], requireAuth, (req, res) => {
   const member = state.members.find(m => m.id === req.params.id);
   if (!member) return res.status(404).json({ error: 'User not found' });
