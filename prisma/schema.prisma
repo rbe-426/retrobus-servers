@@ -563,6 +563,8 @@ model retro_request {
   estimatedCost            Float?
   actualCost               Float?
   notes                    String?
+  devisNumber              String?
+  factureNumber            String?
   createdAt                DateTime                   @default(now())
   updatedAt                DateTime
   closedAt                 DateTime?

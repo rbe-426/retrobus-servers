@@ -1680,10 +1680,10 @@ app.post(['/api/retro-requests/:id/status'], requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Request not found' });
     }
 
-    // Check authorization - only owner or admin
+    // Check authorization - ONLY ADMIN can change status
     const isAdmin = member.role === 'ADMIN';
-    if (request.userId !== member.id && !isAdmin) {
-      return res.status(403).json({ error: 'Not authorized to update this request' });
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Only admins can change request status' });
     }
 
     // Update status
