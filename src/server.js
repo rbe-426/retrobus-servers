@@ -3618,6 +3618,1090 @@ async function safeDisconnectPrisma() {
   }
 }
 
+
+
+// ============ AUTO-GENERATED CRUD ENDPOINTS ============
+
+// ============ VEHICLE CRUD ============
+
+// GET - List all vehicle
+app.get(['/api/vehicle', '/vehicle'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicle.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicle:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle', details: e.message });
+  }
+});
+
+// GET - Get single vehicle
+app.get(['/api/vehicle/:id', '/vehicle/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicle not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicle:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle', details: e.message });
+  }
+});
+
+// POST - Create new vehicle
+app.post(['/api/vehicle', '/vehicle'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicle:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicle', details: e.message });
+  }
+});
+
+// PUT - Update vehicle
+app.put(['/api/vehicle/:id', '/vehicle/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicle:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicle', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicle
+app.delete(['/api/vehicle/:id', '/vehicle/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicle.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicle:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicle', details: e.message });
+  }
+});
+
+// ============ EVENT CRUD ============
+
+// GET - List all event
+app.get(['/api/event', '/event'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.event.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting event:', e.message);
+    res.status(500).json({ error: 'Failed to fetch event', details: e.message });
+  }
+});
+
+// GET - Get single event
+app.get(['/api/event/:id', '/event/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.event.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'event not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting event:', e.message);
+    res.status(500).json({ error: 'Failed to fetch event', details: e.message });
+  }
+});
+
+// POST - Create new event
+app.post(['/api/event', '/event'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.event.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating event:', e.message);
+    res.status(500).json({ error: 'Failed to create event', details: e.message });
+  }
+});
+
+// PUT - Update event
+app.put(['/api/event/:id', '/event/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.event.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating event:', e.message);
+    res.status(500).json({ error: 'Failed to update event', details: e.message });
+  }
+});
+
+// DELETE - Remove event
+app.delete(['/api/event/:id', '/event/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.event.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting event:', e.message);
+    res.status(500).json({ error: 'Failed to delete event', details: e.message });
+  }
+});
+
+// ============ FLASH CRUD ============
+
+// GET - List all flash
+app.get(['/api/flash', '/flash'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.flash.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting flash:', e.message);
+    res.status(500).json({ error: 'Failed to fetch flash', details: e.message });
+  }
+});
+
+// GET - Get single flash
+app.get(['/api/flash/:id', '/flash/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.flash.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'flash not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting flash:', e.message);
+    res.status(500).json({ error: 'Failed to fetch flash', details: e.message });
+  }
+});
+
+// POST - Create new flash
+app.post(['/api/flash', '/flash'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.flash.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating flash:', e.message);
+    res.status(500).json({ error: 'Failed to create flash', details: e.message });
+  }
+});
+
+// PUT - Update flash
+app.put(['/api/flash/:id', '/flash/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.flash.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating flash:', e.message);
+    res.status(500).json({ error: 'Failed to update flash', details: e.message });
+  }
+});
+
+// DELETE - Remove flash
+app.delete(['/api/flash/:id', '/flash/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.flash.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting flash:', e.message);
+    res.status(500).json({ error: 'Failed to delete flash', details: e.message });
+  }
+});
+
+// ============ RETRO_REQUEST CRUD ============
+
+// GET - List all retro_request
+app.get(['/api/retro_request', '/retro_request'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.retro_request.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting retro_request:', e.message);
+    res.status(500).json({ error: 'Failed to fetch retro_request', details: e.message });
+  }
+});
+
+// GET - Get single retro_request
+app.get(['/api/retro_request/:id', '/retro_request/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.retro_request.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'retro_request not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting retro_request:', e.message);
+    res.status(500).json({ error: 'Failed to fetch retro_request', details: e.message });
+  }
+});
+
+// POST - Create new retro_request
+app.post(['/api/retro_request', '/retro_request'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.retro_request.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating retro_request:', e.message);
+    res.status(500).json({ error: 'Failed to create retro_request', details: e.message });
+  }
+});
+
+// PUT - Update retro_request
+app.put(['/api/retro_request/:id', '/retro_request/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.retro_request.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating retro_request:', e.message);
+    res.status(500).json({ error: 'Failed to update retro_request', details: e.message });
+  }
+});
+
+// DELETE - Remove retro_request
+app.delete(['/api/retro_request/:id', '/retro_request/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.retro_request.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting retro_request:', e.message);
+    res.status(500).json({ error: 'Failed to delete retro_request', details: e.message });
+  }
+});
+
+// ============ RETRO_REQUEST_FILE CRUD ============
+
+// GET - List all retro_request_file
+app.get(['/api/retro_request_file', '/retro_request_file'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.retro_request_file.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting retro_request_file:', e.message);
+    res.status(500).json({ error: 'Failed to fetch retro_request_file', details: e.message });
+  }
+});
+
+// GET - Get single retro_request_file
+app.get(['/api/retro_request_file/:id', '/retro_request_file/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.retro_request_file.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'retro_request_file not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting retro_request_file:', e.message);
+    res.status(500).json({ error: 'Failed to fetch retro_request_file', details: e.message });
+  }
+});
+
+// POST - Create new retro_request_file
+app.post(['/api/retro_request_file', '/retro_request_file'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.retro_request_file.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating retro_request_file:', e.message);
+    res.status(500).json({ error: 'Failed to create retro_request_file', details: e.message });
+  }
+});
+
+// PUT - Update retro_request_file
+app.put(['/api/retro_request_file/:id', '/retro_request_file/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.retro_request_file.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating retro_request_file:', e.message);
+    res.status(500).json({ error: 'Failed to update retro_request_file', details: e.message });
+  }
+});
+
+// DELETE - Remove retro_request_file
+app.delete(['/api/retro_request_file/:id', '/retro_request_file/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.retro_request_file.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting retro_request_file:', e.message);
+    res.status(500).json({ error: 'Failed to delete retro_request_file', details: e.message });
+  }
+});
+
+// ============ SITE_USERS CRUD ============
+
+// GET - List all site_users
+app.get(['/api/site_users', '/site_users'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.site_users.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting site_users:', e.message);
+    res.status(500).json({ error: 'Failed to fetch site_users', details: e.message });
+  }
+});
+
+// GET - Get single site_users
+app.get(['/api/site_users/:id', '/site_users/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.site_users.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'site_users not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting site_users:', e.message);
+    res.status(500).json({ error: 'Failed to fetch site_users', details: e.message });
+  }
+});
+
+// POST - Create new site_users
+app.post(['/api/site_users', '/site_users'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.site_users.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating site_users:', e.message);
+    res.status(500).json({ error: 'Failed to create site_users', details: e.message });
+  }
+});
+
+// PUT - Update site_users
+app.put(['/api/site_users/:id', '/site_users/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.site_users.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating site_users:', e.message);
+    res.status(500).json({ error: 'Failed to update site_users', details: e.message });
+  }
+});
+
+// DELETE - Remove site_users
+app.delete(['/api/site_users/:id', '/site_users/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.site_users.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting site_users:', e.message);
+    res.status(500).json({ error: 'Failed to delete site_users', details: e.message });
+  }
+});
+
+// ============ DOCUMENT CRUD ============
+
+// GET - List all document
+app.get(['/api/document', '/document'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.document.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting document:', e.message);
+    res.status(500).json({ error: 'Failed to fetch document', details: e.message });
+  }
+});
+
+// GET - Get single document
+app.get(['/api/document/:id', '/document/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.document.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'document not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting document:', e.message);
+    res.status(500).json({ error: 'Failed to fetch document', details: e.message });
+  }
+});
+
+// POST - Create new document
+app.post(['/api/document', '/document'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.document.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating document:', e.message);
+    res.status(500).json({ error: 'Failed to create document', details: e.message });
+  }
+});
+
+// PUT - Update document
+app.put(['/api/document/:id', '/document/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.document.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating document:', e.message);
+    res.status(500).json({ error: 'Failed to update document', details: e.message });
+  }
+});
+
+// DELETE - Remove document
+app.delete(['/api/document/:id', '/document/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.document.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting document:', e.message);
+    res.status(500).json({ error: 'Failed to delete document', details: e.message });
+  }
+});
+
+// ============ VEHICLE_MAINTENANCE CRUD ============
+
+// GET - List all vehicle_maintenance
+app.get(['/api/vehicle_maintenance', '/vehicle_maintenance'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicle_maintenance.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicle_maintenance:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle_maintenance', details: e.message });
+  }
+});
+
+// GET - Get single vehicle_maintenance
+app.get(['/api/vehicle_maintenance/:id', '/vehicle_maintenance/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle_maintenance.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicle_maintenance not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicle_maintenance:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle_maintenance', details: e.message });
+  }
+});
+
+// POST - Create new vehicle_maintenance
+app.post(['/api/vehicle_maintenance', '/vehicle_maintenance'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle_maintenance.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicle_maintenance:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicle_maintenance', details: e.message });
+  }
+});
+
+// PUT - Update vehicle_maintenance
+app.put(['/api/vehicle_maintenance/:id', '/vehicle_maintenance/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle_maintenance.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicle_maintenance:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicle_maintenance', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicle_maintenance
+app.delete(['/api/vehicle_maintenance/:id', '/vehicle_maintenance/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicle_maintenance.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicle_maintenance:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicle_maintenance', details: e.message });
+  }
+});
+
+// ============ VEHICLE_SERVICE_SCHEDULE CRUD ============
+
+// GET - List all vehicle_service_schedule
+app.get(['/api/vehicle_service_schedule', '/vehicle_service_schedule'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicle_service_schedule.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicle_service_schedule:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle_service_schedule', details: e.message });
+  }
+});
+
+// GET - Get single vehicle_service_schedule
+app.get(['/api/vehicle_service_schedule/:id', '/vehicle_service_schedule/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle_service_schedule.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicle_service_schedule not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicle_service_schedule:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicle_service_schedule', details: e.message });
+  }
+});
+
+// POST - Create new vehicle_service_schedule
+app.post(['/api/vehicle_service_schedule', '/vehicle_service_schedule'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle_service_schedule.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicle_service_schedule:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicle_service_schedule', details: e.message });
+  }
+});
+
+// PUT - Update vehicle_service_schedule
+app.put(['/api/vehicle_service_schedule/:id', '/vehicle_service_schedule/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicle_service_schedule.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicle_service_schedule:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicle_service_schedule', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicle_service_schedule
+app.delete(['/api/vehicle_service_schedule/:id', '/vehicle_service_schedule/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicle_service_schedule.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicle_service_schedule:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicle_service_schedule', details: e.message });
+  }
+});
+
+// ============ USAGE CRUD ============
+
+// GET - List all usage
+app.get(['/api/usage', '/usage'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.usage.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting usage:', e.message);
+    res.status(500).json({ error: 'Failed to fetch usage', details: e.message });
+  }
+});
+
+// GET - Get single usage
+app.get(['/api/usage/:id', '/usage/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.usage.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'usage not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting usage:', e.message);
+    res.status(500).json({ error: 'Failed to fetch usage', details: e.message });
+  }
+});
+
+// POST - Create new usage
+app.post(['/api/usage', '/usage'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.usage.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating usage:', e.message);
+    res.status(500).json({ error: 'Failed to create usage', details: e.message });
+  }
+});
+
+// PUT - Update usage
+app.put(['/api/usage/:id', '/usage/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.usage.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating usage:', e.message);
+    res.status(500).json({ error: 'Failed to update usage', details: e.message });
+  }
+});
+
+// DELETE - Remove usage
+app.delete(['/api/usage/:id', '/usage/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.usage.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting usage:', e.message);
+    res.status(500).json({ error: 'Failed to delete usage', details: e.message });
+  }
+});
+
+// ============ VEHICLECONTROLTECHNIQUE CRUD ============
+
+// GET - List all vehicleControlTechnique
+app.get(['/api/vehicle-control-technique', '/vehicle-control-technique'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicleControlTechnique.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicleControlTechnique:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleControlTechnique', details: e.message });
+  }
+});
+
+// GET - Get single vehicleControlTechnique
+app.get(['/api/vehicle-control-technique/:id', '/vehicle-control-technique/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleControlTechnique.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicleControlTechnique not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicleControlTechnique:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleControlTechnique', details: e.message });
+  }
+});
+
+// POST - Create new vehicleControlTechnique
+app.post(['/api/vehicle-control-technique', '/vehicle-control-technique'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleControlTechnique.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicleControlTechnique:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicleControlTechnique', details: e.message });
+  }
+});
+
+// PUT - Update vehicleControlTechnique
+app.put(['/api/vehicle-control-technique/:id', '/vehicle-control-technique/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleControlTechnique.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicleControlTechnique:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicleControlTechnique', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicleControlTechnique
+app.delete(['/api/vehicle-control-technique/:id', '/vehicle-control-technique/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicleControlTechnique.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicleControlTechnique:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicleControlTechnique', details: e.message });
+  }
+});
+
+// ============ VEHICLECESSIONCERTIFICATE CRUD ============
+
+// GET - List all vehicleCessionCertificate
+app.get(['/api/vehicle-cession-certificate', '/vehicle-cession-certificate'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicleCessionCertificate.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicleCessionCertificate:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleCessionCertificate', details: e.message });
+  }
+});
+
+// GET - Get single vehicleCessionCertificate
+app.get(['/api/vehicle-cession-certificate/:id', '/vehicle-cession-certificate/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleCessionCertificate.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicleCessionCertificate not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicleCessionCertificate:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleCessionCertificate', details: e.message });
+  }
+});
+
+// POST - Create new vehicleCessionCertificate
+app.post(['/api/vehicle-cession-certificate', '/vehicle-cession-certificate'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleCessionCertificate.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicleCessionCertificate:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicleCessionCertificate', details: e.message });
+  }
+});
+
+// PUT - Update vehicleCessionCertificate
+app.put(['/api/vehicle-cession-certificate/:id', '/vehicle-cession-certificate/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleCessionCertificate.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicleCessionCertificate:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicleCessionCertificate', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicleCessionCertificate
+app.delete(['/api/vehicle-cession-certificate/:id', '/vehicle-cession-certificate/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicleCessionCertificate.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicleCessionCertificate:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicleCessionCertificate', details: e.message });
+  }
+});
+
+// ============ VEHICLEGRAYSCALE CRUD ============
+
+// GET - List all vehicleGrayscale
+app.get(['/api/vehicle-grayscale', '/vehicle-grayscale'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicleGrayscale.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicleGrayscale:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleGrayscale', details: e.message });
+  }
+});
+
+// GET - Get single vehicleGrayscale
+app.get(['/api/vehicle-grayscale/:id', '/vehicle-grayscale/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleGrayscale.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicleGrayscale not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicleGrayscale:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleGrayscale', details: e.message });
+  }
+});
+
+// POST - Create new vehicleGrayscale
+app.post(['/api/vehicle-grayscale', '/vehicle-grayscale'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleGrayscale.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicleGrayscale:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicleGrayscale', details: e.message });
+  }
+});
+
+// PUT - Update vehicleGrayscale
+app.put(['/api/vehicle-grayscale/:id', '/vehicle-grayscale/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleGrayscale.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicleGrayscale:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicleGrayscale', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicleGrayscale
+app.delete(['/api/vehicle-grayscale/:id', '/vehicle-grayscale/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicleGrayscale.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicleGrayscale:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicleGrayscale', details: e.message });
+  }
+});
+
+// ============ VEHICLEINSURANCE CRUD ============
+
+// GET - List all vehicleInsurance
+app.get(['/api/vehicle-insurance', '/vehicle-insurance'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicleInsurance.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicleInsurance:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleInsurance', details: e.message });
+  }
+});
+
+// GET - Get single vehicleInsurance
+app.get(['/api/vehicle-insurance/:id', '/vehicle-insurance/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleInsurance.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicleInsurance not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicleInsurance:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleInsurance', details: e.message });
+  }
+});
+
+// POST - Create new vehicleInsurance
+app.post(['/api/vehicle-insurance', '/vehicle-insurance'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleInsurance.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicleInsurance:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicleInsurance', details: e.message });
+  }
+});
+
+// PUT - Update vehicleInsurance
+app.put(['/api/vehicle-insurance/:id', '/vehicle-insurance/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleInsurance.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicleInsurance:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicleInsurance', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicleInsurance
+app.delete(['/api/vehicle-insurance/:id', '/vehicle-insurance/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicleInsurance.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicleInsurance:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicleInsurance', details: e.message });
+  }
+});
+
+// ============ VEHICLEINSPECTION CRUD ============
+
+// GET - List all vehicleInspection
+app.get(['/api/vehicle-inspection', '/vehicle-inspection'], requireAuth, async (req, res) => {
+  try {
+    const items = await prisma.vehicleInspection.findMany();
+    res.json(items);
+  } catch (e) {
+    console.error('❌ Error getting vehicleInspection:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleInspection', details: e.message });
+  }
+});
+
+// GET - Get single vehicleInspection
+app.get(['/api/vehicle-inspection/:id', '/vehicle-inspection/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleInspection.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!item) return res.status(404).json({ error: 'vehicleInspection not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error getting vehicleInspection:', e.message);
+    res.status(500).json({ error: 'Failed to fetch vehicleInspection', details: e.message });
+  }
+});
+
+// POST - Create new vehicleInspection
+app.post(['/api/vehicle-inspection', '/vehicle-inspection'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleInspection.create({
+      data: {
+        id: require('crypto').randomBytes(16).toString('hex'),
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(item);
+  } catch (e) {
+    console.error('❌ Error creating vehicleInspection:', e.message);
+    res.status(500).json({ error: 'Failed to create vehicleInspection', details: e.message });
+  }
+});
+
+// PUT - Update vehicleInspection
+app.put(['/api/vehicle-inspection/:id', '/vehicle-inspection/:id'], requireAuth, async (req, res) => {
+  try {
+    const item = await prisma.vehicleInspection.update({
+      where: { id: req.params.id },
+      data: { ...req.body, updatedAt: new Date() }
+    });
+    res.json(item);
+  } catch (e) {
+    console.error('❌ Error updating vehicleInspection:', e.message);
+    res.status(500).json({ error: 'Failed to update vehicleInspection', details: e.message });
+  }
+});
+
+// DELETE - Remove vehicleInspection
+app.delete(['/api/vehicle-inspection/:id', '/vehicle-inspection/:id'], requireAuth, async (req, res) => {
+  try {
+    const deleted = await prisma.vehicleInspection.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('❌ Error deleting vehicleInspection:', e.message);
+    res.status(500).json({ error: 'Failed to delete vehicleInspection', details: e.message });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Arrêt du serveur...');

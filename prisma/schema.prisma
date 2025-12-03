@@ -736,6 +736,7 @@ model vehicle_service_schedule {
 model VehicleControlTechnique {
   id                String   @id
   parc              String
+  vehicleId         String?
   attestationPath   String?
   ctDate            DateTime
   ctStatus          String   @default("passed")
@@ -746,12 +747,14 @@ model VehicleControlTechnique {
   updatedAt         DateTime
 
   @@index([parc])
+  @@index([vehicleId])
   @@index([ctDate])
 }
 
 model VehicleCessionCertificate {
   id              String   @id
   parc            String   @unique
+  vehicleId       String?
   certificateUrl  String?
   certificatePath String?
   issuedDate      DateTime?
@@ -763,6 +766,55 @@ model VehicleCessionCertificate {
   updatedAt       DateTime @default(now())
 
   @@index([parc])
+  @@index([vehicleId])
+}
+
+model VehicleGrayscale {
+  id                        String   @id
+  vehicleId                 String   @unique
+  currentGrayscaleNumber    String?
+  currentGrayscaleUrl       String?
+  previousGrayscaleNumber   String?
+  previousGrayscaleUrl      String?
+  registrationDate          DateTime?
+  expiresAt                 DateTime?
+  status                    String   @default("valid")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @default(now())
+
+  @@index([vehicleId])
+}
+
+model VehicleInsurance {
+  id                  String   @id
+  vehicleId           String   @unique
+  attestationUrl      String?
+  insuranceCompany    String?
+  policyNumber        String?
+  validFrom           DateTime?
+  validUntil          DateTime?
+  validFromTime       String?
+  validUntilTime      String?
+  status              String   @default("valid")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @default(now())
+
+  @@index([vehicleId])
+}
+
+model VehicleInspection {
+  id                String   @id
+  vehicleId         String
+  inspectionType    String?
+  inspectionDate    DateTime?
+  result            String?
+  nextInspectionDate DateTime?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now())
+
+  @@index([vehicleId])
+  @@index([inspectionDate])
 }
 
 enum DocumentStatus {
