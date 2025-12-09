@@ -3818,7 +3818,7 @@ app.get(['/api/flash/:id', '/flash/:id'], requireAuth, async (req, res) => {
 // POST - Create new flash
 app.post(['/api/flash', '/flash'], requireAuth, async (req, res) => {
   try {
-    const { content, ...rest } = req.body;
+    const { content, title, ...rest } = req.body; // Ignore title, it's not a flash field
     
     if (!content) {
       return res.status(400).json({ 
