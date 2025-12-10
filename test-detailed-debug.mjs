@@ -110,13 +110,14 @@ async function testDetailedCreate() {
     console.log(`  Error: ${e.message}\n`);
   }
 
-  // Test 4: Usage
+  // Test 4: Usage - avec parc valide (en théorie on devrait la créer avant)
   console.log('📝 Testing POST /api/usage...');
   try {
     const testData = {
-      parc: 'TEST-USAGE',
+      parc: 'TEST-4QO1LR', // Utiliser la parc qu'on vient de créer
       conducteur: 'Test Conductor',
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
+      note: 'Test usage'
     };
 
     const response = await fetch(`${BASE_URL}/api/usage`, {
