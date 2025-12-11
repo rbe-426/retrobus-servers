@@ -2683,7 +2683,7 @@ app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAut
   if (eventId) list = list.filter(r => r.eventId === eventId);
   res.json({ reports: list });
 });
-app.post('/finance/expense-reports', requireAuth, upload.single('file'), (req, res) => {
+app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, upload.single('file'), (req, res) => {
   const { date, description, amount, status = 'open', planned = false, eventId } = req.body;
   const report = {
     id: uid(),
@@ -2700,33 +2700,34 @@ app.post('/finance/expense-reports', requireAuth, upload.single('file'), (req, r
   debouncedSave();
   res.status(201).json({ report });
 });
-app.put('/finance/expense-reports/:id', requireAuth, (req, res) => {
+app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, (req, res) => {
   state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, ...req.body } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
 });
-app.post('/finance/expense-reports/:id/close', requireAuth, (req, res) => {
+app.post(['/finance/expense-reports/:id/close', '/api/finance/expense-reports/:id/close'], requireAuth, (req, res) => {
   state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status: 'closed', closedAt: new Date().toISOString() } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
 });
-app.post('/finance/expense-reports/:id/reimburse', requireAuth, (req, res) => {
+app.post(['/finance/expense-reports/:id/reimburse', '/api/finance/expense-reports/:id/reimburse'], requireAuth, (req, res) => {
   state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status: 'reimbursed', reimbursedAt: new Date().toISOString() } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
 });
-app.post('/finance/expense-reports/:id/status', requireAuth, (req, res) => {
+app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:id/status'], requireAuth, (req, res) => {
   const { status } = req.body;
   state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
 });
-app.delete('/finance/expense-reports/:id', requireAuth, (req, res) => {
+app.delete(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, (req, res) => {
   state.expenseReports = state.expenseReports.filter(r => r.id !== req.params.id);
+  debouncedSave();
   res.json({ ok: true });
 });
 
