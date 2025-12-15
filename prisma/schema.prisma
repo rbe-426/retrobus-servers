@@ -606,6 +606,96 @@ model retro_request_status_log {
   @@index([requestId])
 }
 
+// ============================================
+// ÉVÉNEMENTS & RELATED DATA MODELS
+// ============================================
+model Participant {
+  id        String   @id
+  eventId   String
+  name      String
+  email     String?
+  phone     String?
+  status    String   @default("pending") // pending, confirmed, cancelled
+  ticketType String  @default("adult") // adult, child
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+
+  @@index([eventId])
+  @@index([email])
+}
+
+model Route {
+  id          String   @id
+  eventId     String
+  name        String
+  description String?
+  departurePoint String?
+  arrivalPoint   String?
+  capacity    Int      @default(50)
+  occupancy   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([eventId])
+}
+
+model Planification {
+  id          String   @id
+  eventId     String?
+  title       String
+  description String?
+  date        DateTime
+  location    String?
+  places      Int      @default(0)
+  confirmed   Int      @default(0)
+  rate        Float    @default(0)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([date])
+  @@index([eventId])
+}
+
+model GpsTracking {
+  id          String   @id @default(cuid())
+  vehicleId   String
+  latitude    Float
+  longitude   Float
+  speed       Float    @default(0)
+  timestamp   DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([vehicleId])
+  @@index([timestamp])
+}
+
+model Transaction {
+  id          String   @id
+  type        String   // "recette" or "depense"
+  amount      Float
+  description String?
+  date        DateTime @default(now())
+  category    String?
+  eventId     String?  // Lien optionnel vers un événement
+  notes       String?
+  attachmentUrl String?
+  status      String   @default("completed") // completed, pending, cancelled
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([eventId])
+  @@index([date])
+  @@index([type])
+  @@index([category])
+}
+
+// ============================================
+// LEGACY ROUTES MODEL (kept for compatibility)
+// ============================================
 model routes {
   id          String   @id
   name        String

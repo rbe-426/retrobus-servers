@@ -2585,6 +2585,335 @@ app.delete(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => 
   }
 });
 
+// ============================================
+// PARTICIPANTS ENDPOINTS (événement-spécifiques)
+// ============================================
+app.get(['/events/:id/participants', '/api/events/:id/participants'], requireAuth, async (req, res) => {
+  try {
+    const participants = await prisma.participant.findMany({
+      where: { eventId: req.params.id },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ participants });
+  } catch (e) {
+    console.error('❌ GET /events/:id/participants error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch participants', details: e.message });
+  }
+});
+
+app.post(['/events/:id/participants', '/api/events/:id/participants'], requireAuth, async (req, res) => {
+  try {
+    const participant = await prisma.participant.create({
+      data: {
+        ...req.body,
+        eventId: req.params.id
+      }
+    });
+    console.log('✅ Participant créé:', participant.id);
+    res.status(201).json(participant);
+  } catch (e) {
+    console.error('❌ POST /events/:id/participants error:', e.message);
+    res.status(500).json({ error: 'Failed to create participant', details: e.message });
+  }
+});
+
+app.put(['/events/:id/participants/:participantId', '/api/events/:id/participants/:participantId'], requireAuth, async (req, res) => {
+  try {
+    const participant = await prisma.participant.update({
+      where: { id: req.params.participantId },
+      data: req.body
+    });
+    console.log('✅ Participant modifié:', participant.id);
+    res.json(participant);
+  } catch (e) {
+    console.error('❌ PUT /events/:id/participants/:participantId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Participant not found' });
+    }
+    res.status(500).json({ error: 'Failed to update participant', details: e.message });
+  }
+});
+
+app.delete(['/events/:id/participants/:participantId', '/api/events/:id/participants/:participantId'], requireAuth, async (req, res) => {
+  try {
+    await prisma.participant.delete({
+      where: { id: req.params.participantId }
+    });
+    console.log('✅ Participant supprimé:', req.params.participantId);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /events/:id/participants/:participantId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Participant not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete participant', details: e.message });
+  }
+});
+
+// ============================================
+// ROUTES/TRAJETS ENDPOINTS (événement-spécifiques)
+// ============================================
+app.get(['/events/:id/routes', '/api/events/:id/routes'], requireAuth, async (req, res) => {
+  try {
+    const routes = await prisma.route.findMany({
+      where: { eventId: req.params.id },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ routes });
+  } catch (e) {
+    console.error('❌ GET /events/:id/routes error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch routes', details: e.message });
+  }
+});
+
+app.post(['/events/:id/routes', '/api/events/:id/routes'], requireAuth, async (req, res) => {
+  try {
+    const route = await prisma.route.create({
+      data: {
+        ...req.body,
+        eventId: req.params.id
+      }
+    });
+    console.log('✅ Route créée:', route.id);
+    res.status(201).json(route);
+  } catch (e) {
+    console.error('❌ POST /events/:id/routes error:', e.message);
+    res.status(500).json({ error: 'Failed to create route', details: e.message });
+  }
+});
+
+app.put(['/events/:id/routes/:routeId', '/api/events/:id/routes/:routeId'], requireAuth, async (req, res) => {
+  try {
+    const route = await prisma.route.update({
+      where: { id: req.params.routeId },
+      data: req.body
+    });
+    console.log('✅ Route modifiée:', route.id);
+    res.json(route);
+  } catch (e) {
+    console.error('❌ PUT /events/:id/routes/:routeId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Route not found' });
+    }
+    res.status(500).json({ error: 'Failed to update route', details: e.message });
+  }
+});
+
+app.delete(['/events/:id/routes/:routeId', '/api/events/:id/routes/:routeId'], requireAuth, async (req, res) => {
+  try {
+    await prisma.route.delete({
+      where: { id: req.params.routeId }
+    });
+    console.log('✅ Route supprimée:', req.params.routeId);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /events/:id/routes/:routeId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Route not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete route', details: e.message });
+  }
+});
+
+// ============================================
+// TRANSACTIONS LIÉES AUX ÉVÉNEMENTS
+// ============================================
+app.get(['/events/:id/transactions', '/api/events/:id/transactions'], requireAuth, async (req, res) => {
+  try {
+    // Récupérer les transactions liées à cet événement depuis Prisma
+    const transactions = await prisma.transaction.findMany({
+      where: { eventId: req.params.id },
+      orderBy: { date: 'desc' }
+    });
+    res.json({ transactions });
+  } catch (e) {
+    console.error('❌ GET /events/:id/transactions error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch transactions', details: e.message });
+  }
+});
+
+app.post(['/events/:id/transactions/:transactionId', '/api/events/:id/transactions/:transactionId'], requireAuth, async (req, res) => {
+  try {
+    // Lier une transaction à un événement
+    const tx = await prisma.transaction.update({
+      where: { id: req.params.transactionId },
+      data: { eventId: req.params.id }
+    });
+    console.log('✅ Transaction liée à événement:', req.params.transactionId);
+    res.json(tx);
+  } catch (e) {
+    console.error('❌ POST /events/:id/transactions/:transactionId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    res.status(500).json({ error: 'Failed to link transaction', details: e.message });
+  }
+});
+
+app.delete(['/events/:id/transactions/:transactionId', '/api/events/:id/transactions/:transactionId'], requireAuth, async (req, res) => {
+  try {
+    // Délier une transaction d'un événement
+    const tx = await prisma.transaction.update({
+      where: { id: req.params.transactionId },
+      data: { eventId: null }
+    });
+    console.log('✅ Transaction déliée d\'événement:', req.params.transactionId);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /events/:id/transactions/:transactionId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    res.status(500).json({ error: 'Failed to unlink transaction', details: e.message });
+  }
+});
+
+// ============================================
+// PLANIFICATIONS ENDPOINTS
+// ============================================
+app.get(['/planifications', '/api/planifications'], requireAuth, async (req, res) => {
+  try {
+    // Récupérer les planifications depuis Prisma si disponible
+    if (prisma?.planification) {
+      const planifications = await prisma.planification.findMany({
+        orderBy: { date: 'desc' }
+      });
+      return res.json({ planifications });
+    }
+    // Fallback: retourner from state
+    res.json({ planifications: state.planifications || [] });
+  } catch (e) {
+    console.error('❌ GET /planifications error:', e.message);
+    res.json({ planifications: state.planifications || [] });
+  }
+});
+
+app.post(['/planifications', '/api/planifications'], requireAuth, async (req, res) => {
+  try {
+    if (prisma?.planification) {
+      const plan = await prisma.planification.create({
+        data: req.body
+      });
+      console.log('✅ Planification créée:', plan.id);
+      return res.status(201).json(plan);
+    }
+    // Fallback: créer dans state
+    const plan = { id: uid(), ...req.body, createdAt: new Date() };
+    if (!state.planifications) state.planifications = [];
+    state.planifications.push(plan);
+    debouncedSave();
+    res.status(201).json(plan);
+  } catch (e) {
+    console.error('❌ POST /planifications error:', e.message);
+    res.status(500).json({ error: 'Failed to create planification', details: e.message });
+  }
+});
+
+app.put(['/planifications/:id', '/api/planifications/:id'], requireAuth, async (req, res) => {
+  try {
+    if (prisma?.planification) {
+      const plan = await prisma.planification.update({
+        where: { id: req.params.id },
+        data: req.body
+      });
+      console.log('✅ Planification modifiée:', plan.id);
+      return res.json(plan);
+    }
+    // Fallback: modifier dans state
+    const idx = (state.planifications || []).findIndex(p => p.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Planification not found' });
+    state.planifications[idx] = { ...state.planifications[idx], ...req.body };
+    debouncedSave();
+    res.json(state.planifications[idx]);
+  } catch (e) {
+    console.error('❌ PUT /planifications/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to update planification', details: e.message });
+  }
+});
+
+app.delete(['/planifications/:id', '/api/planifications/:id'], requireAuth, async (req, res) => {
+  try {
+    if (prisma?.planification) {
+      await prisma.planification.delete({
+        where: { id: req.params.id }
+      });
+      console.log('✅ Planification supprimée:', req.params.id);
+      return res.json({ ok: true });
+    }
+    // Fallback: supprimer du state
+    if (!state.planifications?.length) return res.status(404).json({ error: 'Planification not found' });
+    state.planifications = state.planifications.filter(p => p.id !== req.params.id);
+    debouncedSave();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /planifications/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to delete planification', details: e.message });
+  }
+});
+
+// ============================================
+// GPS TRACKING ENDPOINTS
+// ============================================
+app.get(['/gps/tracking', '/api/gps/tracking'], requireAuth, async (req, res) => {
+  try {
+    // Récupérer le tracking GPS
+    if (prisma?.gpsTracking) {
+      const tracking = await prisma.gpsTracking.findMany();
+      return res.json({ tracking });
+    }
+    // Fallback: retourner du state
+    res.json({ tracking: state.gpsTracking || [] });
+  } catch (e) {
+    console.error('❌ GET /gps/tracking error:', e.message);
+    res.json({ tracking: state.gpsTracking || [] });
+  }
+});
+
+app.put(['/gps/tracking/:vehicleId', '/api/gps/tracking/:vehicleId'], requireAuth, async (req, res) => {
+  try {
+    const { latitude, longitude, speed, timestamp } = req.body;
+    
+    if (prisma?.gpsTracking) {
+      const track = await prisma.gpsTracking.upsert({
+        where: { vehicleId: req.params.vehicleId },
+        create: {
+          vehicleId: req.params.vehicleId,
+          latitude,
+          longitude,
+          speed,
+          timestamp: new Date(timestamp)
+        },
+        update: {
+          latitude,
+          longitude,
+          speed,
+          timestamp: new Date(timestamp)
+        }
+      });
+      console.log('✅ GPS tracking mis à jour:', req.params.vehicleId);
+      return res.json(track);
+    }
+    
+    // Fallback: mettre à jour dans state
+    if (!state.gpsTracking) state.gpsTracking = [];
+    let track = state.gpsTracking.find(t => t.vehicleId === req.params.vehicleId);
+    if (track) {
+      track.latitude = latitude;
+      track.longitude = longitude;
+      track.speed = speed;
+      track.timestamp = timestamp || new Date();
+    } else {
+      track = { vehicleId: req.params.vehicleId, latitude, longitude, speed, timestamp: timestamp || new Date() };
+      state.gpsTracking.push(track);
+    }
+    debouncedSave();
+    res.json(track);
+  } catch (e) {
+    console.error('❌ PUT /gps/tracking/:vehicleId error:', e.message);
+    res.status(500).json({ error: 'Failed to update GPS tracking', details: e.message });
+  }
+});
+
 // FINANCE
 app.get(['/finance/stats', '/api/finance/stats'], requireAuth, (req, res) => {
   const revenue = state.transactions.filter(t => t.type === 'recette').reduce((s,t)=>s+t.amount,0);
