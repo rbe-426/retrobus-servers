@@ -696,13 +696,14 @@ model Transaction {
 // ============================================
 // LEGACY ROUTES MODEL (kept for compatibility)
 // ============================================
-model routes {
-  id          String   @id
-  name        String
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime
-}
+// Deprecated: Use 'Route' model instead
+// model routes {
+//   id          String   @id
+//   name        String
+//   description String?
+//   createdAt   DateTime @default(now())
+//   updatedAt   DateTime
+// }
 
 model scheduled_operation_payments {
   id                   String               @id

@@ -2769,39 +2769,31 @@ app.delete(['/events/:id/transactions/:transactionId', '/api/events/:id/transact
 });
 
 // ============================================
+// ============================================
 // PLANIFICATIONS ENDPOINTS
 // ============================================
 app.get(['/planifications', '/api/planifications'], requireAuth, async (req, res) => {
   try {
-    // Récupérer les planifications depuis Prisma si disponible
-    if (prisma?.planification) {
-      const planifications = await prisma.planification.findMany({
-        orderBy: { date: 'desc' }
-      });
-      return res.json({ planifications });
-    }
-    // Fallback: retourner from state
-    res.json({ planifications: state.planifications || [] });
+    const planifications = await prisma.planification.findMany({
+      orderBy: { date: 'desc' }
+    });
+    res.json({ planifications });
   } catch (e) {
     console.error('❌ GET /planifications error:', e.message);
-    res.json({ planifications: state.planifications || [] });
+    res.status(500).json({ error: 'Failed to fetch planifications', details: e.message });
   }
 });
 
 app.post(['/planifications', '/api/planifications'], requireAuth, async (req, res) => {
   try {
-    if (prisma?.planification) {
-      const plan = await prisma.planification.create({
-        data: req.body
-      });
-      console.log('✅ Planification créée:', plan.id);
-      return res.status(201).json(plan);
-    }
-    // Fallback: créer dans state
-    const plan = { id: uid(), ...req.body, createdAt: new Date() };
-    if (!state.planifications) state.planifications = [];
-    state.planifications.push(plan);
-    debouncedSave();
+    const plan = await prisma.planification.create({
+      data: {
+        id: uid(),
+        ...req.body,
+        date: new Date(req.body.date)
+      }
+    });
+    console.log('✅ Planification créée:', plan.id);
     res.status(201).json(plan);
   } catch (e) {
     console.error('❌ POST /planifications error:', e.message);
@@ -2811,61 +2803,53 @@ app.post(['/planifications', '/api/planifications'], requireAuth, async (req, re
 
 app.put(['/planifications/:id', '/api/planifications/:id'], requireAuth, async (req, res) => {
   try {
-    if (prisma?.planification) {
-      const plan = await prisma.planification.update({
-        where: { id: req.params.id },
-        data: req.body
-      });
-      console.log('✅ Planification modifiée:', plan.id);
-      return res.json(plan);
-    }
-    // Fallback: modifier dans state
-    const idx = (state.planifications || []).findIndex(p => p.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Planification not found' });
-    state.planifications[idx] = { ...state.planifications[idx], ...req.body };
-    debouncedSave();
-    res.json(state.planifications[idx]);
+    const plan = await prisma.planification.update({
+      where: { id: req.params.id },
+      data: {
+        ...req.body,
+        date: req.body.date ? new Date(req.body.date) : undefined
+      }
+    });
+    console.log('✅ Planification modifiée:', plan.id);
+    res.json(plan);
   } catch (e) {
     console.error('❌ PUT /planifications/:id error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Planification not found' });
+    }
     res.status(500).json({ error: 'Failed to update planification', details: e.message });
   }
 });
 
 app.delete(['/planifications/:id', '/api/planifications/:id'], requireAuth, async (req, res) => {
   try {
-    if (prisma?.planification) {
-      await prisma.planification.delete({
-        where: { id: req.params.id }
-      });
-      console.log('✅ Planification supprimée:', req.params.id);
-      return res.json({ ok: true });
-    }
-    // Fallback: supprimer du state
-    if (!state.planifications?.length) return res.status(404).json({ error: 'Planification not found' });
-    state.planifications = state.planifications.filter(p => p.id !== req.params.id);
-    debouncedSave();
+    await prisma.planification.delete({
+      where: { id: req.params.id }
+    });
+    console.log('✅ Planification supprimée:', req.params.id);
     res.json({ ok: true });
   } catch (e) {
     console.error('❌ DELETE /planifications/:id error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Planification not found' });
+    }
     res.status(500).json({ error: 'Failed to delete planification', details: e.message });
   }
 });
 
 // ============================================
+// ============================================
 // GPS TRACKING ENDPOINTS
 // ============================================
 app.get(['/gps/tracking', '/api/gps/tracking'], requireAuth, async (req, res) => {
   try {
-    // Récupérer le tracking GPS
-    if (prisma?.gpsTracking) {
-      const tracking = await prisma.gpsTracking.findMany();
-      return res.json({ tracking });
-    }
-    // Fallback: retourner du state
-    res.json({ tracking: state.gpsTracking || [] });
+    const tracking = await prisma.gpsTracking.findMany({
+      orderBy: { timestamp: 'desc' }
+    });
+    res.json({ tracking });
   } catch (e) {
     console.error('❌ GET /gps/tracking error:', e.message);
-    res.json({ tracking: state.gpsTracking || [] });
+    res.status(500).json({ error: 'Failed to fetch GPS tracking', details: e.message });
   }
 });
 
@@ -2873,40 +2857,25 @@ app.put(['/gps/tracking/:vehicleId', '/api/gps/tracking/:vehicleId'], requireAut
   try {
     const { latitude, longitude, speed, timestamp } = req.body;
     
-    if (prisma?.gpsTracking) {
-      const track = await prisma.gpsTracking.upsert({
-        where: { vehicleId: req.params.vehicleId },
-        create: {
-          vehicleId: req.params.vehicleId,
-          latitude,
-          longitude,
-          speed,
-          timestamp: new Date(timestamp)
-        },
-        update: {
-          latitude,
-          longitude,
-          speed,
-          timestamp: new Date(timestamp)
-        }
-      });
-      console.log('✅ GPS tracking mis à jour:', req.params.vehicleId);
-      return res.json(track);
-    }
+    const track = await prisma.gpsTracking.upsert({
+      where: { vehicleId: req.params.vehicleId },
+      create: {
+        id: uid(),
+        vehicleId: req.params.vehicleId,
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        speed: Number(speed) || 0,
+        timestamp: timestamp ? new Date(timestamp) : new Date()
+      },
+      update: {
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        speed: Number(speed) || 0,
+        timestamp: timestamp ? new Date(timestamp) : new Date()
+      }
+    });
     
-    // Fallback: mettre à jour dans state
-    if (!state.gpsTracking) state.gpsTracking = [];
-    let track = state.gpsTracking.find(t => t.vehicleId === req.params.vehicleId);
-    if (track) {
-      track.latitude = latitude;
-      track.longitude = longitude;
-      track.speed = speed;
-      track.timestamp = timestamp || new Date();
-    } else {
-      track = { vehicleId: req.params.vehicleId, latitude, longitude, speed, timestamp: timestamp || new Date() };
-      state.gpsTracking.push(track);
-    }
-    debouncedSave();
+    console.log('✅ GPS tracking mis à jour:', req.params.vehicleId);
     res.json(track);
   } catch (e) {
     console.error('❌ PUT /gps/tracking/:vehicleId error:', e.message);
