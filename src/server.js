@@ -2965,6 +2965,7 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
       data: {
         id: uid(),
         date: new Date(),
+        updatedAt: new Date(),
         ...req.body
       }
     });
@@ -3654,7 +3655,8 @@ app.post('/api/devis-lines', requireAuth, async (req, res) => {
   try {
     const line = await prisma.devisLine.create({
       data: { 
-        id: uid(), 
+        id: uid(),
+        updatedAt: new Date(),
         ...req.body
       }
     });
@@ -3713,7 +3715,8 @@ app.post('/api/financial-documents', requireAuth, async (req, res) => {
   try {
     const doc = await prisma.financial_documents.create({
       data: { 
-        id: uid(), 
+        id: uid(),
+        updatedAt: new Date(),
         ...req.body
       }
     });
