@@ -2721,7 +2721,7 @@ app.delete(['/events/:id/routes/:routeId', '/api/events/:id/routes/:routeId'], r
 app.get(['/events/:id/transactions', '/api/events/:id/transactions'], requireAuth, async (req, res) => {
   try {
     // Récupérer les transactions liées à cet événement depuis Prisma
-    const transactions = await prisma.transaction.findMany({
+    const transactions = await prisma.finance_transactions.findMany({
       where: { eventId: req.params.id },
       orderBy: { date: 'desc' }
     });
@@ -2735,7 +2735,7 @@ app.get(['/events/:id/transactions', '/api/events/:id/transactions'], requireAut
 app.post(['/events/:id/transactions/:transactionId', '/api/events/:id/transactions/:transactionId'], requireAuth, async (req, res) => {
   try {
     // Lier une transaction à un événement
-    const tx = await prisma.transaction.update({
+    const tx = await prisma.finance_transactions.update({
       where: { id: req.params.transactionId },
       data: { eventId: req.params.id }
     });
@@ -2753,7 +2753,7 @@ app.post(['/events/:id/transactions/:transactionId', '/api/events/:id/transactio
 app.delete(['/events/:id/transactions/:transactionId', '/api/events/:id/transactions/:transactionId'], requireAuth, async (req, res) => {
   try {
     // Délier une transaction d'un événement
-    const tx = await prisma.transaction.update({
+    const tx = await prisma.finance_transactions.update({
       where: { id: req.params.transactionId },
       data: { eventId: null }
     });
@@ -2943,13 +2943,13 @@ app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, asy
     
     const where = eventId ? { eventId } : {};
     const [transactions, total] = await Promise.all([
-      prisma.transaction.findMany({
+      prisma.finance_transactions.findMany({
         where,
         skip,
         take: Number(limit),
         orderBy: { date: 'desc' }
       }),
-      prisma.transaction.count({ where })
+      prisma.finance_transactions.count({ where })
     ]);
     
     res.json({ transactions, total });
@@ -2961,7 +2961,7 @@ app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, asy
 
 app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
   try {
-    const tx = await prisma.transaction.create({
+    const tx = await prisma.finance_transactions.create({
       data: {
         id: uid(),
         date: new Date(),
@@ -2988,7 +2988,7 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
 app.put(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireAuth, async (req, res) => {
   try {
     // Récupérer l'ancienne transaction pour calculer la différence de solde
-    const oldTx = await prisma.transaction.findUnique({
+    const oldTx = await prisma.finance_transactions.findUnique({
       where: { id: req.params.id }
     });
     
@@ -2996,7 +2996,7 @@ app.put(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireA
       return res.status(404).json({ error: 'Transaction not found' });
     }
     
-    const tx = await prisma.transaction.update({
+    const tx = await prisma.finance_transactions.update({
       where: { id: req.params.id },
       data: req.body
     });
@@ -3020,7 +3020,7 @@ app.put(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireA
 
 app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireAuth, async (req, res) => {
   try {
-    const tx = await prisma.transaction.findUnique({
+    const tx = await prisma.finance_transactions.findUnique({
       where: { id: req.params.id }
     });
     
@@ -3028,7 +3028,7 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
       return res.status(404).json({ error: 'Transaction not found' });
     }
     
-    await prisma.transaction.delete({
+    await prisma.finance_transactions.delete({
       where: { id: req.params.id }
     });
     
