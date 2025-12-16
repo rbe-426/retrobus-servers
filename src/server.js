@@ -3622,73 +3622,137 @@ app.delete('/api/quote-templates/:id', requireAuth, (req, res) => {
 });
 
 // Devis Lines endpoints
-app.get('/api/devis-lines/:devisId', requireAuth, (req, res) => {
-  // Retourner les lignes du devis spécifique, ou toutes si devisId = "all"
-  if (req.params.devisId === 'all') {
-    return res.json(state.devisLines || []);
+app.get('/api/devis-lines/:devisId', requireAuth, async (req, res) => {
+  try {
+    // Retourner les lignes du devis spécifique, ou toutes si devisId = "all"
+    if (req.params.devisId === 'all') {
+      const lines = await prisma.devisLine.findMany();
+      return res.json(lines || []);
+    }
+    const lines = await prisma.devisLine.findMany({
+      where: { devisId: req.params.devisId }
+    });
+    res.json({ lines });
+  } catch (e) {
+    console.error('❌ GET /api/devis-lines/:devisId error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch devis lines', details: e.message });
   }
-  const lines = state.devisLines.filter(l => l.devisId === req.params.devisId);
-  res.json({ lines });
 });
 
-app.get('/api/devis-lines', requireAuth, (req, res) => {
-  // Retourner toutes les lignes de devis
-  res.json(state.devisLines || []);
+app.get('/api/devis-lines', requireAuth, async (req, res) => {
+  try {
+    // Retourner toutes les lignes de devis
+    const lines = await prisma.devisLine.findMany();
+    res.json(lines || []);
+  } catch (e) {
+    console.error('❌ GET /api/devis-lines error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch devis lines', details: e.message });
+  }
 });
 
-app.post('/api/devis-lines', requireAuth, (req, res) => {
-  const line = { 
-    id: uid(), 
-    ...req.body,
-    createdAt: new Date().toISOString()
-  };
-  state.devisLines.push(line);
-  debouncedSave();
-  res.status(201).json(line);
+app.post('/api/devis-lines', requireAuth, async (req, res) => {
+  try {
+    const line = await prisma.devisLine.create({
+      data: { 
+        id: uid(), 
+        ...req.body
+      }
+    });
+    res.status(201).json(line);
+  } catch (e) {
+    console.error('❌ POST /api/devis-lines error:', e.message);
+    res.status(500).json({ error: 'Failed to create devis line', details: e.message });
+  }
 });
 
-app.put('/api/devis-lines/:lineId', requireAuth, (req, res) => {
-  const idx = state.devisLines.findIndex(l => l.id === req.params.lineId);
-  if (idx === -1) return res.status(404).json({ error: 'Line not found' });
-  state.devisLines[idx] = { ...state.devisLines[idx], ...req.body, updatedAt: new Date().toISOString() };
-  debouncedSave();
-  res.json(state.devisLines[idx]);
+app.put('/api/devis-lines/:lineId', requireAuth, async (req, res) => {
+  try {
+    const line = await prisma.devisLine.update({
+      where: { id: req.params.lineId },
+      data: req.body
+    });
+    res.json(line);
+  } catch (e) {
+    console.error('❌ PUT /api/devis-lines/:lineId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Line not found' });
+    }
+    res.status(500).json({ error: 'Failed to update devis line', details: e.message });
+  }
 });
 
-app.delete('/api/devis-lines/:lineId', requireAuth, (req, res) => {
-  state.devisLines = state.devisLines.filter(l => l.id !== req.params.lineId);
-  debouncedSave();
-  res.json({ ok: true });
+app.delete('/api/devis-lines/:lineId', requireAuth, async (req, res) => {
+  try {
+    await prisma.devisLine.delete({
+      where: { id: req.params.lineId }
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/devis-lines/:lineId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Line not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete devis line', details: e.message });
+  }
 });
 
 // Financial documents endpoint (devis, factures, documents)
-app.get('/api/financial-documents', requireAuth, (req, res) => {
-  res.json({ financialDocuments: state.financialDocuments || [] });
+app.get('/api/financial-documents', requireAuth, async (req, res) => {
+  try {
+    const docs = await prisma.financial_documents.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ financialDocuments: docs || [] });
+  } catch (e) {
+    console.error('❌ GET /api/financial-documents error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch financial documents', details: e.message });
+  }
 });
 
-app.post('/api/financial-documents', requireAuth, (req, res) => {
-  const doc = { 
-    id: uid(), 
-    ...req.body,
-    createdAt: new Date().toISOString()
-  };
-  state.financialDocuments.push(doc);
-  debouncedSave();
-  res.status(201).json(doc);
+app.post('/api/financial-documents', requireAuth, async (req, res) => {
+  try {
+    const doc = await prisma.financial_documents.create({
+      data: { 
+        id: uid(), 
+        ...req.body
+      }
+    });
+    res.status(201).json(doc);
+  } catch (e) {
+    console.error('❌ POST /api/financial-documents error:', e.message);
+    res.status(500).json({ error: 'Failed to create financial document', details: e.message });
+  }
 });
 
-app.put('/api/financial-documents/:docId', requireAuth, (req, res) => {
-  const idx = state.financialDocuments.findIndex(d => d.id === req.params.docId);
-  if (idx === -1) return res.status(404).json({ error: 'Document not found' });
-  state.financialDocuments[idx] = { ...state.financialDocuments[idx], ...req.body, updatedAt: new Date().toISOString() };
-  debouncedSave();
-  res.json(state.financialDocuments[idx]);
+app.put('/api/financial-documents/:docId', requireAuth, async (req, res) => {
+  try {
+    const doc = await prisma.financial_documents.update({
+      where: { id: req.params.docId },
+      data: req.body
+    });
+    res.json(doc);
+  } catch (e) {
+    console.error('❌ PUT /api/financial-documents/:docId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    res.status(500).json({ error: 'Failed to update financial document', details: e.message });
+  }
 });
 
-app.delete('/api/financial-documents/:docId', requireAuth, (req, res) => {
-  state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.docId);
-  debouncedSave();
-  res.json({ ok: true });
+app.delete('/api/financial-documents/:docId', requireAuth, async (req, res) => {
+  try {
+    await prisma.financial_documents.delete({
+      where: { id: req.params.docId }
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/financial-documents/:docId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete financial document', details: e.message });
+  }
 });
 
 // Email templates endpoint
