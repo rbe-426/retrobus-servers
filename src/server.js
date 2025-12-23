@@ -3070,8 +3070,17 @@ app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAut
 });
 app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, upload.single('file'), (req, res) => {
   const { date, description, amount, status = 'open', planned = false, eventId } = req.body;
+  
+  // Récupérer info utilisateur depuis req.user (défini par middleware auth)
+  const userId = req.user?.id || req.user?.email || 'anonymous';
+  const createdBy = req.user?.name || req.user?.email || 'Anonymous';
+  
   const report = {
     id: uid(),
+    userId: userId,
+    createdBy: createdBy,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     date: date || today(),
     description: description || '',
     amount: Number(amount || 0),
@@ -3086,19 +3095,23 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
   res.status(201).json({ report });
 });
 app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, (req, res) => {
-  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, ...req.body } : r);
+  const updatedData = {
+    ...req.body,
+    updatedAt: new Date().toISOString()
+  };
+  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, ...updatedData } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
 });
 app.post(['/finance/expense-reports/:id/close', '/api/finance/expense-reports/:id/close'], requireAuth, (req, res) => {
-  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status: 'closed', closedAt: new Date().toISOString() } : r);
+  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status: 'closed', closedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
 });
 app.post(['/finance/expense-reports/:id/reimburse', '/api/finance/expense-reports/:id/reimburse'], requireAuth, (req, res) => {
-  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status: 'reimbursed', reimbursedAt: new Date().toISOString() } : r);
+  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status: 'reimbursed', reimbursedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
