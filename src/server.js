@@ -534,30 +534,44 @@ const allowedOrigins = [
   'http://127.0.0.1:8080'
 ];
 
+console.log('🔐 CORS Origins allowed:', allowedOrigins);
+
 app.use(cors({
   origin: (origin, cb) => {
+    console.log(`📨 CORS check for origin: ${origin}`);
     // Allow requests with no origin (like curl, Postman, mobile apps)
-    if (!origin) return cb(null, true);
+    if (!origin) {
+      console.log('✅ CORS: No origin (allowed)');
+      return cb(null, true);
+    }
     // Always check against whitelist
     if (allowedOrigins.includes(origin)) {
+      console.log(`✅ CORS: Origin ${origin} whitelisted`);
       return cb(null, origin);
     }
     // Log blocked origins for debugging
-    console.warn(`⚠️ CORS blocked origin: ${origin}`);
+    console.warn(`❌ CORS blocked origin: ${origin}`);
     return cb(new Error('CORS bloque: origine non autorisée'));
   },
   credentials: true,
   allowedHeaders: ['Authorization','Content-Type','Accept','x-qr-token','x-user-matricule'],
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS']
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  optionsSuccessStatus: 200
 }));
-// Préflight OPTIONS handler - ensure CORS headers are set
+// Préflight OPTIONS handler - ensure CORS headers are set on every response
 app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  const origin = req.headers.origin;
+  
+  // Set CORS headers for all origins in allowedOrigins
+  if (origin && ['https://www.retrobus-interne.fr', 'https://retrobus-interne.fr', 'https://www.association-rbe.fr', 'https://association-rbe.fr', 'https://attractive-kindness-rbe-serveurs.up.railway.app', 'https://retrobus-interne-frontend.up.railway.app', 'https://rbe-frontend.up.railway.app', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8080', 'http://127.0.0.1:8080'].includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
     res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, x-qr-token, x-user-matricule');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Max-Age', '86400'); // 24 hours
+  }
+  
+  if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
   next();
