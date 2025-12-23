@@ -535,42 +535,28 @@ const allowedOrigins = [
 
 console.log('🔐 CORS Origins allowed:', allowedOrigins);
 
-// Simple but strict CORS middleware
+// TEMPORARY: Permissive CORS for debugging
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  // Log all preflight requests
-  if (req.method === 'OPTIONS') {
-    console.log(`✅ OPTIONS preflight from: ${origin}`);
-  }
-  
-  if (!origin) {
-    // No origin header - allow (curl, Postman, etc)
-    console.log('✅ No origin header - allowing');
-    if (req.method === 'OPTIONS') {
-      res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-      res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, x-qr-token, x-user-matricule');
-      res.header('Access-Control-Max-Age', '86400');
-      return res.sendStatus(200);
-    }
-    return next();
-  }
-  
-  if (allowedOrigins.includes(origin)) {
-    console.log(`✅ CORS: Origin ${origin} whitelisted`);
+  // TEMPORARY: Allow all origins for debugging
+  if (origin) {
     res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, x-qr-token, x-user-matricule');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Max-Age', '86400');
-    
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-    }
   } else {
-    console.warn(`❌ CORS blocked origin: ${origin}`);
+    res.header('Access-Control-Allow-Origin', '*');
   }
   
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
+  res.header('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,x-qr-token,x-user-matricule');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    console.log(`✅ Preflight OK for ${origin}`);
+    return res.sendStatus(200);
+  }
+  
+  console.log(`📨 ${req.method} ${req.path} from ${origin}`);
   next();
 });
 
