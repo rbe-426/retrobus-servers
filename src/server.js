@@ -3741,11 +3741,13 @@ app.post('/api/financial-documents', requireAuth, async (req, res) => {
     const doc = await prisma.financial_documents.create({
       data: { 
         id: uid(),
+        userId: req.user?.id || req.user?.email || 'anonymous',
+        createdBy: req.user?.name || req.user?.email || 'Anonymous',
         updatedAt: new Date(),
         ...req.body
       }
     });
-    res.status(201).json(doc);
+    res.status(201).json({ financialDocument: doc });
   } catch (e) {
     console.error('❌ POST /api/financial-documents error:', e.message);
     res.status(500).json({ error: 'Failed to create financial document', details: e.message });
@@ -4282,6 +4284,34 @@ app.post(['/vehicles/:parc/notes','/api/vehicles/:parc/notes'], requireAuth, asy
     console.error('Erreur création note:', e);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ============================================================
+// 🔧 DIAGNOSTIC ENDPOINT (pour développement)
+// ============================================================
+app.get('/api/diagnostic/finance', requireAuth, (req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    finance: {
+      expenseReports: {
+        count: state.expenseReports.length,
+        sample: state.expenseReports.slice(0, 1).map(r => ({
+          id: r.id,
+          userId: r.userId,
+          createdBy: r.createdBy,
+          amount: r.amount,
+          status: r.status,
+          createdAt: r.createdAt
+        }))
+      },
+      scheduled: {
+        count: state.scheduled.length,
+        sample: state.scheduled.slice(0, 1)
+      },
+      bankBalance: state.bankBalance
+    }
+  });
 });
 
 // Generic error handler
