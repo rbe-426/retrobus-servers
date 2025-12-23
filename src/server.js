@@ -1380,6 +1380,48 @@ app.post(['/vehicles/:parc/assurance','/api/vehicles/:parc/assurance'], requireA
   res.json(assurance);
 });
 
+// CERTIFICAT TEMPORAIRE (CG en cours de changement)
+app.get(['/vehicles/:parc/certificat-temporaire','/api/vehicles/:parc/certificat-temporaire'], requireAuth, (req, res) => {
+  const parc = req.params.parc;
+  const certTemp = state.vehicleCarteGrise.find(c => c.parc === parc)?.certificatTemporaire;
+  
+  if (!certTemp) {
+    return res.json({ parc, dateDebut: null, dateFin: null, isActive: false });
+  }
+  
+  const now = new Date();
+  const debut = certTemp.dateDebut ? new Date(certTemp.dateDebut) : null;
+  const fin = certTemp.dateFin ? new Date(certTemp.dateFin) : null;
+  
+  certTemp.isActive = (debut && fin) ? (debut <= now && now <= fin) : false;
+  res.json(certTemp);
+});
+
+app.post(['/vehicles/:parc/certificat-temporaire','/api/vehicles/:parc/certificat-temporaire'], requireAuth, (req, res) => {
+  const parc = req.params.parc;
+  const { dateDebut, dateFin } = req.body;
+  
+  let cg = state.vehicleCarteGrise.find(c => c.parc === parc);
+  if (!cg) {
+    cg = { id: uid(), parc, oldCGPath: null, newCGPath: null, oldCGBarred: false, dateImport: new Date().toISOString(), notes: '', certificatTemporaire: null };
+    state.vehicleCarteGrise.push(cg);
+  }
+  
+  cg.certificatTemporaire = {
+    dateDebut: dateDebut || null,
+    dateFin: dateFin || null,
+    isActive: false // Sera calculé au GET
+  };
+  
+  const now = new Date();
+  const debut = dateDebut ? new Date(dateDebut) : null;
+  const fin = dateFin ? new Date(dateFin) : null;
+  cg.certificatTemporaire.isActive = (debut && fin) ? (debut <= now && now <= fin) : false;
+  
+  debouncedSave();
+  res.json(cg.certificatTemporaire);
+});
+
 // CONTRÔLE TECHNIQUE
 app.get(['/vehicles/:parc/ct','/api/vehicles/:parc/ct'], requireAuth, async (req, res) => {
   try {
