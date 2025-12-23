@@ -72,6 +72,13 @@ const enrichWithUser = (obj, req) => ({
   createdBy: obj.createdBy || req.user?.name || req.user?.email || 'Anonymous',
 });
 
+// Helper pour ajouter les timestamps standard
+const withTimestamps = (obj) => ({
+  ...obj,
+  createdAt: obj.createdAt || new Date().toISOString(),
+  updatedAt: new Date().toISOString()
+});
+
 // ============================================================
 // 🔧 ÉTAT EN MÉMOIRE - Pour endpoints non encore migrés vers Prisma
 // ============================================================
@@ -949,7 +956,15 @@ app.post(['/flashes','/api/flashes'], requireAuth, async (req, res) => {
   try {
     const { title, message, active = false } = req.body || {};
     const flash = await prisma.flash.create({
-      data: { title, message, active: !!active }
+      data: { 
+        title, 
+        message, 
+        active: !!active,
+        userId: req.user?.id || req.user?.email || 'anonymous',
+        createdBy: req.user?.name || req.user?.email || 'Anonymous',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
     });
     console.log('✅ Flash créé:', flash.id);
     res.status(201).json(flash);
@@ -963,7 +978,7 @@ app.put(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) => {
   try {
     const flash = await prisma.flash.update({
       where: { id: req.params.id },
-      data: req.body
+      data: { ...req.body, updatedAt: new Date() }
     });
     console.log('✅ Flash modifié:', flash.id);
     res.json(flash);
@@ -1902,11 +1917,14 @@ app.get(['/api/retro-news'], requireAuth, (req, res) => {
 app.post(['/api/retro-news'], requireAuth, (req, res) => {
   const news = {
     id: uid(),
+    userId: req.user?.id || req.user?.email || 'anonymous',
+    author: req.user?.name || req.user?.email || 'anonyme',
     title: req.body.title,
     body: req.body.body,
     status: req.body.status || 'published',
-    publishedAt: new Date().toISOString(),
-    author: req.body.author || req.user?.id || 'anonyme'
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    publishedAt: new Date().toISOString()
   };
   state.retroNews.push(news);
   debouncedSave();
@@ -3454,8 +3472,11 @@ app.get('/api/finance/simulations', requireAuth, (req, res) => {
 app.post('/api/finance/simulations', requireAuth, (req, res) => {
   const scenario = {
     id: uid(),
-    ...req.body,
+    userId: req.user?.id || req.user?.email || 'anonymous',
+    createdBy: req.user?.name || req.user?.email || 'Anonymous',
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...req.body,
     incomeItems: req.body.incomeItems || [],
     expenseItems: req.body.expenseItems || []
   };
@@ -3629,7 +3650,14 @@ app.get('/api/quote-templates', requireAuth, (req, res) => {
   res.json(state.quoteTemplates || []);
 });
 app.post('/api/quote-templates', requireAuth, (req, res) => {
-  const template = { id: uid(), ...req.body, createdAt: new Date().toISOString() };
+  const template = { 
+    id: uid(), 
+    userId: req.user?.id || req.user?.email || 'anonymous',
+    createdBy: req.user?.name || req.user?.email || 'Anonymous',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...req.body 
+  };
   state.quoteTemplates.push(template);
   debouncedSave();
   res.status(201).json(template);
@@ -3758,9 +3786,9 @@ app.put('/api/financial-documents/:docId', requireAuth, async (req, res) => {
   try {
     const doc = await prisma.financial_documents.update({
       where: { id: req.params.docId },
-      data: req.body
+      data: { ...req.body, updatedAt: new Date() }
     });
-    res.json(doc);
+    res.json({ financialDocument: doc });
   } catch (e) {
     console.error('❌ PUT /api/financial-documents/:docId error:', e.message);
     if (e?.code === 'P2025') {
@@ -4290,27 +4318,158 @@ app.post(['/vehicles/:parc/notes','/api/vehicles/:parc/notes'], requireAuth, asy
 // 🔧 DIAGNOSTIC ENDPOINT (pour développement)
 // ============================================================
 app.get('/api/diagnostic/finance', requireAuth, (req, res) => {
+  const expenseStats = {
+    total: state.expenseReports.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0),
+    byStatus: state.expenseReports.reduce((acc, r) => {
+      const status = r.status || 'open';
+      if (!acc[status]) acc[status] = 0;
+      acc[status]++;
+      return acc;
+    }, {})
+  };
+
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
+    env: {
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: process.env.PORT
+    },
     finance: {
       expenseReports: {
         count: state.expenseReports.length,
-        sample: state.expenseReports.slice(0, 1).map(r => ({
+        totalAmount: expenseStats.total,
+        byStatus: expenseStats.byStatus,
+        hasUserId: state.expenseReports.length > 0 && !!state.expenseReports[0].userId,
+        sample: state.expenseReports.slice(0, 2).map(r => ({
           id: r.id,
           userId: r.userId,
           createdBy: r.createdBy,
           amount: r.amount,
           status: r.status,
-          createdAt: r.createdAt
+          createdAt: r.createdAt,
+          hasTimestamps: !!r.createdAt && !!r.updatedAt
         }))
       },
       scheduled: {
         count: state.scheduled.length,
         sample: state.scheduled.slice(0, 1)
       },
+      transactions: {
+        count: state.transactions.length
+      },
       bankBalance: state.bankBalance
+    },
+    endpoints: {
+      '/api/finance/expense-reports': 'GET/POST',
+      '/api/finance/transactions': 'GET/POST',
+      '/api/finance/scheduled-expenses': 'GET/POST',
+      '/api/finance/balance': 'GET',
+      '/api/financial-documents': 'GET/POST',
+      '/api/quote-templates': 'GET/POST'
     }
+  });
+});
+
+// Endpoint pour nettoyer/normaliser les données
+app.post('/api/admin/normalize-data', requireAuth, (req, res) => {
+  // Vérifier que c'est un admin
+  if (!state.members.find(m => m.email === req.user.email && m.role === 'ADMIN')) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const stats = {
+    expenseReports: { fixed: 0, skipped: 0 },
+    scheduled: { fixed: 0, skipped: 0 },
+    simulations: { fixed: 0, skipped: 0 }
+  };
+
+  // Normaliser les notes de frais
+  state.expenseReports.forEach((r, i) => {
+    let fixed = false;
+
+    if (!r.userId) {
+      r.userId = 'legacy';
+      fixed = true;
+    }
+    if (!r.createdBy) {
+      r.createdBy = 'Legacy User';
+      fixed = true;
+    }
+    if (!r.createdAt) {
+      r.createdAt = r.date || new Date().toISOString();
+      fixed = true;
+    }
+    if (!r.updatedAt) {
+      r.updatedAt = r.createdAt;
+      fixed = true;
+    }
+
+    if (fixed) {
+      stats.expenseReports.fixed++;
+      state.expenseReports[i] = r;
+    } else {
+      stats.expenseReports.skipped++;
+    }
+  });
+
+  // Normaliser les opérations programmées
+  state.scheduled.forEach((o, i) => {
+    let fixed = false;
+    if (!o.userId) {
+      o.userId = 'legacy';
+      fixed = true;
+    }
+    if (!o.createdBy) {
+      o.createdBy = 'Legacy User';
+      fixed = true;
+    }
+    if (!o.createdAt) {
+      o.createdAt = new Date().toISOString();
+      fixed = true;
+    }
+    if (!o.updatedAt) {
+      o.updatedAt = o.createdAt;
+      fixed = true;
+    }
+
+    if (fixed) {
+      stats.scheduled.fixed++;
+      state.scheduled[i] = o;
+    } else {
+      stats.scheduled.skipped++;
+    }
+  });
+
+  // Normaliser les simulations
+  state.simulations.forEach((s, i) => {
+    let fixed = false;
+    if (!s.userId) {
+      s.userId = 'legacy';
+      fixed = true;
+    }
+    if (!s.createdBy) {
+      s.createdBy = 'Legacy User';
+      fixed = true;
+    }
+    if (!s.updatedAt) {
+      s.updatedAt = s.createdAt || new Date().toISOString();
+      fixed = true;
+    }
+
+    if (fixed) {
+      stats.simulations.fixed++;
+      state.simulations[i] = s;
+    } else {
+      stats.simulations.skipped++;
+    }
+  });
+
+  debouncedSave();
+  res.json({
+    status: 'normalized',
+    timestamp: new Date().toISOString(),
+    stats
   });
 });
 
