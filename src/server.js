@@ -65,6 +65,13 @@ console.log('');
 const uid = () => (global.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`);
 const today = () => new Date().toISOString().split('T')[0];
 
+// Helper pour enrichir un objet avec les infos utilisateur
+const enrichWithUser = (obj, req) => ({
+  ...obj,
+  userId: obj.userId || req.user?.id || req.user?.email || 'anonymous',
+  createdBy: obj.createdBy || req.user?.name || req.user?.email || 'Anonymous',
+});
+
 // ============================================================
 // 🔧 ÉTAT EN MÉMOIRE - Pour endpoints non encore migrés vers Prisma
 // ============================================================
@@ -2904,13 +2911,20 @@ app.get(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requ
   res.json({ operations: list });
 });
 app.post(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requireAuth, (req, res) => {
-  const op = { id: uid(), ...req.body };
+  const op = { 
+    id: uid(), 
+    userId: req.user?.id || req.user?.email || 'anonymous',
+    createdBy: req.user?.name || req.user?.email || 'Anonymous',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...req.body 
+  };
   state.scheduled.push(op);
   debouncedSave();
   res.status(201).json(op);
 });
 app.put(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, (req, res) => {
-  state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body } : o);
+  state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body, updatedAt: new Date().toISOString() } : o);
   const op = state.scheduled.find(o => o.id === req.params.id);
   debouncedSave();
   res.json(op);
@@ -3118,7 +3132,7 @@ app.post(['/finance/expense-reports/:id/reimburse', '/api/finance/expense-report
 });
 app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:id/status'], requireAuth, (req, res) => {
   const { status } = req.body;
-  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status } : r);
+  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status, updatedAt: new Date().toISOString() } : r);
   const report = state.expenseReports.find(r => r.id === req.params.id);
   debouncedSave();
   res.json({ report });
