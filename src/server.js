@@ -538,11 +538,12 @@ app.use(cors({
   origin: (origin, cb) => {
     // Allow requests with no origin (like curl, Postman, mobile apps)
     if (!origin) return cb(null, true);
-    // Allow if in whitelist
-    if (allowedOrigins.includes(origin)) return cb(null, origin);
-    // In development (non-production), be more lenient
-    if (process.env.NODE_ENV !== 'production') return cb(null, origin);
-    // In production, only allow whitelisted origins
+    // Always check against whitelist
+    if (allowedOrigins.includes(origin)) {
+      return cb(null, origin);
+    }
+    // Log blocked origins for debugging
+    console.warn(`⚠️ CORS blocked origin: ${origin}`);
     return cb(new Error('CORS bloque: origine non autorisée'));
   },
   credentials: true,
