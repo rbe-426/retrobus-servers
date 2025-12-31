@@ -1147,12 +1147,23 @@ app.get(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, as
 
 app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, async (req, res) => {
   try {
+    const { startedAt, initiateur, participants, note, ...extra } = req.body;
+    
+    // Construire les métadonnées
+    const metadata = {
+      initiateur: initiateur || null,
+      participants: participants || null,
+      rawNote: note || '',
+      extra
+    };
+    
     const usage = await prisma.Usage.create({
       data: {
         parc: req.params.parc,
-        startedAt: new Date(),
-        conducteur: req.body?.conducteur || 'Conducteur',
-        note: req.body?.note || ''
+        startedAt: startedAt ? new Date(startedAt) : new Date(),
+        conducteur: initiateur ? `${initiateur.prenom || ''} ${initiateur.nom || ''}`.trim() : 'Conducteur',
+        participants: participants || null,
+        note: JSON.stringify(metadata)
       }
     });
     console.log('✅ Usage créé:', usage.id);
@@ -1165,9 +1176,22 @@ app.post(['/vehicles/:parc/usages','/api/vehicles/:parc/usages'], requireAuth, a
 
 app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end'], requireAuth, async (req, res) => {
   try {
+    const { endedAt, participants, note, ...extra } = req.body;
+    
+    // Construire les métadonnées
+    const metadata = {
+      participants: participants || null,
+      rawNote: note || '',
+      extra
+    };
+    
     const usage = await prisma.Usage.update({
       where: { id: parseInt(req.params.id) },
-      data: { endedAt: new Date() }
+      data: { 
+        endedAt: endedAt ? new Date(endedAt) : new Date(),
+        participants: participants || undefined,
+        note: note ? JSON.stringify(metadata) : undefined
+      }
     });
     res.json(usage);
   } catch (e) {
