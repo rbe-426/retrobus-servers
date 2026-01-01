@@ -3037,16 +3037,12 @@ app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, asy
     const { page = 1, limit = 20, eventId } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
     
-    const where = eventId ? { eventId } : {};
-    const [transactions, total] = await Promise.all([
-      prisma.transaction.findMany({
-        where,
-        skip,
-        take: Number(limit),
-        orderBy: { date: 'desc' }
-      }),
-      prisma.transaction.count({ where })
-    ]);
+    // Utiliser state.transactions au lieu de Prisma (pas de modèle Transaction en Prisma)
+    let list = state.transactions || [];
+    if (eventId) list = list.filter(t => t.eventId === eventId);
+    
+    const total = list.length;
+    const transactions = list.slice(skip, skip + Number(limit));
     
     res.json({ transactions, total });
   } catch (e) {
@@ -3057,19 +3053,20 @@ app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, asy
 
 app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
   try {
-    const tx = await prisma.transaction.create({
-      data: {
-        id: uid(),
-        date: new Date(),
-        updatedAt: new Date(),
-        ...req.body
-      }
-    });
+    // Utiliser state.transactions au lieu de Prisma
+    const tx = {
+      id: uid(),
+      date: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...req.body
+    };
+    
+    state.transactions.unshift(tx);
     
     // Mettre à jour le solde bancaire
-    if (tx.type === 'recette') {
+    if (tx.type === 'CREDIT') {
       state.bankBalance += Number(tx.amount || 0);
-    } else {
+    } else if (tx.type === 'DEBIT') {
       state.bankBalance -= Number(tx.amount || 0);
     }
     debouncedSave();
@@ -3084,23 +3081,19 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
 
 app.put(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireAuth, async (req, res) => {
   try {
-    // Récupérer l'ancienne transaction pour calculer la différence de solde
-    const oldTx = await prisma.transaction.findUnique({
-      where: { id: req.params.id }
-    });
+    // Utiliser state.transactions au lieu de Prisma
+    const oldTx = state.transactions.find(t => t.id === req.params.id);
     
     if (!oldTx) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
     
-    const tx = await prisma.transaction.update({
-      where: { id: req.params.id },
-      data: req.body
-    });
+    const tx = { ...oldTx, ...req.body, updatedAt: new Date().toISOString() };
+    state.transactions = state.transactions.map(t => t.id === req.params.id ? tx : t);
     
     // Mettre à jour le solde bancaire si le montant a changé
-    const oldAmount = oldTx.type === 'recette' ? oldTx.amount : -oldTx.amount;
-    const newAmount = tx.type === 'recette' ? tx.amount : -tx.amount;
+    const oldAmount = oldTx.type === 'CREDIT' ? oldTx.amount : (oldTx.type === 'DEBIT' ? -oldTx.amount : 0);
+    const newAmount = tx.type === 'CREDIT' ? tx.amount : (tx.type === 'DEBIT' ? -tx.amount : 0);
     state.bankBalance += (newAmount - oldAmount);
     debouncedSave();
     
@@ -3108,31 +3101,25 @@ app.put(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireA
     res.json(tx);
   } catch (e) {
     console.error('❌ PUT /finance/transactions/:id error:', e.message);
-    if (e?.code === 'P2025') {
-      return res.status(404).json({ error: 'Transaction not found' });
-    }
     res.status(500).json({ error: 'Failed to update transaction', details: e.message });
   }
 });
 
 app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireAuth, async (req, res) => {
   try {
-    const tx = await prisma.transaction.findUnique({
-      where: { id: req.params.id }
-    });
+    // Utiliser state.transactions au lieu de Prisma
+    const tx = state.transactions.find(t => t.id === req.params.id);
     
     if (!tx) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
     
-    await prisma.transaction.delete({
-      where: { id: req.params.id }
-    });
+    state.transactions = state.transactions.filter(t => t.id !== req.params.id);
     
     // Mettre à jour le solde bancaire
-    if (tx.type === 'recette') {
+    if (tx.type === 'CREDIT') {
       state.bankBalance -= Number(tx.amount || 0);
-    } else {
+    } else if (tx.type === 'DEBIT') {
       state.bankBalance += Number(tx.amount || 0);
     }
     debouncedSave();
@@ -3141,9 +3128,6 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
     res.json({ ok: true });
   } catch (e) {
     console.error('❌ DELETE /finance/transactions/:id error:', e.message);
-    if (e?.code === 'P2025') {
-      return res.status(404).json({ error: 'Transaction not found' });
-    }
     res.status(500).json({ error: 'Failed to delete transaction', details: e.message });
   }
 });
