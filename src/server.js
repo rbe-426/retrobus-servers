@@ -30,15 +30,13 @@ let prismaAvailable = true; // Always true - Prisma is the single source of trut
 // Initialize Prisma without blocking startup
 try {
   prisma = new PrismaClient({
-    log: ['warn', 'error'], // Only warn and error logs in production
+    log: ['error'], // Only error logs
   });
-  console.log('✅ PrismaClient instance created');
   
   // Test connection asynchronously (don't block startup)
-  prisma.$queryRaw`SELECT 1`.then(() => {
-    console.log('✅ Database connection verified');
-  }).catch(e => {
-    console.warn('⚠️ Database connection check failed:', e.message);
+  prisma.$queryRaw`SELECT 1`.catch(e => {
+    console.error('❌ Database connection failed:', e.message);
+    process.exit(1);
   });
 } catch (e) {
   console.error('❌ CRITICAL: Failed to initialize Prisma:', e.message);
@@ -51,15 +49,9 @@ const PORT = process.env.PORT || 4000;
 const pathRoot = process.cwd();
 
 // ============================================================
-// 🚀 MODE HYBRIDE - Prisma + État en mémoire pour compatibilité
+// 🚀 RÉTROBUS ESSONNE - SERVEUR API
 // ============================================================
-console.log('');
-console.log('═══════════════════════════════════════════════════════════');
-console.log('   🚀 RÉTROBUS ESSONNE - SERVEUR API (PRISMA MODE)');
-console.log('   📦 Database: Railway PostgreSQL');
-console.log('   ✅ Single source of truth: Prisma ORM');
-console.log('═══════════════════════════════════════════════════════════');
-console.log('');
+console.log('\n🚀 Serveur API en cours de démarrage...\n');
 
 // Helpers
 const uid = () => (global.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`);
@@ -150,7 +142,7 @@ const persistStateToDisk = () => {
       state
     }, null, 2), 'utf-8');
   } catch (error) {
-    console.warn('⚠️  Impossible de sauvegarder l\'état en mémoire:', error.message);
+    // Silently fail - non-critical
   }
 };
 
@@ -167,7 +159,6 @@ const normalizeExtrasValue = (extras) => {
   try {
     return JSON.stringify(extras);
   } catch (error) {
-    console.warn('⚠️  Impossible de sérialiser extras:', error.message);
     return null;
   }
 };
@@ -411,106 +402,79 @@ function loadBackupAtStartup() {
     const backupData = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
     const tables = backupData.tables || {};
     
-    console.log(`📦 Chargement du backup: ${backupName}`);
-    
     // Charger chaque table dans state
     if (tables.members?.data) {
       state.members = tables.members.data;
-      console.log(`   ✅ ${state.members.length} adhérents`);
     }
     if (tables.site_users?.data) {
       state.siteUsers = tables.site_users.data;
-      console.log(`   ✅ ${state.siteUsers.length} utilisateurs site`);
     }
     if (tables.Vehicle?.data) {
       state.vehicles = tables.Vehicle.data;
-      console.log(`   ✅ ${state.vehicles.length} véhicules`);
     }
     if (tables.RetroNews?.data) {
       state.retroNews = tables.RetroNews.data;
-      console.log(`   ✅ ${state.retroNews.length} actualités`);
     }
     if (tables.Event?.data) {
       state.events = normalizeEventCollection(tables.Event.data || []);
-      console.log(`   ✅ ${state.events.length} événements`);
     }
     if (tables.Flash?.data) {
       state.flashes = tables.Flash.data;
-      console.log(`   ✅ ${state.flashes.length} flashes`);
     }
     if (tables.finance_transactions?.data) {
       state.transactions = tables.finance_transactions.data;
-      console.log(`   ✅ ${state.transactions.length} transactions`);
     }
     if (tables.finance_expense_reports?.data) {
       state.expenseReports = tables.finance_expense_reports.data;
-      console.log(`   ✅ ${state.expenseReports.length} rapports de dépenses`);
     }
     if (tables.DevisLine?.data) {
       state.devisLines = tables.DevisLine.data;
-      console.log(`   ✅ ${state.devisLines.length} lignes de devis`);
     }
     if (tables.QuoteTemplate?.data) {
       state.quoteTemplates = tables.QuoteTemplate.data;
-      console.log(`   ✅ ${state.quoteTemplates.length} templates de devis`);
     }
     if (tables.financial_documents?.data) {
       state.financialDocuments = tables.financial_documents.data;
-      console.log(`   ✅ ${state.financialDocuments.length} documents financiers`);
     }
     if (tables.Document?.data) {
       state.documents = tables.Document.data;
-      console.log(`   ✅ ${state.documents.length} documents`);
     }
     if (tables.user_permissions?.data) {
       state.userPermissions = tables.user_permissions.data;
-      console.log(`   ✅ ${state.userPermissions.length || Object.keys(state.userPermissions).length} permissions utilisateurs`);
     }
     if (tables.finance_categories?.data) {
       // Merge avec les catégories par défaut
       state.categories = [...state.categories, ...tables.finance_categories.data];
-      console.log(`   ✅ ${tables.finance_categories.data.length} catégories financières`);
     }
     if (tables.finance_balances?.data) {
       if (tables.finance_balances.data[0]) {
         state.bankBalance = tables.finance_balances.data[0].balance || 0;
-        console.log(`   ✅ Solde bancaire: ${state.bankBalance}€`);
       }
     }
     if (tables.vehicle_maintenance?.data) {
       state.vehicleMaintenance = tables.vehicle_maintenance.data;
-      console.log(`   ✅ ${state.vehicleMaintenance.length} maintenances véhicules`);
     }
     if (tables.vehicle_service_schedule?.data) {
       state.vehicleServiceSchedule = tables.vehicle_service_schedule.data;
-      console.log(`   ✅ ${state.vehicleServiceSchedule.length} plannings services`);
     }
     if (tables.Usage?.data) {
       state.vehicleUsage = tables.Usage.data;
-      console.log(`   ✅ ${state.vehicleUsage.length} utilisations véhicules`);
     }
     if (tables.notification_preferences?.data) {
       state.notificationPreferences = tables.notification_preferences.data;
-      console.log(`   ✅ ${state.notificationPreferences.length} préférences notifications`);
     }
     if (tables.scheduled_operations?.data) {
       state.scheduledOperations = tables.scheduled_operations.data;
-      console.log(`   ✅ ${state.scheduledOperations.length} opérations planifiées`);
     }
     if (tables.scheduled_operation_payments?.data) {
       state.scheduledOperationPayments = tables.scheduled_operation_payments.data;
-      console.log(`   ✅ ${state.scheduledOperationPayments.length} paiements planifiés`);
     }
     if (tables.Stock?.data) {
       state.stock = tables.Stock.data;
-      console.log(`   ✅ ${state.stock.length} articles de stock`);
     }
     if (tables.StockMovement?.data) {
       state.stockMovements = tables.StockMovement.data;
-      console.log(`   ✅ ${state.stockMovements.length} mouvements de stock`);
     }
-    
-    console.log('✨ Backup chargé avec succès en mémoire\n');
     
   } catch (error) {
     console.warn('⚠️  Erreur lors du chargement du backup:', error.message);
@@ -519,11 +483,8 @@ function loadBackupAtStartup() {
 
 // Charger le backup au démarrage (optionnel)
 if (LOAD_BACKUP_AT_BOOT) {
-  console.log('⚠️  LOAD_BACKUP_AT_BOOT=true - tentative de chargement d\'un backup JSON');
   loadBackupAtStartup();
   state.events = normalizeEventCollection(state.events || []);
-} else {
-  console.log('⏭️  Aucun backup chargé au démarrage (LOAD_BACKUP_AT_BOOT=false)');
 }
 
 // CORS configuration - Allow frontend(s) and local dev
@@ -592,7 +553,7 @@ app.use((req, res, next) => {
         req.user = { email: email, id: 'authenticated' }; // pass email for member lookup
       }
     } catch (e) {
-      console.error('❌ Token decode error:', e.message);
+      // Silently fail
     }
   }
   next();
@@ -4632,8 +4593,6 @@ async function safeDisconnectPrisma() {
     console.warn('⚠️ Erreur lors de la déconnexion Prisma:', e.message);
   }
 }
-
-
 
 // ============ AUTO-GENERATED CRUD ENDPOINTS ============
 
