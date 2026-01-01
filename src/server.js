@@ -979,37 +979,69 @@ app.get(['/flashes/all','/api/flashes/all'], async (req, res) => {
 
 app.post(['/flashes','/api/flashes'], requireAuth, async (req, res) => {
   try {
-    const { title, message, active = false } = req.body || {};
+    const { title, message, content, active = false } = req.body || {};
     const flash = await prisma.flash.create({
       data: { 
-        title, 
-        message, 
+        id: uid(),
+        content: content || message || title || '',  // Support content, message, ou title
         active: !!active,
-        userId: req.user?.id || req.user?.email || 'anonymous',
+        type: 'info',
         createdBy: req.user?.name || req.user?.email || 'Anonymous',
-        createdAt: new Date(),
         updatedAt: new Date()
       }
     });
     console.log('✅ Flash créé:', flash.id);
     res.status(201).json(flash);
   } catch (e) {
-    console.error('Erreur POST /flashes (Prisma):', e.message);
-    res.status(500).json({ error: 'Database error' });
+    console.error('❌ Erreur POST /flashes (Prisma):', e.message);
+    // Fallback en mémoire
+    const flash = {
+      id: 'f' + Date.now(),
+      title: req.body?.title || 'Flash',
+      message: req.body?.message || '',
+      content: req.body?.content || req.body?.message || req.body?.title || '',
+      active: req.body?.active || false,
+      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    state.flashes = state.flashes || [];
+    state.flashes.push(flash);
+    debouncedSave();
+    res.status(201).json(flash);
   }
 });
 
 app.put(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) => {
   try {
+    const { title, message, content, active } = req.body;
     const flash = await prisma.flash.update({
       where: { id: req.params.id },
-      data: { ...req.body, updatedAt: new Date() }
+      data: { 
+        content: content || message || title,
+        active: active !== undefined ? !!active : undefined,
+        updatedAt: new Date()
+      }
     });
     console.log('✅ Flash modifié:', flash.id);
     res.json(flash);
   } catch (e) {
-    console.error('Erreur PUT /flashes/:id (Prisma):', e.message);
-    res.status(500).json({ error: 'Database error' });
+    console.error('❌ Erreur PUT /flashes/:id (Prisma):', e.message);
+    // Fallback en mémoire
+    const idx = (state.flashes || []).findIndex(f => f.id === req.params.id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Flash not found' });
+    }
+    state.flashes[idx] = {
+      ...state.flashes[idx],
+      title: req.body?.title || state.flashes[idx].title,
+      message: req.body?.message || state.flashes[idx].message,
+      content: req.body?.content || req.body?.message || state.flashes[idx].content,
+      active: req.body?.active !== undefined ? req.body.active : state.flashes[idx].active,
+      updatedAt: new Date().toISOString()
+    };
+    debouncedSave();
+    res.json(state.flashes[idx]);
   }
 });
 
@@ -2006,17 +2038,20 @@ app.get(['/api/retro-news'], requireAuth, (req, res) => {
 });
 
 app.post(['/api/retro-news'], requireAuth, (req, res) => {
+  console.log('📝 POST /api/retro-news:', { title: req.body.title, body: req.body.body, content: req.body.content });
+  
   const news = {
     id: uid(),
     userId: req.user?.id || req.user?.email || 'anonymous',
     author: req.user?.name || req.user?.email || 'anonyme',
     title: req.body.title,
-    body: req.body.body,
+    body: req.body.body || req.body.content || '',  // Support body OU content
     status: req.body.status || 'published',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     publishedAt: new Date().toISOString()
   };
+  console.log('✅ News créée:', { id: news.id, title: news.title, bodyLength: news.body?.length || 0 });
   state.retroNews.push(news);
   debouncedSave();
   res.status(201).json(news);
@@ -2029,7 +2064,7 @@ app.put(['/api/retro-news/:id'], requireAuth, (req, res) => {
   state.retroNews[idx] = {
     ...state.retroNews[idx],
     title: req.body.title || state.retroNews[idx].title,
-    body: req.body.body || state.retroNews[idx].body,
+    body: (req.body.body || req.body.content || state.retroNews[idx].body),  // Support body OU content
     status: req.body.status || state.retroNews[idx].status,
     updatedAt: new Date().toISOString()
   };
@@ -2408,6 +2443,29 @@ app.get('/api/user-permissions', requireAuth, async (req, res) => {
 });
 
 // DOCUMENTS
+app.get(['/api/documents'], requireAuth, (req, res) => {
+  res.json(state.documents || []);
+});
+
+app.post(['/api/documents'], requireAuth, (req, res) => {
+  const { title, description, category, file } = req.body;
+  const doc = {
+    id: uid(),
+    title: title || 'Document',
+    description: description || '',
+    category: category || 'Autres',
+    file: file || '',
+    createdBy: req.user?.name || req.user?.email || 'Anonymous',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: 'active'
+  };
+  state.documents = state.documents || [];
+  state.documents.push(doc);
+  debouncedSave();
+  res.status(201).json(doc);
+});
+
 app.get('/api/documents/member/:memberId', requireAuth, async (req, res) => {
   try {
     const documents = await prisma.document.findMany({
