@@ -2963,12 +2963,12 @@ app.get(['/finance/stats', '/api/finance/stats'], requireAuth, (req, res) => {
   res.json({ data: { monthlyRevenue: revenue, monthlyExpenses: expenses, currentBalance: state.bankBalance, membershipRevenue: 0, activeMembers: state.members.length, revenueGrowth: 0 } });
 });
 app.get(['/finance/bank-balance', '/api/finance/bank-balance'], requireAuth, (req, res) => {
-  res.json({ data: { balance: state.bankBalance } });
+  res.json({ balance: state.bankBalance });
 });
 app.post(['/finance/bank-balance', '/api/finance/bank-balance'], requireAuth, (req, res) => {
   state.bankBalance = Number(req.body.balance || 0);
   debouncedSave();
-  res.json({ data: { balance: state.bankBalance } });
+  res.json({ balance: state.bankBalance });
 });
 
 // Scheduled expenses
@@ -3468,7 +3468,7 @@ app.get('/newsletter/export', requireAuth, (req, res) => {
 // FINANCE API ALIASES - for frontend compatibility
 // /api/finance/balance -> /api/finance/bank-balance
 app.get('/api/finance/balance', requireAuth, (req, res) => {
-  res.json({ data: { balance: state.bankBalance } });
+  res.json({ balance: state.bankBalance });
 });
 
 // /api/finance/scheduled-operations -> /finance/scheduled-expenses
