@@ -3553,6 +3553,29 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     state.expenseReports.unshift(report);
     debouncedSave();
     
+    // 🔔 CREATE NOTIFICATION: new expense report created
+    // Notify admin and users with finance permissions
+    const financeUsers = state.users?.filter(u => 
+      u.role?.includes('ADMIN') || 
+      u.role?.includes('TRESORIER') || 
+      u.role?.includes('PRESIDENT') ||
+      u.permissions?.includes('finance') ||
+      u.permissions?.includes('gestion_financiere')
+    ) || [];
+    
+    const createdByName = createdBy || 'Un membre';
+    const notificationMsg = `Une nouvelle note de frais a été déposée par ${createdByName}: ${description || 'Sans description'}`;
+    const notification = {
+      id: 'n' + Date.now(),
+      type: 'expense_report_created',
+      message: notificationMsg,
+      createdAt: new Date().toISOString(),
+      read: false,
+      metadata: { expenseReportId: reportId, userId: userId, amount }
+    };
+    state.notifications.unshift(notification);
+    console.log('🔔 Notification création note de frais:', notificationMsg);
+    
     console.log('✅ Note de frais créée dans Prisma:', reportId);
     res.status(201).json({ report });
   } catch (e) {
@@ -3625,6 +3648,10 @@ app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:
   try {
     const { status } = req.body;
     
+    // Get report before updating to notify creator
+    const reportBefore = state.expenseReports.find(r => r.id === req.params.id) || 
+                         await prisma.financeExpenseReport.findUnique({ where: { id: req.params.id } });
+    
     // Update in Prisma
     const updated = await prisma.financeExpenseReport.update({
       where: { id: req.params.id },
@@ -3636,14 +3663,63 @@ app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:
     const report = state.expenseReports.find(r => r.id === req.params.id);
     debouncedSave();
     
+    // 🔔 CREATE NOTIFICATION: status change notification
+    // Notify the creator (userId) about the status change
+    if (reportBefore && reportBefore.userId) {
+      const statusMessages = {
+        'approved': '✅ approuvée',
+        'rejected': '❌ refusée',
+        'processing': '⏳ en traitement',
+        'reimbursed': '💰 remboursée',
+        'closed': '🔒 fermée'
+      };
+      const statusDisplay = statusMessages[status] || status;
+      const notificationMsg = `Votre note de frais (${reportBefore.description || 'sans description'}, ${reportBefore.amount}€) a été ${statusDisplay}`;
+      const notification = {
+        id: 'n' + Date.now(),
+        type: 'expense_report_status',
+        message: notificationMsg,
+        createdAt: new Date().toISOString(),
+        read: false,
+        metadata: { expenseReportId: req.params.id, userId: reportBefore.userId, status }
+      };
+      state.notifications.unshift(notification);
+      console.log('🔔 Notification changement statut:', notificationMsg);
+    }
+    
     res.json({ report });
   } catch (e) {
     console.error('❌ POST /api/finance/expense-reports/:id/status error:', e.message);
     // Fallback
     const { status } = req.body;
+    const reportBefore = state.expenseReports.find(r => r.id === req.params.id);
+    
     state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status, updatedAt: new Date().toISOString() } : r);
     const report = state.expenseReports.find(r => r.id === req.params.id);
     debouncedSave();
+    
+    // 🔔 Still send notification in fallback mode
+    if (reportBefore && reportBefore.userId) {
+      const statusMessages = {
+        'approved': '✅ approuvée',
+        'rejected': '❌ refusée',
+        'processing': '⏳ en traitement',
+        'reimbursed': '💰 remboursée',
+        'closed': '🔒 fermée'
+      };
+      const statusDisplay = statusMessages[status] || status;
+      const notificationMsg = `Votre note de frais (${reportBefore.description || 'sans description'}, ${reportBefore.amount}€) a été ${statusDisplay}`;
+      const notification = {
+        id: 'n' + Date.now(),
+        type: 'expense_report_status',
+        message: notificationMsg,
+        createdAt: new Date().toISOString(),
+        read: false,
+        metadata: { expenseReportId: req.params.id, userId: reportBefore.userId, status }
+      };
+      state.notifications.unshift(notification);
+    }
+    
     res.json({ report });
   }
 });
