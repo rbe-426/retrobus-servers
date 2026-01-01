@@ -488,6 +488,43 @@ if (LOAD_BACKUP_AT_BOOT) {
   state.events = normalizeEventCollection(state.events || []);
 }
 
+// Charger les données depuis Prisma au démarrage pour restaurer l'état
+const loadStateFromPrisma = async () => {
+  try {
+    const [expenseReports, transactions, documents, scheduledOps, financialDocs] = await Promise.all([
+      prisma.financeExpenseReport.findMany(),
+      prisma.financeTransaction.findMany(),
+      prisma.Document.findMany(),
+      prisma.scheduled_operations.findMany(),
+      prisma.financial_documents.findMany()
+    ]);
+    
+    if (expenseReports.length > 0) {
+      state.expenseReports = expenseReports;
+      console.log(`✅ ${expenseReports.length} notes de frais chargées depuis Prisma`);
+    }
+    if (transactions.length > 0) {
+      state.transactions = transactions;
+      console.log(`✅ ${transactions.length} transactions chargées depuis Prisma`);
+    }
+    if (documents.length > 0) {
+      state.documents = documents;
+      console.log(`✅ ${documents.length} documents chargés depuis Prisma`);
+    }
+    if (scheduledOps.length > 0) {
+      state.scheduledOperations = scheduledOps;
+      state.scheduled = scheduledOps;
+      console.log(`✅ ${scheduledOps.length} opérations programmées chargées depuis Prisma`);
+    }
+    if (financialDocs.length > 0) {
+      state.financialDocuments = financialDocs;
+      console.log(`✅ ${financialDocs.length} documents financiers chargés depuis Prisma`);
+    }
+  } catch (error) {
+    console.warn('⚠️  Erreur chargement Prisma au démarrage:', error.message);
+  }
+};
+
 // Charger l'état runtime (dernière session) au démarrage
 // Ceci restaure les données en mémoire depuis le dernier arrêt
 if (fs.existsSync(runtimeStatePath)) {
@@ -508,6 +545,10 @@ if (fs.existsSync(runtimeStatePath)) {
   } catch (error) {
     // Silently fail - runtime state is not critical
   }
+} else {
+  // Si pas de runtime-state.json, charger depuis Prisma
+  console.log('📦 Pas de runtime-state.json trouvé, chargement depuis Prisma...');
+  loadStateFromPrisma().catch(err => console.warn('⚠️  Erreur:', err.message));
 }
 
 // CORS configuration - Allow frontend(s) and local dev
@@ -573,7 +614,7 @@ app.use((req, res, next) => {
       if (token.startsWith('stub.')) {
         const emailB64 = token.slice(5);
         const email = Buffer.from(emailB64, 'base64').toString('utf-8');
-        req.user = { email: email, id: 'authenticated' }; // pass email for member lookup
+        req.user = { email: email, id: email }; // Use email as ID for consistency
       }
     } catch (e) {
       // Silently fail
@@ -5908,12 +5949,22 @@ app.delete(['/api/vehicle-inspection/:id', '/vehicle-inspection/:id'], requireAu
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Arrêt du serveur...');
+  // Sauvegarder l'état avant de fermer
+  if (ENABLE_RUNTIME_STATE_SAVE) {
+    console.log('💾 Sauvegarde de l\'état en cours...');
+    persistStateToDisk();
+  }
   await safeDisconnectPrisma();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Arrêt du serveur (SIGTERM)...');
+  // Sauvegarder l'état avant de fermer
+  if (ENABLE_RUNTIME_STATE_SAVE) {
+    console.log('💾 Sauvegarde de l\'état en cours...');
+    persistStateToDisk();
+  }
   await safeDisconnectPrisma();
   process.exit(0);
 });
