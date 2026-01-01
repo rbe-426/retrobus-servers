@@ -3496,47 +3496,118 @@ app.get(['/finance/category-breakdown', '/api/finance/category-breakdown'], requ
 });
 
 // Expense Reports (notes de frais)
-app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, (req, res) => {
-  const { eventId } = req.query;
-  let list = state.expenseReports;
-  if (eventId) list = list.filter(r => r.eventId === eventId);
-  res.json({ reports: list });
+app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, async (req, res) => {
+  try {
+    const { eventId } = req.query;
+    // Load from Prisma (source of truth)
+    let reports = await prisma.financeExpenseReport.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    if (eventId) reports = reports.filter(r => r.eventId === eventId);
+    
+    // Sync with memory state
+    if (reports.length > 0) {
+      state.expenseReports = reports;
+    }
+    
+    res.json({ reports });
+  } catch (e) {
+    console.warn('⚠️ Failed to load expense reports from Prisma:', e.message);
+    const { eventId } = req.query;
+    let list = state.expenseReports;
+    if (eventId) list = list.filter(r => r.eventId === eventId);
+    res.json({ reports: list });
+  }
 });
-app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, upload.single('file'), (req, res) => {
-  const { date, description, amount, status = 'open', planned = false, eventId } = req.body;
-  
-  // Récupérer info utilisateur depuis req.user (défini par middleware auth)
-  const userId = req.user?.id || req.user?.email || 'anonymous';
-  const createdBy = req.user?.name || req.user?.email || 'Anonymous';
-  
-  const report = {
-    id: uid(),
-    userId: userId,
-    createdBy: createdBy,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    date: date || today(),
-    description: description || '',
-    amount: Number(amount || 0),
-    status,
-    planned: planned === 'true' || planned === true,
-    fileName: req.file?.originalname,
-    fileUrl: req.file ? `/uploads/${req.file.filename}` : '',
-    eventId: eventId || null
-  };
-  state.expenseReports.unshift(report);
-  debouncedSave();
-  res.status(201).json({ report });
+app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, upload.single('file'), async (req, res) => {
+  try {
+    const { date, description, amount, status = 'open', planned = false, eventId } = req.body;
+    
+    const userId = req.user?.id || req.user?.email || 'anonymous';
+    const createdBy = req.user?.name || req.user?.email || 'Anonymous';
+    const reportId = uid();
+    
+    const reportData = {
+      id: reportId,
+      userId: userId,
+      createdBy: createdBy,
+      date: date ? new Date(date) : new Date(),
+      description: description || '',
+      amount: Number(amount || 0),
+      status: status || 'open',
+      planned: planned === 'true' || planned === true,
+      fileName: req.file?.originalname || null,
+      fileUrl: req.file ? `/uploads/${req.file.filename}` : null,
+      eventId: eventId || null
+    };
+    
+    // Save to Prisma
+    const saved = await prisma.financeExpenseReport.create({ data: reportData });
+    
+    // Also update memory
+    const report = {
+      ...reportData,
+      createdAt: saved.createdAt,
+      updatedAt: saved.updatedAt
+    };
+    state.expenseReports.unshift(report);
+    debouncedSave();
+    
+    console.log('✅ Note de frais créée dans Prisma:', reportId);
+    res.status(201).json({ report });
+  } catch (e) {
+    console.error('❌ POST /api/finance/expense-reports error:', e.message);
+    // Fallback: save to memory only
+    const userId = req.user?.id || req.user?.email || 'anonymous';
+    const createdBy = req.user?.name || req.user?.email || 'Anonymous';
+    const report = {
+      id: uid(),
+      userId: userId,
+      createdBy: createdBy,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      date: req.body.date || today(),
+      description: req.body.description || '',
+      amount: Number(req.body.amount || 0),
+      status: req.body.status || 'open',
+      planned: req.body.planned === 'true' || req.body.planned === true,
+      fileName: req.file?.originalname,
+      fileUrl: req.file ? `/uploads/${req.file.filename}` : '',
+      eventId: req.body.eventId || null
+    };
+    state.expenseReports.unshift(report);
+    debouncedSave();
+    res.status(201).json({ report });
+  }
 });
-app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, (req, res) => {
-  const updatedData = {
-    ...req.body,
-    updatedAt: new Date().toISOString()
-  };
-  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, ...updatedData } : r);
-  const report = state.expenseReports.find(r => r.id === req.params.id);
-  debouncedSave();
-  res.json({ report });
+app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, async (req, res) => {
+  try {
+    const updateData = {
+      ...req.body,
+      updatedAt: new Date()
+    };
+    
+    // Update in Prisma
+    const updated = await prisma.financeExpenseReport.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
+    
+    // Update memory
+    state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...updated, updatedAt: updated.updatedAt.toISOString() } : r);
+    const report = state.expenseReports.find(r => r.id === req.params.id);
+    debouncedSave();
+    
+    res.json({ report });
+  } catch (e) {
+    console.error('❌ PUT /api/finance/expense-reports error:', e.message);
+    // Fallback: update in memory
+    const updatedData = { ...req.body, updatedAt: new Date().toISOString() };
+    state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, ...updatedData } : r);
+    const report = state.expenseReports.find(r => r.id === req.params.id);
+    debouncedSave();
+    res.json({ report });
+  }
 });
 app.post(['/finance/expense-reports/:id/close', '/api/finance/expense-reports/:id/close'], requireAuth, (req, res) => {
   state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status: 'closed', closedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : r);
@@ -3550,12 +3621,31 @@ app.post(['/finance/expense-reports/:id/reimburse', '/api/finance/expense-report
   debouncedSave();
   res.json({ report });
 });
-app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:id/status'], requireAuth, (req, res) => {
-  const { status } = req.body;
-  state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status, updatedAt: new Date().toISOString() } : r);
-  const report = state.expenseReports.find(r => r.id === req.params.id);
-  debouncedSave();
-  res.json({ report });
+app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:id/status'], requireAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    
+    // Update in Prisma
+    const updated = await prisma.financeExpenseReport.update({
+      where: { id: req.params.id },
+      data: { status, updatedAt: new Date() }
+    });
+    
+    // Update memory
+    state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...updated, updatedAt: updated.updatedAt.toISOString() } : r);
+    const report = state.expenseReports.find(r => r.id === req.params.id);
+    debouncedSave();
+    
+    res.json({ report });
+  } catch (e) {
+    console.error('❌ POST /api/finance/expense-reports/:id/status error:', e.message);
+    // Fallback
+    const { status } = req.body;
+    state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, status, updatedAt: new Date().toISOString() } : r);
+    const report = state.expenseReports.find(r => r.id === req.params.id);
+    debouncedSave();
+    res.json({ report });
+  }
 });
 app.delete(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, (req, res) => {
   state.expenseReports = state.expenseReports.filter(r => r.id !== req.params.id);
