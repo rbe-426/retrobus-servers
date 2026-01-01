@@ -16,10 +16,10 @@ dotenv.config();
 // - ENABLE_RUNTIME_STATE_SAVE : écrit l'état mémoire dans runtime-state.json
 // - ENABLE_MEMORY_FALLBACK : bascule en mémoire si Prisma ne répond pas
 //
-// Par défaut TOUT est à false pour éviter les "données fantômes".
+// PRODUCTION: Utilise Prisma comme source de vérité + runtime-state.json pour memoire
 const LOAD_BACKUP_AT_BOOT = process.env.LOAD_BACKUP_AT_BOOT === 'true';
 const ENABLE_MEMORY_FALLBACK = process.env.ENABLE_MEMORY_FALLBACK === 'true';
-const ENABLE_RUNTIME_STATE_SAVE = process.env.ENABLE_RUNTIME_STATE_SAVE === 'true';
+const ENABLE_RUNTIME_STATE_SAVE = process.env.ENABLE_RUNTIME_STATE_SAVE !== 'false'; // DEFAULT: true
 
 // ============================================================
 // 🔧 INITIALISATION PRISMA (source unique de vérité)
@@ -465,6 +465,7 @@ function loadBackupAtStartup() {
     }
     if (tables.scheduled_operations?.data) {
       state.scheduledOperations = tables.scheduled_operations.data;
+      state.scheduled = tables.scheduled_operations.data; // Sync with endpoints
     }
     if (tables.scheduled_operation_payments?.data) {
       state.scheduledOperationPayments = tables.scheduled_operation_payments.data;
@@ -485,6 +486,28 @@ function loadBackupAtStartup() {
 if (LOAD_BACKUP_AT_BOOT) {
   loadBackupAtStartup();
   state.events = normalizeEventCollection(state.events || []);
+}
+
+// Charger l'état runtime (dernière session) au démarrage
+// Ceci restaure les données en mémoire depuis le dernier arrêt
+if (fs.existsSync(runtimeStatePath)) {
+  try {
+    const runtimeData = JSON.parse(fs.readFileSync(runtimeStatePath, 'utf-8'));
+    if (runtimeData.state) {
+      // Merger le runtime state avec l'état initial
+      Object.keys(runtimeData.state).forEach(key => {
+        if (Array.isArray(runtimeData.state[key])) {
+          state[key] = runtimeData.state[key];
+        } else if (typeof runtimeData.state[key] === 'object' && runtimeData.state[key] !== null) {
+          state[key] = runtimeData.state[key];
+        } else {
+          state[key] = runtimeData.state[key];
+        }
+      });
+    }
+  } catch (error) {
+    // Silently fail - runtime state is not critical
+  }
 }
 
 // CORS configuration - Allow frontend(s) and local dev
@@ -3654,6 +3677,53 @@ app.post('/api/finance/simulations/:id/run', requireAuth, (req, res) => {
 // /api/finance/documents -> returns all documents (finance perspective)
 app.get('/api/finance/documents', requireAuth, (req, res) => {
   res.json({ documents: state.financialDocuments || [] });
+});
+
+// POST /api/finance/documents -> create new document (devis/facture)
+app.post('/api/finance/documents', requireAuth, (req, res) => {
+  try {
+    const doc = {
+      id: uid(),
+      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...req.body
+    };
+    state.financialDocuments.push(doc);
+    debouncedSave();
+    res.status(201).json(doc);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to create document', details: e.message });
+  }
+});
+
+// PUT /api/finance/documents/:id -> update document
+app.put('/api/finance/documents/:id', requireAuth, (req, res) => {
+  try {
+    const idx = state.financialDocuments.findIndex(d => d.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Document not found' });
+    
+    state.financialDocuments[idx] = {
+      ...state.financialDocuments[idx],
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+    debouncedSave();
+    res.json(state.financialDocuments[idx]);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update document', details: e.message });
+  }
+});
+
+// DELETE /api/finance/documents/:id -> delete document
+app.delete('/api/finance/documents/:id', requireAuth, (req, res) => {
+  try {
+    state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.id);
+    debouncedSave();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete document', details: e.message });
+  }
 });
 
 // Quote templates endpoint - retourner les templates depuis le backup
