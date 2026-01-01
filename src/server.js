@@ -3729,6 +3729,122 @@ app.delete('/api/finance/documents/:id', requireAuth, (req, res) => {
   }
 });
 
+// PATCH /api/finance/documents/:id/status -> update document status + auto-create invoice or transaction
+app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status'], requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    // Trouver le document
+    const docIdx = state.financialDocuments.findIndex(d => d.id === id);
+    if (docIdx === -1) return res.status(404).json({ error: 'Document not found' });
+    
+    const doc = state.financialDocuments[docIdx];
+    const oldStatus = doc.status;
+    
+    // Mettre à jour le statut
+    state.financialDocuments[docIdx].status = status;
+    state.financialDocuments[docIdx].updatedAt = new Date().toISOString();
+    
+    let response = { ...state.financialDocuments[docIdx] };
+    
+    // ========== LOGIQUE MÉTIER ==========
+    
+    // Cas 1: Devis accepté (QUOTE + ACCEPTED) -> créer facture auto
+    if (doc.type === 'QUOTE' && status === 'ACCEPTED' && oldStatus !== 'ACCEPTED') {
+      try {
+        // Créer la facture depuis le devis
+        const invoice = {
+          id: uid(),
+          type: 'INVOICE',
+          number: `FAC-${doc.number.replace('DV-', '')}`,
+          title: doc.title,
+          description: doc.description,
+          date: new Date().toISOString().split('T')[0],
+          dueDate: doc.dueDate,
+          amountExcludingTax: doc.amountExcludingTax,
+          taxRate: doc.taxRate || 0,
+          taxAmount: doc.taxAmount || 0,
+          amount: doc.amount,
+          status: 'DRAFT',
+          linkedQuoteId: doc.id,
+          linkedQuoteNumber: doc.number,
+          eventId: doc.eventId || '',
+          memberId: doc.memberId || '',
+          destinataireName: doc.destinataireName || '',
+          destinataireAdresse: doc.destinataireAdresse || '',
+          destinataireSociete: doc.destinataireSociete || '',
+          destinataireContacts: doc.destinataireContacts || '',
+          notes: doc.notes || '',
+          createdBy: req.user?.name || req.user?.email || 'Anonymous',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        
+        state.financialDocuments.push(invoice);
+        response.invoiceCreated = true;
+        response.invoiceId = invoice.id;
+        response.invoiceNumber = invoice.number;
+        
+        console.log(`✅ Facture auto-créée à partir du devis ${doc.number}: ${invoice.number}`);
+      } catch (invoiceErr) {
+        console.error('❌ Erreur création facture auto:', invoiceErr.message);
+        response.invoiceError = invoiceErr.message;
+      }
+    }
+    
+    // Cas 2: Facture marquée payée (INVOICE + PAID) -> créer opération automatique
+    if (doc.type === 'INVOICE' && status === 'PAID' && oldStatus !== 'PAID') {
+      try {
+        // Vérifier si paiement ou acompte
+        const amountPaid = parseFloat(doc.amountPaid || doc.amount) || 0;
+        const fullAmount = parseFloat(doc.amount) || 0;
+        const isFullPayment = Math.abs(amountPaid - fullAmount) < 0.01;
+        
+        const operationType = isFullPayment ? 'PAIEMENT FACT' : 'ACOMPTE FACT';
+        const operationDescription = `${operationType} #${doc.number}`;
+        
+        const operation = {
+          id: uid(),
+          type: 'SCHEDULED_PAYMENT',
+          description: operationDescription,
+          amount: amountPaid,
+          frequency: 'ONE_SHOT',
+          nextDate: new Date().toISOString(),
+          date: new Date().toISOString(),
+          linkedDocumentId: doc.id,
+          linkedDocumentNumber: doc.number,
+          category: 'FACTURE',
+          createdBy: req.user?.name || req.user?.email || 'Anonymous',
+          createdAt: new Date().toISOString()
+        };
+        
+        // Ajouter à l'état approprié selon le type
+        if (!state.transactions) state.transactions = [];
+        state.transactions.unshift(operation);
+        
+        // Mettre à jour le solde bancaire
+        state.bankBalance += amountPaid;
+        
+        response.transactionCreated = true;
+        response.transactionAmount = amountPaid;
+        response.transactionDescription = operationDescription;
+        
+        console.log(`✅ Opération auto-créée pour facture payée: ${operationDescription} (${amountPaid}€)`);
+      } catch (transErr) {
+        console.error('❌ Erreur création opération auto:', transErr.message);
+        response.transactionError = transErr.message;
+      }
+    }
+    
+    debouncedSave();
+    res.json(response);
+  } catch (e) {
+    console.error('❌ PATCH /documents/:id/status error:', e.message);
+    res.status(500).json({ error: 'Failed to update status', details: e.message });
+  }
+});
+
 // Quote templates endpoint - retourner les templates depuis le backup
 app.get('/api/quote-templates', requireAuth, (req, res) => {
   res.json(state.quoteTemplates || []);
