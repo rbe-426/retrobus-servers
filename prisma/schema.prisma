@@ -738,6 +738,7 @@ model scheduled_operations {
   frequency                    String                         @default("MONTHLY")
   nextDate                     DateTime?
   totalAmount                  Float?
+  estimatedEndDate             DateTime?
   scheduled_operation_payments scheduled_operation_payments[]
 }
 

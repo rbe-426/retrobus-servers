@@ -3055,8 +3055,11 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
     }
     debouncedSave();
     
-    console.log('✅ Transaction créée:', tx.id);
-    res.status(201).json(tx);
+    console.log('✅ Transaction créée:', tx.id, '| Nouveau solde:', state.bankBalance);
+    res.status(201).json({
+      ...tx,
+      newBalance: state.bankBalance
+    });
   } catch (e) {
     console.error('❌ POST /finance/transactions error:', e.message);
     res.status(500).json({ error: 'Failed to create transaction', details: e.message });
