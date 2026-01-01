@@ -4308,24 +4308,69 @@ app.delete('/api/finance/scheduled-operations/:id', requireAuth, async (req, res
 // ============================================================
 // SIMULATIONS ENDPOINT - Financial scenario simulations
 // ============================================================
-app.get('/api/finance/simulations', requireAuth, (req, res) => {
-  res.json(state.simulations || []);
+app.get('/api/finance/simulations', requireAuth, async (req, res) => {
+  try {
+    const scenarios = await prisma.finance_simulation_scenarios.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    state.simulations = scenarios.map(s => ({
+      ...s,
+      createdAt: s.createdAt.toISOString(),
+      updatedAt: s.updatedAt.toISOString()
+    }));
+    console.log('✅ Simulations chargées depuis Prisma');
+    res.json(state.simulations || []);
+  } catch (e) {
+    console.error('⚠️ GET /api/finance/simulations fallback:', e.message);
+    res.json(state.simulations || []);
+  }
 });
 
-app.post('/api/finance/simulations', requireAuth, (req, res) => {
-  const scenario = {
-    id: uid(),
-    userId: req.user?.id || req.user?.email || 'anonymous',
-    createdBy: req.user?.name || req.user?.email || 'Anonymous',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    ...req.body,
-    incomeItems: req.body.incomeItems || [],
-    expenseItems: req.body.expenseItems || []
-  };
-  state.simulations.push(scenario);
-  debouncedSave();
-  res.status(201).json(scenario);
+app.post('/api/finance/simulations', requireAuth, async (req, res) => {
+  try {
+    const scenarioId = uid();
+    const scenarioData = {
+      id: scenarioId,
+      name: req.body.name || 'New Scenario',
+      description: req.body.description || '',
+      projectionMonths: req.body.projectionMonths || 12,
+      status: 'DRAFT',
+      createdBy: req.user?.name || req.user?.email || 'Anonymous'
+    };
+    
+    const scenario = await prisma.finance_simulation_scenarios.create({
+      data: scenarioData
+    });
+    
+    const result = {
+      ...scenario,
+      createdAt: scenario.createdAt.toISOString(),
+      updatedAt: scenario.updatedAt.toISOString(),
+      incomeItems: [],
+      expenseItems: []
+    };
+    
+    state.simulations.push(result);
+    debouncedSave();
+    console.log('✅ Simulation créée dans Prisma:', scenarioId);
+    res.status(201).json(result);
+  } catch (e) {
+    console.error('❌ POST /api/finance/simulations error:', e.message);
+    // Fallback
+    const scenario = {
+      id: uid(),
+      userId: req.user?.id || req.user?.email || 'anonymous',
+      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...req.body,
+      incomeItems: req.body.incomeItems || [],
+      expenseItems: req.body.expenseItems || []
+    };
+    state.simulations.push(scenario);
+    debouncedSave();
+    res.status(201).json(scenario);
+  }
 });
 
 app.get('/api/finance/simulations/:id', requireAuth, (req, res) => {
@@ -4336,24 +4381,62 @@ app.get('/api/finance/simulations/:id', requireAuth, (req, res) => {
   res.json(scenario);
 });
 
-app.put('/api/finance/simulations/:id', requireAuth, (req, res) => {
-  const idx = state.simulations.findIndex(s => s.id === req.params.id);
-  if (idx === -1) {
-    return res.status(404).json({ error: 'Scenario not found' });
+app.put('/api/finance/simulations/:id', requireAuth, async (req, res) => {
+  try {
+    const updated = await prisma.finance_simulation_scenarios.update({
+      where: { id: req.params.id },
+      data: {
+        name: req.body.name,
+        description: req.body.description,
+        projectionMonths: req.body.projectionMonths,
+        status: req.body.status
+      }
+    });
+    
+    const result = {
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString()
+    };
+    
+    state.simulations = state.simulations.map(s => s.id === req.params.id ? result : s);
+    debouncedSave();
+    console.log('✅ Simulation mise à jour dans Prisma:', req.params.id);
+    res.json(result);
+  } catch (e) {
+    console.error('❌ PUT /api/finance/simulations/:id error:', e.message);
+    // Fallback
+    const idx = state.simulations.findIndex(s => s.id === req.params.id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Scenario not found' });
+    }
+    state.simulations[idx] = {
+      ...state.simulations[idx],
+      ...req.body,
+      updatedAt: new Date().toISOString()
+    };
+    debouncedSave();
+    res.json(state.simulations[idx]);
   }
-  state.simulations[idx] = {
-    ...state.simulations[idx],
-    ...req.body,
-    updatedAt: new Date().toISOString()
-  };
-  debouncedSave();
-  res.json(state.simulations[idx]);
 });
 
-app.delete('/api/finance/simulations/:id', requireAuth, (req, res) => {
-  state.simulations = state.simulations.filter(s => s.id !== req.params.id);
-  debouncedSave();
-  res.json({ ok: true });
+app.delete('/api/finance/simulations/:id', requireAuth, async (req, res) => {
+  try {
+    await prisma.finance_simulation_scenarios.delete({
+      where: { id: req.params.id }
+    });
+    
+    state.simulations = state.simulations.filter(s => s.id !== req.params.id);
+    debouncedSave();
+    console.log('✅ Simulation supprimée de Prisma:', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/finance/simulations/:id error:', e.message);
+    // Fallback
+    state.simulations = state.simulations.filter(s => s.id !== req.params.id);
+    debouncedSave();
+    res.json({ ok: true });
+  }
 });
 
 // Add income item to simulation
@@ -4484,13 +4567,63 @@ app.post('/api/finance/simulations/:id/run', requireAuth, (req, res) => {
 });
 
 // /api/finance/documents -> returns all documents (finance perspective)
-app.get('/api/finance/documents', requireAuth, (req, res) => {
-  res.json({ documents: state.financialDocuments || [] });
+app.get('/api/finance/documents', requireAuth, async (req, res) => {
+  try {
+    const docs = await prisma.financial_documents.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    state.financialDocuments = docs.map(d => ({
+      ...d,
+      createdAt: d.createdAt.toISOString(),
+      updatedAt: d.updatedAt.toISOString(),
+      date: d.date?.toISOString?.() || d.date,
+      dueDate: d.dueDate?.toISOString?.() || d.dueDate
+    }));
+    console.log('✅ Documents financiers chargés depuis Prisma');
+    res.json({ documents: state.financialDocuments || [] });
+  } catch (e) {
+    console.error('⚠️ GET /api/finance/documents fallback:', e.message);
+    res.json({ documents: state.financialDocuments || [] });
+  }
 });
 
 // POST /api/finance/documents -> create new document (devis/facture)
-app.post('/api/finance/documents', requireAuth, (req, res) => {
+app.post('/api/finance/documents', requireAuth, async (req, res) => {
   try {
+    const docId = uid();
+    const docData = {
+      id: docId,
+      type: req.body.type || 'QUOTE',
+      number: req.body.number || `DOC-${Date.now()}`,
+      title: req.body.title || '',
+      description: req.body.description || null,
+      date: req.body.date ? new Date(req.body.date) : new Date(),
+      dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null,
+      amount: Number(req.body.amount || 0),
+      taxRate: Number(req.body.taxRate || 20),
+      taxAmount: Number(req.body.taxAmount || 0),
+      amountExcludingTax: Number(req.body.amountExcludingTax || 0)
+    };
+    
+    const doc = await prisma.financial_documents.create({
+      data: docData
+    });
+    
+    const result = {
+      ...doc,
+      createdAt: doc.createdAt.toISOString(),
+      updatedAt: doc.updatedAt.toISOString(),
+      date: doc.date.toISOString(),
+      dueDate: doc.dueDate?.toISOString?.() || null
+    };
+    
+    state.financialDocuments.push(result);
+    debouncedSave();
+    console.log('✅ Document créé dans Prisma:', docId);
+    res.status(201).json(result);
+  } catch (e) {
+    console.error('❌ POST /api/finance/documents error:', e.message);
+    // Fallback
     const doc = {
       id: uid(),
       createdBy: req.user?.name || req.user?.email || 'Anonymous',
@@ -4501,14 +4634,39 @@ app.post('/api/finance/documents', requireAuth, (req, res) => {
     state.financialDocuments.push(doc);
     debouncedSave();
     res.status(201).json(doc);
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to create document', details: e.message });
   }
 });
 
 // PUT /api/finance/documents/:id -> update document
-app.put('/api/finance/documents/:id', requireAuth, (req, res) => {
+app.put('/api/finance/documents/:id', requireAuth, async (req, res) => {
   try {
+    const updated = await prisma.financial_documents.update({
+      where: { id: req.params.id },
+      data: {
+        title: req.body.title,
+        description: req.body.description,
+        amount: req.body.amount ? Number(req.body.amount) : undefined,
+        taxRate: req.body.taxRate ? Number(req.body.taxRate) : undefined,
+        taxAmount: req.body.taxAmount ? Number(req.body.taxAmount) : undefined,
+        amountExcludingTax: req.body.amountExcludingTax ? Number(req.body.amountExcludingTax) : undefined
+      }
+    });
+    
+    const result = {
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+      date: updated.date.toISOString(),
+      dueDate: updated.dueDate?.toISOString?.() || null
+    };
+    
+    state.financialDocuments = state.financialDocuments.map(d => d.id === req.params.id ? result : d);
+    debouncedSave();
+    console.log('✅ Document mis à jour dans Prisma:', req.params.id);
+    res.json(result);
+  } catch (e) {
+    console.error('❌ PUT /api/finance/documents/:id error:', e.message);
+    // Fallback
     const idx = state.financialDocuments.findIndex(d => d.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'Document not found' });
     
@@ -4519,19 +4677,26 @@ app.put('/api/finance/documents/:id', requireAuth, (req, res) => {
     };
     debouncedSave();
     res.json(state.financialDocuments[idx]);
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to update document', details: e.message });
   }
 });
 
 // DELETE /api/finance/documents/:id -> delete document
-app.delete('/api/finance/documents/:id', requireAuth, (req, res) => {
+app.delete('/api/finance/documents/:id', requireAuth, async (req, res) => {
   try {
+    await prisma.financial_documents.delete({
+      where: { id: req.params.id }
+    });
+    
+    state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.id);
+    debouncedSave();
+    console.log('✅ Document supprimé de Prisma:', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/finance/documents/:id error:', e.message);
+    // Fallback
     state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.id);
     debouncedSave();
     res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to delete document', details: e.message });
   }
 });
 
