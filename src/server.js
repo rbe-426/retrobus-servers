@@ -179,6 +179,27 @@ const normalizeEventExtras = (event = {}) => {
 
 const normalizeEventCollection = (events = []) => events.map(ev => normalizeEventExtras(ev));
 
+// Calculate next date based on frequency
+const calculateNextDate = (currentDate, frequency) => {
+  if (!currentDate || !frequency) return currentDate;
+  
+  const date = new Date(currentDate);
+  const frequencyMap = {
+    'WEEKLY': 7,
+    'MONTHLY': 30,
+    'QUARTERLY': 90,
+    'SEMI_ANNUAL': 180,
+    'YEARLY': 365,
+    'ONE_SHOT': null
+  };
+  
+  const days = frequencyMap[frequency] || frequencyMap[frequency.toUpperCase()] || 30;
+  if (!days) return date; // ONE_SHOT - don't advance
+  
+  date.setDate(date.getDate() + days);
+  return date;
+};
+
 const prismaEventFieldAllowList = new Set(['title', 'description', 'date', 'time', 'location', 'helloAssoUrl', 'adultPrice', 'childPrice', 'status', 'vehicleId', 'extras']);
 
 const buildPrismaEventUpdateData = (payload = {}) => {
@@ -794,6 +815,65 @@ app.get('/health', async (req, res) => {
       database: 'disconnected',
       error: e.message
     });
+  }
+});
+
+// DEBUG ENDPOINT - Force save and check state
+app.post('/api/debug/force-save', (req, res) => {
+  try {
+    console.log('🔧 DEBUG: Force saving state to disk...');
+    persistStateToDisk();
+    
+    const stats = {
+      runtimeStateExists: fs.existsSync(runtimeStatePath),
+      runtimeStateSize: fs.existsSync(runtimeStatePath) ? fs.statSync(runtimeStatePath).size : 0,
+      memoryState: {
+        retroNews: state.retroNews?.length || 0,
+        scheduled: state.scheduled?.length || 0,
+        transactions: state.transactions?.length || 0,
+        members: state.members?.length || 0,
+        events: state.events?.length || 0,
+        flashes: state.flashes?.length || 0,
+        bankBalance: state.bankBalance
+      },
+      savedAt: new Date().toISOString()
+    };
+    
+    console.log('✅ DEBUG: State saved', stats);
+    res.json({ ok: true, ...stats });
+  } catch (e) {
+    console.error('❌ DEBUG: Force save failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DEBUG ENDPOINT - Check persistence
+app.get('/api/debug/check-persistence', async (req, res) => {
+  try {
+    const prismaNews = await prisma.retroNews.findMany({ take: 5 });
+    const prismaOps = await prisma.scheduled_operations.findMany({ take: 5 });
+    
+    const stats = {
+      prisma: {
+        retroNews: prismaNews.length,
+        scheduledOperations: prismaOps.length
+      },
+      memory: {
+        retroNews: state.retroNews?.length || 0,
+        scheduled: state.scheduled?.length || 0
+      },
+      runtimeState: {
+        exists: fs.existsSync(runtimeStatePath),
+        size: fs.existsSync(runtimeStatePath) ? fs.statSync(runtimeStatePath).size : 0
+      },
+      enableRuntimeSave: ENABLE_RUNTIME_STATE_SAVE,
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json(stats);
+  } catch (e) {
+    console.error('❌ DEBUG: Check persistence failed:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -2032,50 +2112,134 @@ app.post(['/api/retro-requests/:id/link-facture'], requireAuth, async (req, res)
   }
 });
 
-// RETRO NEWS (content management)
-app.get(['/api/retro-news'], requireAuth, (req, res) => {
-  res.json(state.retroNews || []);
+// RETRO NEWS (content management) - PERSISTED IN PRISMA
+app.get(['/api/retro-news'], requireAuth, async (req, res) => {
+  try {
+    // Load from Prisma (source of truth)
+    const newsFromDb = await prisma.retroNews.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    // Also return in-memory state for backward compatibility
+    res.json(newsFromDb.length > 0 ? newsFromDb : state.retroNews || []);
+  } catch (e) {
+    console.warn('⚠️ Failed to load news from Prisma:', e.message);
+    res.json(state.retroNews || []);
+  }
 });
 
-app.post(['/api/retro-news'], requireAuth, (req, res) => {
-  console.log('📝 POST /api/retro-news:', { title: req.body.title, body: req.body.body, content: req.body.content });
-  
-  const news = {
-    id: uid(),
-    userId: req.user?.id || req.user?.email || 'anonymous',
-    author: req.user?.name || req.user?.email || 'anonyme',
-    title: req.body.title,
-    body: req.body.body || req.body.content || '',  // Support body OU content
-    status: req.body.status || 'published',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    publishedAt: new Date().toISOString()
-  };
-  console.log('✅ News créée:', { id: news.id, title: news.title, bodyLength: news.body?.length || 0 });
-  state.retroNews.push(news);
-  debouncedSave();
-  res.status(201).json(news);
+app.post(['/api/retro-news'], requireAuth, async (req, res) => {
+  try {
+    console.log('📝 POST /api/retro-news:', { title: req.body.title, body: req.body.body, content: req.body.content });
+    
+    const newsId = uid();
+    const newsData = {
+      id: newsId,
+      title: req.body.title || 'Sans titre',
+      content: req.body.body || req.body.content || '',  // Save in 'content' field for Prisma
+      author: req.user?.name || req.user?.email || 'anonyme',
+      published: req.body.status === 'published',
+      createdBy: req.user?.id || req.user?.email || 'anonymous',
+      publishedAt: req.body.status === 'published' ? new Date() : null
+    };
+    
+    // Save to Prisma (source of truth)
+    const savedNews = await prisma.retroNews.create({ data: newsData });
+    
+    // Also update in-memory state
+    state.retroNews.push({
+      ...savedNews,
+      body: savedNews.content  // Alias for backward compatibility
+    });
+    debouncedSave();
+    
+    console.log('✅ News créée dans Prisma:', { id: newsId, title: newsData.title });
+    res.status(201).json({ ...savedNews, body: savedNews.content });
+  } catch (e) {
+    console.error('❌ POST /api/retro-news error:', e.message);
+    // Fallback: save to memory only
+    const news = {
+      id: uid(),
+      title: req.body.title,
+      content: req.body.body || req.body.content || '',
+      body: req.body.body || req.body.content || '',
+      author: req.user?.name || req.user?.email || 'anonyme',
+      published: req.body.status === 'published',
+      createdBy: req.user?.id || req.user?.email || 'anonymous',
+      createdAt: new Date().toISOString(),
+      publishedAt: new Date().toISOString()
+    };
+    state.retroNews.push(news);
+    debouncedSave();
+    res.status(201).json(news);
+  }
 });
 
-app.put(['/api/retro-news/:id'], requireAuth, (req, res) => {
-  const idx = state.retroNews.findIndex(r => r.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'News not found' });
-  
-  state.retroNews[idx] = {
-    ...state.retroNews[idx],
-    title: req.body.title || state.retroNews[idx].title,
-    body: (req.body.body || req.body.content || state.retroNews[idx].body),  // Support body OU content
-    status: req.body.status || state.retroNews[idx].status,
-    updatedAt: new Date().toISOString()
-  };
-  debouncedSave();
-  res.json(state.retroNews[idx]);
+app.put(['/api/retro-news/:id'], requireAuth, async (req, res) => {
+  try {
+    const newsId = req.params.id;
+    const updateData = {
+      title: req.body.title,
+      content: req.body.body || req.body.content,  // Save in 'content' field
+      published: req.body.status === 'published',
+      publishedAt: req.body.status === 'published' ? new Date() : null
+    };
+    
+    // Update in Prisma
+    const updated = await prisma.retroNews.update({
+      where: { id: newsId },
+      data: updateData
+    });
+    
+    // Update in-memory state
+    const idx = state.retroNews.findIndex(r => r.id === newsId);
+    if (idx !== -1) {
+      state.retroNews[idx] = {
+        ...updated,
+        body: updated.content,
+        status: updated.published ? 'published' : 'draft'
+      };
+    }
+    debouncedSave();
+    
+    res.json({ ...updated, body: updated.content, status: updated.published ? 'published' : 'draft' });
+  } catch (e) {
+    console.error('❌ PUT /api/retro-news error:', e.message);
+    // Fallback: update in memory
+    const idx = state.retroNews.findIndex(r => r.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'News not found' });
+    
+    state.retroNews[idx] = {
+      ...state.retroNews[idx],
+      title: req.body.title || state.retroNews[idx].title,
+      body: req.body.body || req.body.content || state.retroNews[idx].body,
+      content: req.body.body || req.body.content || state.retroNews[idx].content,
+      status: req.body.status || state.retroNews[idx].status,
+      updatedAt: new Date().toISOString()
+    };
+    debouncedSave();
+    res.json(state.retroNews[idx]);
+  }
 });
 
-app.delete(['/api/retro-news/:id'], requireAuth, (req, res) => {
-  state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
-  debouncedSave();
-  res.json({ ok: true });
+app.delete(['/api/retro-news/:id'], requireAuth, async (req, res) => {
+  try {
+    // Delete from Prisma
+    await prisma.retroNews.delete({
+      where: { id: req.params.id }
+    });
+    
+    // Delete from in-memory state
+    state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
+    debouncedSave();
+    
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/retro-news error:', e.message);
+    // Fallback: delete from memory only
+    state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
+    debouncedSave();
+    res.json({ ok: true });
+  }
 });
 
 // MEMBERS
@@ -3077,41 +3241,143 @@ app.get(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requ
   if (eventId) list = list.filter(x => x.eventId === eventId);
   res.json({ operations: list });
 });
-app.post(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requireAuth, (req, res) => {
-  const op = { 
-    id: uid(), 
-    userId: req.user?.id || req.user?.email || 'anonymous',
-    createdBy: req.user?.name || req.user?.email || 'Anonymous',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    ...req.body 
-  };
-  state.scheduled.push(op);
-  debouncedSave();
-  res.status(201).json(op);
-});
-app.put(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, (req, res) => {
-  state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body, updatedAt: new Date().toISOString() } : o);
-  const op = state.scheduled.find(o => o.id === req.params.id);
-  debouncedSave();
-  res.json(op);
-});
-app.delete(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, (req, res) => {
-  state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
-  debouncedSave();
-  res.json({ ok: true });
-});
-app.post('/finance/scheduled-expenses/:id/execute', requireAuth, (req, res) => {
-  const op = state.scheduled.find(o => o.id === req.params.id);
-  if (!op) return res.status(404).json({ error: 'Not found' });
-  const tx = { id: uid(), type: op.type, amount: op.amount, description: op.description, category: op.category, date: today(), eventId: op.eventId || null };
-  state.transactions.unshift(tx);
-  if (!op.recurring || op.recurring === 'none') {
-    state.scheduled = state.scheduled.filter(o => o.id !== op.id);
+app.post(['/finance/scheduled-expenses', '/api/finance/scheduled-expenses'], requireAuth, async (req, res) => {
+  try {
+    const opId = uid();
+    const opData = {
+      id: opId,
+      type: req.body.type || 'expense',
+      description: req.body.description || '',
+      amount: req.body.amount || 0,
+      dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null,
+      category: req.body.category || '',
+      recurring: req.body.recurring || 'MONTHLY',
+      frequency: req.body.frequency || 'MONTHLY',
+      nextDate: req.body.nextDate ? new Date(req.body.nextDate) : null,
+      notes: req.body.notes || '',
+      isExecuted: false,
+      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      totalAmount: req.body.totalAmount || req.body.amount || 0,
+      estimatedEndDate: req.body.estimatedEndDate ? new Date(req.body.estimatedEndDate) : null
+    };
+    
+    // Save to Prisma
+    const saved = await prisma.scheduled_operations.create({ data: opData });
+    
+    // Also update memory
+    state.scheduled.push(saved);
+    debouncedSave();
+    
+    console.log('✅ Opération programmée créée dans Prisma:', opId);
+    res.status(201).json(saved);
+  } catch (e) {
+    console.error('❌ POST /api/finance/scheduled-expenses error:', e.message);
+    // Fallback
+    const op = { 
+      id: uid(), 
+      userId: req.user?.id || req.user?.email || 'anonymous',
+      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...req.body 
+    };
+    state.scheduled.push(op);
+    debouncedSave();
+    res.status(201).json(op);
   }
-  if (tx.type === 'recette') state.bankBalance += tx.amount; else state.bankBalance -= tx.amount;
-  debouncedSave();
-  res.json({ ok: true, transaction: tx });
+});
+app.put(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, async (req, res) => {
+  try {
+    const updateData = {
+      ...req.body,
+      dueDate: req.body.dueDate ? new Date(req.body.dueDate) : undefined,
+      nextDate: req.body.nextDate ? new Date(req.body.nextDate) : undefined,
+      estimatedEndDate: req.body.estimatedEndDate ? new Date(req.body.estimatedEndDate) : undefined
+    };
+    
+    // Update in Prisma
+    const updated = await prisma.scheduled_operations.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
+    
+    // Update memory
+    state.scheduled = state.scheduled.map(o => o.id === req.params.id ? updated : o);
+    debouncedSave();
+    
+    res.json(updated);
+  } catch (e) {
+    console.error('❌ PUT /api/finance/scheduled-expenses error:', e.message);
+    // Fallback
+    state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body, updatedAt: new Date().toISOString() } : o);
+    const op = state.scheduled.find(o => o.id === req.params.id);
+    debouncedSave();
+    res.json(op);
+  }
+});
+app.delete(['/finance/scheduled-expenses/:id', '/api/finance/scheduled-expenses/:id'], requireAuth, async (req, res) => {
+  try {
+    // Delete from Prisma
+    await prisma.scheduled_operations.delete({
+      where: { id: req.params.id }
+    });
+    
+    // Delete from memory
+    state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
+    debouncedSave();
+    
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/finance/scheduled-expenses error:', e.message);
+    // Fallback
+    state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
+    debouncedSave();
+    res.json({ ok: true });
+  }
+});
+app.post('/finance/scheduled-expenses/:id/execute', requireAuth, async (req, res) => {
+  try {
+    // Get operation from Prisma
+    const op = await prisma.scheduled_operations.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!op) return res.status(404).json({ error: 'Not found' });
+    
+    const tx = { id: uid(), type: op.type, amount: op.amount, description: op.description, category: op.category, date: today(), eventId: op.eventId || null };
+    state.transactions.unshift(tx);
+    
+    // Mark as executed or delete if not recurring
+    if (!op.recurring || op.recurring === 'none' || op.recurring === 'ONE_SHOT') {
+      await prisma.scheduled_operations.delete({ where: { id: op.id } });
+      state.scheduled = state.scheduled.filter(o => o.id !== op.id);
+    } else {
+      // Update nextDate in Prisma
+      const nextDate = calculateNextDate(op.nextDate || op.dueDate || new Date(), op.frequency || op.recurring);
+      await prisma.scheduled_operations.update({
+        where: { id: op.id },
+        data: { nextDate, isExecuted: false }
+      });
+      state.scheduled = state.scheduled.map(o => o.id === op.id ? { ...o, nextDate, isExecuted: false } : o);
+    }
+    
+    if (tx.type === 'recette') state.bankBalance += tx.amount; else state.bankBalance -= tx.amount;
+    debouncedSave();
+    
+    res.json({ ok: true, transaction: tx });
+  } catch (e) {
+    console.error('❌ POST /finance/scheduled-expenses/:id/execute error:', e.message);
+    // Fallback
+    const op = state.scheduled.find(o => o.id === req.params.id);
+    if (!op) return res.status(404).json({ error: 'Not found' });
+    const tx = { id: uid(), type: op.type, amount: op.amount, description: op.description, category: op.category, date: today(), eventId: op.eventId || null };
+    state.transactions.unshift(tx);
+    if (!op.recurring || op.recurring === 'none') {
+      state.scheduled = state.scheduled.filter(o => o.id !== op.id);
+    }
+    if (tx.type === 'recette') state.bankBalance += tx.amount; else state.bankBalance -= tx.amount;
+    debouncedSave();
+    res.json({ ok: true, transaction: tx });
+  }
 });
 
 // Transactions - Utilisation de Prisma pour la persistance
@@ -3573,29 +3839,134 @@ app.get('/api/finance/balance', requireAuth, (req, res) => {
   res.json({ balance: state.bankBalance });
 });
 
-// /api/finance/scheduled-operations -> /finance/scheduled-expenses
-app.get('/api/finance/scheduled-operations', requireAuth, (req, res) => {
-  const { eventId } = req.query;
-  let list = state.scheduled;
-  if (eventId) list = list.filter(x => x.eventId === eventId);
-  res.json({ operations: list });
+// /api/finance/scheduled-operations -> /finance/scheduled-expenses - PERSISTED IN PRISMA
+app.get('/api/finance/scheduled-operations', requireAuth, async (req, res) => {
+  try {
+    const { eventId } = req.query;
+    // Load from Prisma
+    let operations = await prisma.scheduled_operations.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    if (eventId) operations = operations.filter(x => x.id === eventId);
+    
+    // Sync with memory state
+    if (operations.length > 0) {
+      state.scheduled = operations;
+      state.scheduledOperations = operations;
+    }
+    
+    res.json({ operations });
+  } catch (e) {
+    console.warn('⚠️ Failed to load operations from Prisma:', e.message);
+    const { eventId } = req.query;
+    let list = state.scheduled;
+    if (eventId) list = list.filter(x => x.eventId === eventId);
+    res.json({ operations: list });
+  }
 });
-app.post('/api/finance/scheduled-operations', requireAuth, (req, res) => {
-  const op = { id: uid(), ...req.body };
-  state.scheduled.push(op);
-  debouncedSave();
-  res.status(201).json(op);
+
+app.post('/api/finance/scheduled-operations', requireAuth, async (req, res) => {
+  try {
+    const opId = uid();
+    const opData = {
+      id: opId,
+      type: req.body.type || 'expense',
+      description: req.body.description || '',
+      amount: req.body.amount || 0,
+      dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null,
+      category: req.body.category || '',
+      recurring: req.body.recurring || 'MONTHLY',
+      frequency: req.body.frequency || 'MONTHLY',
+      nextDate: req.body.nextDate ? new Date(req.body.nextDate) : null,
+      notes: req.body.notes || '',
+      isExecuted: false,
+      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      totalAmount: req.body.totalAmount || req.body.amount || 0,
+      estimatedEndDate: req.body.estimatedEndDate ? new Date(req.body.estimatedEndDate) : null
+    };
+    
+    // Save to Prisma
+    const saved = await prisma.scheduled_operations.create({ data: opData });
+    
+    // Also update memory
+    state.scheduled.push(saved);
+    state.scheduledOperations.push(saved);
+    debouncedSave();
+    
+    console.log('✅ Opération programmée créée dans Prisma:', opId);
+    res.status(201).json(saved);
+  } catch (e) {
+    console.error('❌ POST /api/finance/scheduled-operations error:', e.message);
+    // Fallback: save to memory only
+    const op = { 
+      id: uid(), 
+      userId: req.user?.id || req.user?.email || 'anonymous',
+      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...req.body 
+    };
+    state.scheduled.push(op);
+    state.scheduledOperations.push(op);
+    debouncedSave();
+    res.status(201).json(op);
+  }
 });
-app.put('/api/finance/scheduled-operations/:id', requireAuth, (req, res) => {
-  state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body } : o);
-  const op = state.scheduled.find(o => o.id === req.params.id);
-  debouncedSave();
-  res.json(op);
+
+app.put('/api/finance/scheduled-operations/:id', requireAuth, async (req, res) => {
+  try {
+    const updateData = {
+      ...req.body,
+      dueDate: req.body.dueDate ? new Date(req.body.dueDate) : undefined,
+      nextDate: req.body.nextDate ? new Date(req.body.nextDate) : undefined,
+      estimatedEndDate: req.body.estimatedEndDate ? new Date(req.body.estimatedEndDate) : undefined
+    };
+    
+    // Update in Prisma
+    const updated = await prisma.scheduled_operations.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
+    
+    // Update memory state
+    state.scheduled = state.scheduled.map(o => o.id === req.params.id ? updated : o);
+    state.scheduledOperations = state.scheduledOperations.map(o => o.id === req.params.id ? updated : o);
+    debouncedSave();
+    
+    console.log('✅ Opération programmée mise à jour dans Prisma:', req.params.id);
+    res.json(updated);
+  } catch (e) {
+    console.error('❌ PUT /api/finance/scheduled-operations error:', e.message);
+    // Fallback: update in memory
+    state.scheduled = state.scheduled.map(o => o.id === req.params.id ? { ...o, ...req.body, updatedAt: new Date().toISOString() } : o);
+    const op = state.scheduled.find(o => o.id === req.params.id);
+    debouncedSave();
+    res.json(op);
+  }
 });
-app.delete('/api/finance/scheduled-operations/:id', requireAuth, (req, res) => {
-  state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
-  debouncedSave();
-  res.json({ ok: true });
+
+app.delete('/api/finance/scheduled-operations/:id', requireAuth, async (req, res) => {
+  try {
+    // Delete from Prisma
+    await prisma.scheduled_operations.delete({
+      where: { id: req.params.id }
+    });
+    
+    // Delete from memory
+    state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
+    state.scheduledOperations = state.scheduledOperations.filter(o => o.id !== req.params.id);
+    debouncedSave();
+    
+    console.log('✅ Opération programmée supprimée de Prisma:', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/finance/scheduled-operations error:', e.message);
+    // Fallback: delete from memory
+    state.scheduled = state.scheduled.filter(o => o.id !== req.params.id);
+    state.scheduledOperations = state.scheduledOperations.filter(o => o.id !== req.params.id);
+    debouncedSave();
+    res.json({ ok: true });
+  }
 });
 
 // ============================================================
