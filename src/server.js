@@ -3734,12 +3734,7 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     const saved = await prisma.finance_expense_reports.create({ data: reportData });
     
     // Also update memory
-    const report = {
-      ...reportData,
-      createdAt: saved.createdAt,
-      updatedAt: saved.updatedAt
-    };
-    state.expenseReports.unshift(report);
+    state.expenseReports.unshift(saved);
     debouncedSave();
     
     // 🔔 CREATE NOTIFICATION: new expense report created
@@ -3766,7 +3761,7 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     console.log('🔔 Notification création note de frais:', notificationMsg);
     
     console.log('✅ Note de frais créée dans Prisma:', reportId);
-    res.status(201).json({ report });
+    res.status(201).json(saved);
   } catch (e) {
     console.error('❌ POST /api/finance/expense-reports error:', e.message);
     // Fallback: save to memory only
