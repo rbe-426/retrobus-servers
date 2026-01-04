@@ -3809,19 +3809,27 @@ app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], re
       data: updateData
     });
     
-    // Update memory
-    state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...updated, updatedAt: updated.updatedAt.toISOString() } : r);
-    const report = state.expenseReports.find(r => r.id === req.params.id);
+    // Update memory - convertir les dates en ISO string
+    const reportToStore = {
+      ...updated,
+      createdAt: updated.createdAt?.toISOString?.() || updated.createdAt,
+      updatedAt: updated.updatedAt?.toISOString?.() || updated.updatedAt,
+      date: updated.date?.toISOString?.() || updated.date
+    };
+    
+    state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? reportToStore : r);
     debouncedSave();
     
-    res.json({ report });
+    console.log('✅ Expense report mis à jour:', req.params.id, '- nouveau statut:', updated.status);
+    res.json({ report: reportToStore });
   } catch (e) {
-    console.error('❌ PUT /api/finance/expense-reports error:', e.message);
+    console.error('❌ PUT /api/finance/expense-reports error:', e.message, e.code);
     // Fallback: update in memory
     const updatedData = { ...req.body, updatedAt: new Date().toISOString() };
     state.expenseReports = state.expenseReports.map(r => r.id === req.params.id ? { ...r, ...updatedData } : r);
     const report = state.expenseReports.find(r => r.id === req.params.id);
     debouncedSave();
+    console.log('⚠️ Fallback mode - expense report mis à jour en mémoire:', req.params.id);
     res.json({ report });
   }
 });
