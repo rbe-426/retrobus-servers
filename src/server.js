@@ -3839,10 +3839,10 @@ app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:
     
     // Get report before updating to notify creator
     const reportBefore = state.expenseReports.find(r => r.id === req.params.id) || 
-                         await prisma.financeExpenseReport.findUnique({ where: { id: req.params.id } });
+                         await prisma.finance_expense_reports.findUnique({ where: { id: req.params.id } });
     
     // Update in Prisma
-    const updated = await prisma.financeExpenseReport.update({
+    const updated = await prisma.finance_expense_reports.update({
       where: { id: req.params.id },
       data: { status, updatedAt: new Date() }
     });
