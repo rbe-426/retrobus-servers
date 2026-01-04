@@ -692,7 +692,7 @@ app.get(['/api/export/state', '/export/state'], async (req, res) => {
       prisma.retroNews.findMany(),
       prisma.flash.findMany(),
       prisma.financeTransaction.findMany(),
-      prisma.financeExpenseReport.findMany(),
+      prisma.finance_expense_reports.findMany(),
       prisma.document.findMany(),
       prisma.vehicleMaintenance.findMany(),
       prisma.vehicleUsage.findMany(),
@@ -3731,7 +3731,7 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     };
     
     // Save to Prisma
-    const saved = await prisma.financeExpenseReport.create({ data: reportData });
+    const saved = await prisma.finance_expense_reports.create({ data: reportData });
     
     // Also update memory
     const report = {
