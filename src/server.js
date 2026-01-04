@@ -3800,7 +3800,7 @@ app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], re
     };
     
     // Update in Prisma
-    const updated = await prisma.financeExpenseReport.update({
+    const updated = await prisma.finance_expense_reports.update({
       where: { id: req.params.id },
       data: updateData
     });

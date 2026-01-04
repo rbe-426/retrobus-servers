@@ -333,6 +333,9 @@ model finance_expense_reports {
   requestedByEmail     String?
   requestedByName      String?
   statusNotes          String?
+  attachmentUrl        String?
+  attachmentFileName   String?
+  attachmentType       String?
 
   @@index([createdAt])
   @@index([status])
