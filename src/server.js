@@ -3798,10 +3798,20 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
 });
 app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, async (req, res) => {
   try {
-    const updateData = {
-      ...req.body,
-      updatedAt: new Date()
-    };
+    // Filtrer les champs autorisés pour la mise à jour
+    const allowedFields = ['status', 'description', 'amount', 'date', 'notes', 'statusNotes', 'approvedBy', 'attachmentUrl', 'attachmentFileName', 'attachmentType'];
+    const updateData = {};
+    
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    });
+    
+    // Ajouter toujours updatedAt
+    updateData.updatedAt = new Date();
+    
+    console.log('📝 Mise à jour demandée pour:', req.params.id, '- données:', updateData);
     
     // Update in Prisma
     const updated = await prisma.finance_expense_reports.update({
