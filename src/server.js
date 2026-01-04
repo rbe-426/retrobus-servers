@@ -3734,36 +3734,45 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     const saved = await prisma.finance_expense_reports.create({ data: reportData });
     
     // Also update memory
-    state.expenseReports.unshift(saved);
+    const report = {
+      ...reportData,
+      createdAt: saved.createdAt,
+      updatedAt: saved.updatedAt
+    };
+    state.expenseReports.unshift(report);
     debouncedSave();
     
     // 🔔 CREATE NOTIFICATION: new expense report created
     // Notify admin and users with finance permissions
-    const financeUsers = state.users?.filter(u => 
-      u.role?.includes('ADMIN') || 
-      u.role?.includes('TRESORIER') || 
-      u.role?.includes('PRESIDENT') ||
-      u.permissions?.includes('finance') ||
-      u.permissions?.includes('gestion_financiere')
-    ) || [];
-    
-    const createdByName = createdBy || 'Un membre';
-    const notificationMsg = `Une nouvelle note de frais a été déposée par ${createdByName}: ${description || 'Sans description'}`;
-    const notification = {
-      id: 'n' + Date.now(),
-      type: 'expense_report_created',
-      message: notificationMsg,
-      createdAt: new Date().toISOString(),
-      read: false,
-      metadata: { expenseReportId: reportId, userId: userId, amount }
-    };
-    state.notifications.unshift(notification);
-    console.log('🔔 Notification création note de frais:', notificationMsg);
+    try {
+      const financeUsers = state.users?.filter(u => 
+        u.role?.includes('ADMIN') || 
+        u.role?.includes('TRESORIER') || 
+        u.role?.includes('PRESIDENT') ||
+        u.permissions?.includes('finance') ||
+        u.permissions?.includes('gestion_financiere')
+      ) || [];
+      
+      const createdByName = createdBy || 'Un membre';
+      const notificationMsg = `Une nouvelle note de frais a été déposée par ${createdByName}: ${description || 'Sans description'}`;
+      const notification = {
+        id: 'n' + Date.now(),
+        type: 'expense_report_created',
+        message: notificationMsg,
+        createdAt: new Date().toISOString(),
+        read: false,
+        metadata: { expenseReportId: reportId, userId: userId, amount }
+      };
+      state.notifications.unshift(notification);
+      console.log('🔔 Notification création note de frais:', notificationMsg);
+    } catch (notifErr) {
+      console.warn('⚠️ Erreur notification:', notifErr.message);
+    }
     
     console.log('✅ Note de frais créée dans Prisma:', reportId);
-    res.status(201).json(saved);
+    res.status(201).json({ report });
   } catch (e) {
-    console.error('❌ POST /api/finance/expense-reports error:', e.message);
+    console.error('❌ POST /api/finance/expense-reports PRISMA ERROR:', e.message, e.code);
     // Fallback: save to memory only
     const userId = req.user?.id || req.user?.email || 'anonymous';
     const createdBy = req.user?.name || req.user?.email || 'Anonymous';

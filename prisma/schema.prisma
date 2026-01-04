@@ -328,6 +328,7 @@ model finance_expense_reports {
   date                 DateTime @default(now())
   status               String   @default("SUBMITTED")
   createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
   approvedBy           String?
   financeTransactionId String?
   requestedByEmail     String?
@@ -336,6 +337,12 @@ model finance_expense_reports {
   attachmentUrl        String?
   attachmentFileName   String?
   attachmentType       String?
+  userId               String?
+  createdBy            String?
+  planned              Boolean  @default(false)
+  fileName             String?
+  fileUrl              String?
+  eventId              String?
 
   @@index([createdAt])
   @@index([status])
