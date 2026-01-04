@@ -521,7 +521,7 @@ const loadStateFromPrisma = async () => {
       financialDocs,
       categories
     ] = await Promise.all([
-      prisma.financeExpenseReport.findMany().catch(() => []),
+      prisma.finance_expense_reports.findMany().catch(() => []),
       prisma.finance_transactions.findMany().catch(() => []),
       prisma.finance_balances.findFirst().catch(() => null),
       prisma.Document.findMany().catch(() => []),
@@ -560,7 +560,14 @@ const loadStateFromPrisma = async () => {
       console.log(`✅ ${financialDocs.length} documents financiers chargés depuis Prisma`);
     }
     if (categories.length > 0) {
-      state.categories = [...(state.categories || []), ...categories];
+      // Remplacer complètement les catégories avec celles de la base (source de vérité)
+      state.categories = categories.map(c => ({
+        id: c.id,
+        name: c.name,
+        description: c.description || '',
+        color: c.color || '#999999',
+        type: c.type || 'BASIC'
+      }));
       console.log(`✅ ${categories.length} catégories chargées depuis Prisma`);
     }
   } catch (error) {
@@ -3658,8 +3665,20 @@ app.post('/finance/sync/memberships', requireAuth, (req, res) => {
   res.json({ synchronized: 0, ok: true });
 });
 
-app.get(['/finance/categories', '/api/finance/categories'], requireAuth, (req, res) => {
-  res.json({ categories: state.categories });
+app.get(['/finance/categories', '/api/finance/categories'], requireAuth, async (req, res) => {
+  try {
+    // Charger depuis Prisma (source de vérité)
+    const categories = await prisma.finance_categories.findMany({
+      orderBy: { name: 'asc' }
+    });
+    if (categories.length > 0) {
+      state.categories = categories;
+    }
+    res.json({ categories: state.categories });
+  } catch (e) {
+    console.warn('⚠️ Erreur chargement catégories:', e.message);
+    res.json({ categories: state.categories });
+  }
 });
 app.get(['/finance/category-breakdown', '/api/finance/category-breakdown'], requireAuth, (req, res) => {
   res.json({ period: req.query.period || 'month', breakdown: [], total: 0 });
@@ -3670,7 +3689,7 @@ app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAut
   try {
     const { eventId } = req.query;
     // Load from Prisma (source of truth)
-    let reports = await prisma.financeExpenseReport.findMany({
+    let reports = await prisma.finance_expense_reports.findMany({
       orderBy: { createdAt: 'desc' }
     });
     if (eventId) reports = reports.filter(r => r.eventId === eventId);
