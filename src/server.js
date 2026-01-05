@@ -4285,6 +4285,7 @@ app.post('/api/finance/scheduled-operations', requireAuth, async (req, res) => {
       createdBy: req.user?.name || req.user?.email || 'Anonymous',
       totalAmount: totalAmount,
       remainingTotalAmount: totalAmount,
+      paymentsCount: 0,
       estimatedEndDate: req.body.estimatedEndDate ? new Date(req.body.estimatedEndDate) : null
     };
     
