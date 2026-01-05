@@ -4213,7 +4213,7 @@ app.get('/newsletter/export', requireAuth, (req, res) => {
 
 // FINANCE API ALIASES - for frontend compatibility
 // /api/finance/balance -> /api/finance/bank-balance
-app.get('/api/finance/balance', requireAuth, (req, res) => {
+app.get('/api/finance/balance', (req, res) => {
   res.json({ balance: state.bankBalance });
 });
 
