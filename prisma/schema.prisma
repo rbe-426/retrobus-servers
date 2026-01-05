@@ -1019,3 +1019,54 @@ enum StockUnit {
   SET
   AUTRE
 }
+
+model SubventionCampaign {
+  id              String    @id @default(cuid())
+  title           String
+  organization    String
+  description     String?
+  minAmount       Float?
+  maxAmount       Float?
+  deadline        DateTime
+  status          String    @default("ACTIVE")
+  category        String?
+  requiredDocuments String? // JSON stringified array
+  criteria        String?   // JSON stringified array
+  contactEmail    String?
+  contactPhone    String?
+  websiteUrl      String?
+  notes           String?
+  createdBy       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  SubventionExpense SubventionExpense[]
+
+  @@index([status])
+  @@index([deadline])
+  @@index([organization])
+}
+
+model SubventionExpense {
+  id                String    @id @default(cuid())
+  campaignId        String
+  description       String
+  amount            Float
+  category          String    @default("OTHER")
+  date              DateTime  @default(now())
+  receipt           String?   // URL or file path to receipt
+  receiptFileName   String?
+  receiptFileSize   Int?
+  receiptMimeType   String?
+  notes             String?
+  status            String    @default("SUBMITTED") // SUBMITTED, APPROVED, REJECTED
+  approvedBy        String?
+  approvedAt        DateTime?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  campaign          SubventionCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([date])
+}

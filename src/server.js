@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
+import subventionsRouter from './subventions.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -5684,6 +5685,9 @@ app.post('/api/admin/normalize-data', requireAuth, (req, res) => {
     stats
   });
 });
+
+// ============ SUBVENTIONS ROUTER ============
+app.use('/api/subventions', subventionsRouter);
 
 // Generic error handler
 app.use((err, req, res, next) => {
