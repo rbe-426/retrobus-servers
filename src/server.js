@@ -5782,8 +5782,8 @@ app.post('/api/finance/scheduled-operations/:operationId/payments', requireAuth,
     console.log('✅ Payment recorded:', paymentId);
     res.status(201).json(payment);
   } catch (e) {
-    console.error('❌ POST payment error:', e.message);
-    res.status(500).json({ error: e.message });
+    console.error('❌ POST payment error:', e.message, e.stack);
+    res.status(500).json({ error: e.message, details: process.env.NODE_ENV === 'development' ? e.stack : undefined });
   }
 });
 
