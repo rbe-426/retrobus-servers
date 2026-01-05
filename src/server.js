@@ -5764,6 +5764,15 @@ app.post('/api/finance/scheduled-operations/:operationId/payments', requireAuth,
     const { operationId } = req.params;
     const { amount, period } = req.body;
     
+    // Verify operation exists
+    const operation = await prisma.scheduled_operations.findUnique({
+      where: { id: operationId }
+    });
+    
+    if (!operation) {
+      return res.status(404).json({ error: 'Operation not found' });
+    }
+    
     const paymentId = uid();
     const paymentData = {
       id: paymentId,
@@ -5836,11 +5845,7 @@ app.post('/api/finance/scheduled-operations/:operationId/payments', requireAuth,
       }
     }
     
-    // Update the operation's remainingTotalAmount
-    const operation = await prisma.scheduled_operations.findUnique({
-      where: { id: operationId }
-    });
-    
+    // Update the operation's remainingTotalAmount (using the operation we already fetched)
     if (operation) {
       const currentRemaining = operation.remainingTotalAmount || operation.totalAmount || 0;
       const newRemaining = Math.max(0, currentRemaining - parseFloat(amount));
