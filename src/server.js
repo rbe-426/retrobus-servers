@@ -4241,7 +4241,7 @@ app.put('/api/finance/balance', (req, res) => {
 });
 
 // /api/finance/scheduled-operations -> /finance/scheduled-expenses - PERSISTED IN PRISMA
-app.get('/api/finance/scheduled-operations', requireAuth, async (req, res) => {
+app.get('/api/finance/scheduled-operations', async (req, res) => {
   try {
     const { eventId } = req.query;
     // Load from Prisma
