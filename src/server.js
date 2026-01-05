@@ -4269,6 +4269,7 @@ app.get('/api/finance/scheduled-operations', async (req, res) => {
 app.post('/api/finance/scheduled-operations', requireAuth, async (req, res) => {
   try {
     const opId = uid();
+    const totalAmount = parseFloat(req.body.totalAmount || req.body.amount || 0);
     const opData = {
       id: opId,
       type: req.body.type || 'expense',
@@ -4282,7 +4283,8 @@ app.post('/api/finance/scheduled-operations', requireAuth, async (req, res) => {
       notes: req.body.notes || '',
       isExecuted: false,
       createdBy: req.user?.name || req.user?.email || 'Anonymous',
-      totalAmount: req.body.totalAmount || req.body.amount || 0,
+      totalAmount: totalAmount,
+      remainingTotalAmount: totalAmount,
       estimatedEndDate: req.body.estimatedEndDate ? new Date(req.body.estimatedEndDate) : null
     };
     
@@ -5707,6 +5709,139 @@ app.post('/api/admin/normalize-data', requireAuth, (req, res) => {
     timestamp: new Date().toISOString(),
     stats
   });
+});
+
+// ============ SCHEDULED OPERATIONS PAYMENTS ============
+// GET all payments for an operation
+app.get('/api/finance/scheduled-operations/:operationId/payments', async (req, res) => {
+  try {
+    const { operationId } = req.params;
+    
+    const payments = await prisma.scheduled_operation_payments.findMany({
+      where: { scheduledOperationId: operationId },
+      orderBy: { paidAt: 'desc' }
+    });
+    
+    res.json(payments || []);
+  } catch (e) {
+    console.error('❌ GET payments error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST add a payment
+app.post('/api/finance/scheduled-operations/:operationId/payments', requireAuth, async (req, res) => {
+  try {
+    const { operationId } = req.params;
+    const { amount, period } = req.body;
+    
+    const paymentId = uid();
+    const paymentData = {
+      id: paymentId,
+      scheduledOperationId: operationId,
+      period: period || new Date().toISOString().split('T')[0],
+      amount: parseFloat(amount) || 0,
+      paidAt: new Date()
+    };
+    
+    // Save payment to Prisma
+    const payment = await prisma.scheduled_operation_payments.create({
+      data: paymentData
+    });
+    
+    // Update the operation's remainingTotalAmount
+    const operation = await prisma.scheduled_operations.findUnique({
+      where: { id: operationId }
+    });
+    
+    if (operation) {
+      const currentRemaining = operation.remainingTotalAmount || operation.totalAmount || 0;
+      const newRemaining = Math.max(0, currentRemaining - parseFloat(amount));
+      
+      // Get all payments for this operation to count them
+      const allPayments = await prisma.scheduled_operation_payments.findMany({
+        where: { scheduledOperationId: operationId }
+      });
+      
+      const updatedOp = await prisma.scheduled_operations.update({
+        where: { id: operationId },
+        data: {
+          remainingTotalAmount: newRemaining,
+          paymentsCount: allPayments.length
+        }
+      });
+      
+      // Update memory state
+      const idx = state.scheduledOperations.findIndex(op => op.id === operationId);
+      if (idx >= 0) {
+        state.scheduledOperations[idx] = updatedOp;
+      }
+      debouncedSave();
+    }
+    
+    console.log('✅ Payment recorded:', paymentId);
+    res.status(201).json(payment);
+  } catch (e) {
+    console.error('❌ POST payment error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE a payment (and recalculate remaining)
+app.delete('/api/finance/scheduled-operations/:operationId/payments/:paymentId', requireAuth, async (req, res) => {
+  try {
+    const { operationId, paymentId } = req.params;
+    
+    // Get the payment to know how much to refund
+    const payment = await prisma.scheduled_operation_payments.findUnique({
+      where: { id: paymentId }
+    });
+    
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    
+    // Delete the payment
+    await prisma.scheduled_operation_payments.delete({
+      where: { id: paymentId }
+    });
+    
+    // Update operation's remainingTotalAmount by adding back the amount
+    const operation = await prisma.scheduled_operations.findUnique({
+      where: { id: operationId }
+    });
+    
+    if (operation) {
+      const currentRemaining = operation.remainingTotalAmount || 0;
+      const newRemaining = currentRemaining + payment.amount;
+      
+      // Count remaining payments
+      const allPayments = await prisma.scheduled_operation_payments.findMany({
+        where: { scheduledOperationId: operationId }
+      });
+      
+      const updatedOp = await prisma.scheduled_operations.update({
+        where: { id: operationId },
+        data: {
+          remainingTotalAmount: newRemaining,
+          paymentsCount: allPayments.length
+        }
+      });
+      
+      // Update memory state
+      const idx = state.scheduledOperations.findIndex(op => op.id === operationId);
+      if (idx >= 0) {
+        state.scheduledOperations[idx] = updatedOp;
+      }
+      debouncedSave();
+    }
+    
+    console.log('✅ Payment deleted:', paymentId);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('❌ DELETE payment error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ============ SUBVENTIONS ROUTER ============
