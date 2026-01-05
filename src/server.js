@@ -5711,6 +5711,30 @@ app.post('/api/admin/normalize-data', requireAuth, (req, res) => {
   });
 });
 
+// ============ DIAGNOSTIC ENDPOINTS ============
+// Check database schema
+app.get('/api/health/database-schema', async (req, res) => {
+  try {
+    const tables = await prisma.$queryRaw`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public'
+      ORDER BY table_name;
+    `;
+    
+    const hasPaymentsTable = tables.some(t => t.table_name === 'scheduled_operation_payments');
+    
+    res.json({
+      status: 'ok',
+      hasPaymentsTable,
+      tables: tables.map(t => t.table_name)
+    });
+  } catch (e) {
+    console.error('❌ Database schema error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ============ SCHEDULED OPERATIONS PAYMENTS ============
 // GET all payments for an operation
 app.get('/api/finance/scheduled-operations/:operationId/payments', async (req, res) => {
@@ -5724,8 +5748,12 @@ app.get('/api/finance/scheduled-operations/:operationId/payments', async (req, r
     
     res.json(payments || []);
   } catch (e) {
-    console.error('❌ GET payments error:', e.message);
-    res.status(500).json({ error: e.message });
+    console.error('❌ GET payments error:', e.message, e.code);
+    // Si c'est une erreur de table inexistante, retourner un tableau vide
+    if (e.code === 'P1017' || e.message.includes('does not exist')) {
+      return res.json([]);
+    }
+    res.status(500).json({ error: e.message, code: e.code });
   }
 });
 
