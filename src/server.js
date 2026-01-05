@@ -5773,9 +5773,67 @@ app.post('/api/finance/scheduled-operations/:operationId/payments', requireAuth,
     };
     
     // Save payment to Prisma
-    const payment = await prisma.scheduled_operation_payments.create({
-      data: paymentData
-    });
+    let payment;
+    try {
+      payment = await prisma.scheduled_operation_payments.create({
+        data: paymentData
+      });
+    } catch (createError) {
+      // Si c'est une erreur de table inexistante, créer la table
+      if (createError.code === 'P1017' || createError.message.includes('does not exist')) {
+        console.log('⚠️ Table scheduled_operation_payments does not exist, creating...');
+        
+        // Create table
+        await prisma.$executeRawUnsafe(`
+          CREATE TABLE IF NOT EXISTS "scheduled_operation_payments" (
+            "id" TEXT NOT NULL PRIMARY KEY,
+            "scheduledOperationId" TEXT NOT NULL,
+            "period" TEXT NOT NULL,
+            "amount" DOUBLE PRECISION NOT NULL,
+            "paidAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "fileName" TEXT,
+            "mimeType" TEXT,
+            "size" INTEGER,
+            "attachmentDataUrl" TEXT
+          );
+        `);
+        
+        // Create indexes
+        try {
+          await prisma.$executeRawUnsafe(`
+            CREATE INDEX IF NOT EXISTS "scheduled_operation_payments_paidAt_idx" ON "scheduled_operation_payments"("paidAt");
+          `);
+          await prisma.$executeRawUnsafe(`
+            CREATE INDEX IF NOT EXISTS "scheduled_operation_payments_period_idx" ON "scheduled_operation_payments"("period");
+          `);
+          await prisma.$executeRawUnsafe(`
+            CREATE INDEX IF NOT EXISTS "scheduled_operation_payments_scheduledOperationId_idx" ON "scheduled_operation_payments"("scheduledOperationId");
+          `);
+        } catch (indexError) {
+          console.log('ℹ️ Indexes might already exist');
+        }
+        
+        // Add foreign key
+        try {
+          await prisma.$executeRawUnsafe(`
+            ALTER TABLE "scheduled_operation_payments" 
+            ADD CONSTRAINT "scheduled_operation_payments_scheduledOperationId_fkey" 
+            FOREIGN KEY ("scheduledOperationId") REFERENCES "scheduled_operations"("id") ON DELETE CASCADE;
+          `);
+        } catch (fkError) {
+          console.log('ℹ️ Foreign key might already exist');
+        }
+        
+        console.log('✅ Table created successfully');
+        
+        // Retry creation
+        payment = await prisma.scheduled_operation_payments.create({
+          data: paymentData
+        });
+      } else {
+        throw createError;
+      }
+    }
     
     // Update the operation's remainingTotalAmount
     const operation = await prisma.scheduled_operations.findUnique({
@@ -5810,8 +5868,8 @@ app.post('/api/finance/scheduled-operations/:operationId/payments', requireAuth,
     console.log('✅ Payment recorded:', paymentId);
     res.status(201).json(payment);
   } catch (e) {
-    console.error('❌ POST payment error:', e.message, e.stack);
-    res.status(500).json({ error: e.message, details: process.env.NODE_ENV === 'development' ? e.stack : undefined });
+    console.error('❌ POST payment error:', { message: e.message, code: e.code, stack: e.stack });
+    res.status(500).json({ error: e.message, code: e.code, details: process.env.NODE_ENV === 'development' ? e.stack : undefined });
   }
 });
 
