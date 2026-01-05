@@ -4217,6 +4217,29 @@ app.get('/api/finance/balance', (req, res) => {
   res.json({ balance: state.bankBalance });
 });
 
+// PUT /api/finance/balance - Update balance
+app.put('/api/finance/balance', (req, res) => {
+  try {
+    const { balance, reason } = req.body;
+    
+    if (typeof balance !== 'number' || balance < 0) {
+      return res.status(400).json({ error: 'Montant invalide' });
+    }
+
+    state.bankBalance = parseFloat(balance);
+    console.log(`✅ Solde mis à jour: ${balance} (raison: ${reason || 'non spécifiée'})`);
+    
+    res.json({ 
+      success: true,
+      newBalance: state.bankBalance,
+      message: 'Solde mis à jour avec succès'
+    });
+  } catch (error) {
+    console.error('❌ Erreur PUT /api/finance/balance:', error);
+    res.status(500).json({ error: 'Erreur mise à jour solde' });
+  }
+});
+
 // /api/finance/scheduled-operations -> /finance/scheduled-expenses - PERSISTED IN PRISMA
 app.get('/api/finance/scheduled-operations', requireAuth, async (req, res) => {
   try {
