@@ -69,6 +69,8 @@ model Event {
   status            EventStatus         @default(DRAFT)
   layout            String?
   extras            String?
+  maxParticipants   Int?                @default(999) // null = illimité, 0 = fermé
+  currentParticipants Int               @default(0)
   createdAt         DateTime            @default(now())
   updatedAt         DateTime
   Vehicle           Vehicle?            @relation(fields: [vehicleId], references: [parc])
@@ -633,6 +635,34 @@ model Participant {
 
   @@index([eventId])
   @@index([email])
+}
+
+model Registration {
+  id                    String   @id @default(cuid())
+  eventId               String
+  participantName       String
+  participantEmail      String
+  adultTickets          Int      @default(1)
+  childTickets          Int      @default(0)
+  paymentMethod         String   @default("internal") // internal, helloasso, free
+  registrationStatus    String   @default("pending") // pending, validated, cancelled
+  ticketSent            Boolean  @default(false)
+  validationCode        String?  @unique
+  // Champs spécifiques au défilé de véhicules anciens
+  vehicleModel          String?
+  vehicleYear           String?
+  vehicleName           String?
+  isClubMember          Boolean  @default(false)
+  clubName              String?
+  // Autres données
+  notes                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([eventId])
+  @@index([participantEmail])
+  @@index([paymentMethod])
+  @@index([registrationStatus])
 }
 
 model Route {

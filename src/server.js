@@ -201,7 +201,7 @@ const calculateNextDate = (currentDate, frequency) => {
   return date;
 };
 
-const prismaEventFieldAllowList = new Set(['title', 'description', 'date', 'time', 'location', 'helloAssoUrl', 'adultPrice', 'childPrice', 'status', 'vehicleId', 'extras']);
+const prismaEventFieldAllowList = new Set(['title', 'description', 'date', 'time', 'location', 'helloAssoUrl', 'adultPrice', 'childPrice', 'status', 'vehicleId', 'extras', 'maxParticipants']);
 
 const buildPrismaEventUpdateData = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return {};
@@ -944,7 +944,180 @@ app.get('/public/events/:id', async (req, res) => {
   }
 });
 
+// ============================================
+// PUBLIC REGISTRATION ENDPOINTS
+// ============================================
+
+// POST /registrations - Créer une inscription publique
+app.post('/registrations', async (req, res) => {
+  try {
+    const {
+      eventId,
+      participantName,
+      participantEmail,
+      adultTickets = 1,
+      childTickets = 0,
+      paymentMethod = 'internal',
+      vehicleModel,
+      vehicleYear,
+      vehicleName,
+      isClubMember = false,
+      clubName
+    } = req.body;
+
+    // Validation
+    if (!eventId || !participantName || !participantEmail) {
+      return res.status(400).json({ error: 'Missing required fields: eventId, participantName, participantEmail' });
+    }
+
+    if (adultTickets + childTickets === 0) {
+      return res.status(400).json({ error: 'At least one ticket must be selected' });
+    }
+
+    // Vérifier que l'événement existe et est publié
+    const event = await prisma.event.findFirst({
+      where: { id: eventId, status: 'PUBLISHED' }
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found or not available for registration' });
+    }
+
+    // Vérifier les places disponibles
+    const totalTickets = adultTickets + childTickets;
+    if (event.maxParticipants && event.currentParticipants + totalTickets > event.maxParticipants) {
+      return res.status(409).json({ 
+        error: 'Not enough places available',
+        details: {
+          requested: totalTickets,
+          available: Math.max(0, event.maxParticipants - event.currentParticipants),
+          total: event.maxParticipants,
+          current: event.currentParticipants
+        }
+      });
+    }
+
+    // Parser extras pour vérifier la méthode d'inscription
+    let eventExtras = {};
+    try {
+      eventExtras = event.extras ? JSON.parse(event.extras) : {};
+    } catch (e) {
+      console.warn('⚠️ Failed to parse event extras:', e.message);
+    }
+
+    const allowedMethod = eventExtras.registrationMethod || 'internal';
+    
+    // Si la méthode demandée n'est pas celle configurée, on ajuste
+    const actualPaymentMethod = paymentMethod === 'helloasso' && allowedMethod === 'helloasso'
+      ? 'helloasso'
+      : (paymentMethod === 'free' || eventExtras.isFree)
+        ? 'free'
+        : 'internal';
+
+    // Générer un code de validation unique
+    const validationCode = `RBE-${Date.now()}-${Math.random().toString(36).slice(2, 9).toUpperCase()}`;
+
+    // Créer l'enregistrement d'inscription
+    const registration = await prisma.registration.create({
+      data: {
+        eventId,
+        participantName,
+        participantEmail,
+        adultTickets: Math.max(0, adultTickets),
+        childTickets: Math.max(0, childTickets),
+        paymentMethod: actualPaymentMethod,
+        registrationStatus: 'pending',
+        validationCode,
+        vehicleModel,
+        vehicleYear,
+        vehicleName,
+        isClubMember,
+        clubName
+      }
+    });
+
+    // Incrémenter le compteur de participants
+    await prisma.event.update({
+      where: { id: eventId },
+      data: { currentParticipants: { increment: totalTickets } }
+    });
+
+    console.log('✅ Registration created:', registration.id);
+
+    // Réponse basée sur la méthode de paiement
+    const response = {
+      registrationId: registration.id,
+      validationCode: registration.validationCode,
+      status: 'pending',
+      paymentMethod: actualPaymentMethod
+    };
+
+    // Si HelloAsso, ajouter l'URL HelloAsso depuis les données d'événement
+    if (actualPaymentMethod === 'helloasso' && eventExtras.helloAssoUrl) {
+      response.helloAssoUrl = eventExtras.helloAssoUrl;
+    }
+
+    res.status(201).json(response);
+  } catch (e) {
+    console.error('❌ POST /registrations error:', e.message);
+    res.status(500).json({ error: 'Failed to create registration', details: e.message });
+  }
+});
+
+// GET /registrations/:id/status - Vérifier le statut d'une inscription
+app.get('/registrations/:id/status', async (req, res) => {
+  try {
+    const registration = await prisma.registration.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!registration) {
+      return res.status(404).json({ error: 'Registration not found' });
+    }
+
+    res.json({
+      id: registration.id,
+      status: registration.registrationStatus,
+      ticketSent: registration.ticketSent,
+      validationCode: registration.validationCode,
+      participantEmail: registration.participantEmail
+    });
+  } catch (e) {
+    console.error('❌ GET /registrations/:id/status error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch registration status', details: e.message });
+  }
+});
+
+// GET /public/events/:id/availability - Vérifier la disponibilité de places
+app.get('/public/events/:id/availability', async (req, res) => {
+  try {
+    const event = await prisma.event.findUnique({
+      where: { id: req.params.id },
+      select: { maxParticipants: true, currentParticipants: true }
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    const available = event.maxParticipants 
+      ? Math.max(0, event.maxParticipants - event.currentParticipants)
+      : null; // null = illimité
+
+    res.json({
+      maxParticipants: event.maxParticipants,
+      currentParticipants: event.currentParticipants,
+      availablePlaces: available,
+      isFull: available === 0
+    });
+  } catch (e) {
+    console.error('❌ GET /public/events/:id/availability error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch event availability', details: e.message });
+  }
+});
+
 // Public vehicles endpoint - avec fallback en mémoire
+
 // Normalize vehicle data by extracting caracteristiques from JSON
 const normalizeVehicleWithCaracteristiques = (vehicle) => {
   if (!vehicle) return vehicle;
@@ -2893,7 +3066,9 @@ app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
       childPrice: req.body.childPrice ? parseFloat(req.body.childPrice) : null,
       status: req.body.status || 'DRAFT',
       updatedAt: new Date(),
-      vehicleId: req.body.vehicleId || null
+      vehicleId: req.body.vehicleId || null,
+      maxParticipants: req.body.maxParticipants ? parseInt(req.body.maxParticipants) : null,
+      currentParticipants: 0
     };
 
     if (Object.prototype.hasOwnProperty.call(req.body || {}, 'extras')) {
