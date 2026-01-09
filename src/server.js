@@ -201,7 +201,7 @@ const calculateNextDate = (currentDate, frequency) => {
   return date;
 };
 
-const prismaEventFieldAllowList = new Set(['title', 'description', 'date', 'time', 'location', 'helloAssoUrl', 'adultPrice', 'childPrice', 'status', 'vehicleId', 'extras', 'maxParticipants']);
+const prismaEventFieldAllowList = new Set(['title', 'description', 'date', 'time', 'location', 'helloAssoUrl', 'adultPrice', 'childPrice', 'status', 'vehicleId', 'extras', 'currentParticipants']);
 
 const buildPrismaEventUpdateData = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return {};
