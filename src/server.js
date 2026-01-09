@@ -3158,7 +3158,9 @@ app.post(['/events', '/api/events'], requireAuth, async (req, res) => {
 
 app.put(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
   try {
+    console.log('🔧 PUT /events/:id - req.body:', JSON.stringify(req.body, null, 2));
     const prismaData = buildPrismaEventUpdateData(req.body || {});
+    console.log('🔧 prismaData:', JSON.stringify(prismaData, null, 2));
     
     if (Object.keys(prismaData).length === 0) {
       return res.status(400).json({ error: 'No valid fields to update' });
@@ -3172,6 +3174,7 @@ app.put(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
     res.json({ event, source: 'prisma' });
   } catch (e) {
     console.error('❌ PUT /events/:id error:', e.message);
+    console.error('❌ Stack:', e.stack);
     if (e?.code === 'P2025') {
       return res.status(404).json({ error: 'Event not found' });
     }
