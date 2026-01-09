@@ -1206,6 +1206,75 @@ app.get('/public/vehicles/:id/events', async (req, res) => {
   }
 });
 
+// ✅ Endpoint public pour enregistrer un participant après paiement HelloAsso
+app.post(['/public/events/:id/join-helloasso', '/api/public/events/:id/join-helloasso'], async (req, res) => {
+  try {
+    const { email, name, phone } = req.body;
+    const eventId = req.params.id;
+
+    // Validation des données minimales
+    if (!email || !name) {
+      return res.status(400).json({ 
+        error: 'Email et nom requis',
+        details: 'name and email are required'
+      });
+    }
+
+    // Vérifier que l'événement existe
+    const event = await prisma.event.findUnique({
+      where: { id: eventId }
+    });
+
+    if (!event) {
+      return res.status(404).json({ 
+        error: 'Événement non trouvé'
+      });
+    }
+
+    // Vérifier si le participant existe déjà (éviter les doublons)
+    const existingParticipant = await prisma.participant.findFirst({
+      where: {
+        eventId: eventId,
+        email: email.toLowerCase()
+      }
+    });
+
+    if (existingParticipant) {
+      console.log(`ℹ️ Participant déjà inscrit: ${email}`);
+      return res.status(200).json({ 
+        participant: existingParticipant,
+        message: 'Participant déjà inscrit'
+      });
+    }
+
+    // Créer le participant
+    const participant = await prisma.participant.create({
+      data: {
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        phone: phone ? phone.trim() : null,
+        eventId: eventId,
+        status: 'REGISTERED',
+        paidAmount: 0,
+        registrationDate: new Date()
+      }
+    });
+
+    console.log(`✅ Participant inscrit via HelloAsso: ${participant.email} pour l'événement ${eventId}`);
+
+    res.status(201).json({ 
+      participant,
+      message: 'Inscription confirmée'
+    });
+  } catch (e) {
+    console.error('❌ POST /public/events/:id/join-helloasso error:', e.message);
+    res.status(500).json({ 
+      error: 'Erreur lors de l\'inscription',
+      details: e.message 
+    });
+  }
+});
+
 // ⛔ ENDPOINT DÉPLACÉ - Voir ligne ~1443 pour version avec fallback mémoire
 // app.get(['/events','/api/events'], requireAuth, async (req, res) => {
 //   try {
