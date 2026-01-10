@@ -291,11 +291,11 @@ const coerceVehicleValue = (key, value) => {
     if (typeof value === 'string') return value.toLowerCase() === 'true';
     return Boolean(value);
   }
-  if (key === 'caracteristiques' && typeof value === 'object') {
+  if ((key === 'caracteristiques' || key === 'gallery') && typeof value === 'object' && Array.isArray(value)) {
     try {
       return JSON.stringify(value);
     } catch (error) {
-      console.warn('⚠️  Impossible de sérialiser caracteristiques:', error.message);
+      console.warn(`⚠️  Impossible de sérialiser ${key}:`, error.message);
       return null;
     }
   }
@@ -3181,53 +3181,6 @@ app.get(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res
   } catch (e) {
     console.error('❌ GET /vehicles/:parc error:', e.message);
     res.status(500).json({ error: 'Failed to fetch vehicle', details: e.message });
-  }
-});
-
-app.put(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res) => {
-  try {
-    const parc = req.params.parc;
-    
-    // Find vehicle by parc or id
-    const idCandidate = Number(parc);
-    const filters = [{ parc }];
-    if (!Number.isNaN(idCandidate)) {
-      filters.push({ id: idCandidate });
-    }
-    
-    const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
-    if (!existing) {
-      return res.status(404).json({ error: 'Vehicle not found' });
-    }
-    
-    // Normalize arrays to Prisma text fields
-    const updatePayload = { ...req.body };
-    if (Array.isArray(updatePayload.gallery)) updatePayload.gallery = JSON.stringify(updatePayload.gallery);
-    if (Array.isArray(updatePayload.caracteristiques)) updatePayload.caracteristiques = JSON.stringify(updatePayload.caracteristiques);
-
-    // Update vehicle in Prisma
-    const updated = await prisma.vehicle.update({
-      where: { id: existing.id },
-      data: {
-        ...updatePayload,
-        miseEnCirculation: req.body.miseEnCirculation ? new Date(req.body.miseEnCirculation) : undefined,
-        fuel: req.body.fuel ? parseFloat(req.body.fuel) : undefined,
-        mileage: req.body.mileage ? parseFloat(req.body.mileage) : undefined,
-        updatedAt: new Date()
-      }
-    });
-    
-    // Also update in state
-    const stateIdx = state.vehicles.findIndex(v => v.id === existing.id);
-    if (stateIdx !== -1) state.vehicles[stateIdx] = updated;
-    debouncedSave();
-    
-    const normalized = normalizeVehicleWithCaracteristiques(updated);
-    console.log(`✅ Vehicle ${parc} mis à jour`);
-    res.json({ vehicle: normalized });
-  } catch (e) {
-    console.error('❌ PUT /vehicles/:parc error:', e.message);
-    res.status(500).json({ error: 'Failed to update vehicle', details: e.message });
   }
 });
 
