@@ -1724,10 +1724,149 @@ app.get(['/vehicles/:parc/maintenance-summary','/api/vehicles/:parc/maintenance-
   }
 });
 
-// Gallery / background placeholders
-app.get(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, (req, res) => {
-  res.json([]);
+// Gallery (upload + delete)
+const galleryStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    try {
+      const parc = String(req.params.parc || 'unknown');
+      const dirPath = path.join(pathRoot, 'uploads', 'vehicles', parc, 'gallery');
+      ensureDirectoryExists(dirPath);
+      cb(null, dirPath);
+    } catch (e) {
+      cb(e);
+    }
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    cb(null, `${uid()}${ext}`);
+  }
 });
+
+const galleryUpload = multer({
+  storage: galleryStorage,
+  limits: {
+    fileSize: 8 * 1024 * 1024,
+    files: 12
+  }
+});
+
+const parseGalleryValue = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+app.get(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, async (req, res) => {
+  try {
+    const parc = String(req.params.parc);
+    const idCandidate = Number(parc);
+    const filters = [{ parc }];
+    if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
+    const vehicle = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json({ gallery: parseGalleryValue(vehicle.gallery) });
+  } catch (e) {
+    console.error('❌ GET /vehicles/:parc/gallery error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch gallery' });
+  }
+});
+
+app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, galleryUpload.array('images', 12), async (req, res) => {
+  try {
+    const parc = String(req.params.parc);
+    const idCandidate = Number(parc);
+    const filters = [{ parc }];
+    if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
+    const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!existing) return res.status(404).json({ error: 'Vehicle not found' });
+
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded (field: images)' });
+    }
+
+    const baseGallery = parseGalleryValue(existing.gallery);
+    const newItems = files.map((f) => {
+      const publicPath = `/uploads/vehicles/${existing.parc}/gallery/${path.basename(f.path)}`;
+      return publicPath;
+    });
+    const nextGallery = [...baseGallery, ...newItems];
+
+    await prisma.vehicle.update({
+      where: { id: existing.id },
+      data: {
+        gallery: JSON.stringify(nextGallery),
+        updatedAt: new Date()
+      }
+    });
+
+    // Keep in-memory mirror in sync
+    const stateIdx = state.vehicles.findIndex(v => v.id === existing.id);
+    if (stateIdx !== -1) {
+      state.vehicles[stateIdx] = { ...state.vehicles[stateIdx], gallery: JSON.stringify(nextGallery), updatedAt: new Date() };
+      debouncedSave();
+    }
+
+    res.status(201).json({ gallery: nextGallery });
+  } catch (e) {
+    console.error('❌ POST /vehicles/:parc/gallery error:', e.message);
+    res.status(500).json({ error: 'Failed to upload images' });
+  }
+});
+
+app.delete(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, async (req, res) => {
+  try {
+    const parc = String(req.params.parc);
+    const { image } = req.body || {};
+    if (!image) return res.status(400).json({ error: 'Missing image' });
+
+    const idCandidate = Number(parc);
+    const filters = [{ parc }];
+    if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
+    const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!existing) return res.status(404).json({ error: 'Vehicle not found' });
+
+    const baseGallery = parseGalleryValue(existing.gallery);
+    const nextGallery = baseGallery.filter((p) => p !== image);
+
+    await prisma.vehicle.update({
+      where: { id: existing.id },
+      data: {
+        gallery: JSON.stringify(nextGallery),
+        updatedAt: new Date()
+      }
+    });
+
+    // Best-effort delete local file if under /uploads
+    try {
+      if (typeof image === 'string' && image.startsWith('/uploads/')) {
+        const rel = image.replace(/^\/uploads\//, '');
+        const diskPath = path.join(pathRoot, 'uploads', rel);
+        if (fs.existsSync(diskPath)) fs.unlinkSync(diskPath);
+      }
+    } catch {}
+
+    const stateIdx = state.vehicles.findIndex(v => v.id === existing.id);
+    if (stateIdx !== -1) {
+      state.vehicles[stateIdx] = { ...state.vehicles[stateIdx], gallery: JSON.stringify(nextGallery), updatedAt: new Date() };
+      debouncedSave();
+    }
+
+    res.json({ gallery: nextGallery });
+  } catch (e) {
+    console.error('❌ DELETE /vehicles/:parc/gallery error:', e.message);
+    res.status(500).json({ error: 'Failed to delete image' });
+  }
+});
+
 app.get(['/vehicles/:parc/background','/api/vehicles/:parc/background'], requireAuth, (req, res) => {
   res.json({ background: null });
 });
@@ -3061,11 +3200,16 @@ app.put(['/vehicles/:parc', '/api/vehicles/:parc'], requireAuth, async (req, res
       return res.status(404).json({ error: 'Vehicle not found' });
     }
     
+    // Normalize arrays to Prisma text fields
+    const updatePayload = { ...req.body };
+    if (Array.isArray(updatePayload.gallery)) updatePayload.gallery = JSON.stringify(updatePayload.gallery);
+    if (Array.isArray(updatePayload.caracteristiques)) updatePayload.caracteristiques = JSON.stringify(updatePayload.caracteristiques);
+
     // Update vehicle in Prisma
     const updated = await prisma.vehicle.update({
       where: { id: existing.id },
       data: {
-        ...req.body,
+        ...updatePayload,
         miseEnCirculation: req.body.miseEnCirculation ? new Date(req.body.miseEnCirculation) : undefined,
         fuel: req.body.fuel ? parseFloat(req.body.fuel) : undefined,
         mileage: req.body.mileage ? parseFloat(req.body.mileage) : undefined,
