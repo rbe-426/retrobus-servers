@@ -1124,6 +1124,19 @@ const normalizeVehicleWithCaracteristiques = (vehicle) => {
   
   const normalized = { ...vehicle };
   
+  // Parse gallery JSON if it exists
+  if (vehicle.gallery && typeof vehicle.gallery === 'string') {
+    try {
+      const gallery = JSON.parse(vehicle.gallery);
+      if (Array.isArray(gallery)) {
+        normalized.gallery = gallery;
+      }
+    } catch (e) {
+      console.warn('⚠️ Failed to parse gallery for vehicle', vehicle.parc);
+      normalized.gallery = [];
+    }
+  }
+  
   // Parse caracteristiques JSON if it exists
   if (vehicle.caracteristiques && typeof vehicle.caracteristiques === 'string') {
     try {
@@ -1800,7 +1813,7 @@ app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth,
     });
     const nextGallery = [...baseGallery, ...newItems];
 
-    await prisma.vehicle.update({
+    const updated = await prisma.vehicle.update({
       where: { id: existing.id },
       data: {
         gallery: JSON.stringify(nextGallery),
@@ -1815,6 +1828,7 @@ app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth,
       debouncedSave();
     }
 
+    console.log(`✅ Gallery uploaded for vehicle ${parc}: ${newItems.length} files added, total: ${nextGallery.length}`);
     res.status(201).json({ gallery: nextGallery });
   } catch (e) {
     console.error('❌ POST /vehicles/:parc/gallery error:', e.message);
