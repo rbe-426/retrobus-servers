@@ -1378,53 +1378,63 @@ app.post('/public/contact', async (req, res) => {
     // Envoyer les emails
     if (transporter) {
       try {
+        // Envoyer les emails EN ARRIÈRE-PLAN (non-bloquant)
+        // Répondre immédiatement au client
+        
         // Email à l'association
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER || 'association.rbe@gmail.com',
-          to: 'association.rbe@gmail.com',
-          subject: `[Contact Form] ${subject}`,
-          html: `
-            <h2>Nouveau message de contact</h2>
-            <p><strong>Nom:</strong> ${name}</p>
-            <p><strong>Email:</strong> ${email}</p>
-            <p><strong>Sujet:</strong> ${subject}</p>
-            <hr>
-            <p><strong>Message:</strong></p>
-            <p>${message.replace(/\n/g, '<br>')}</p>
-            <hr>
-            <p style="color: gray; font-size: 12px;">
-              IP: ${req.ip || req.connection.remoteAddress}<br>
-              Reçu le: ${new Date().toLocaleString('fr-FR')}
-            </p>
-          `,
-          replyTo: email
-        });
-        console.log('✅ Email envoyé à l\'association');
+        if (transporter) {
+          transporter.sendMail({
+            from: process.env.EMAIL_USER || 'association.rbe@gmail.com',
+            to: 'association.rbe@gmail.com',
+            subject: `[Contact Form] ${subject}`,
+            html: `
+              <h2>Nouveau message de contact</h2>
+              <p><strong>Nom:</strong> ${name}</p>
+              <p><strong>Email:</strong> ${email}</p>
+              <p><strong>Sujet:</strong> ${subject}</p>
+              <hr>
+              <p><strong>Message:</strong></p>
+              <p>${message.replace(/\n/g, '<br>')}</p>
+              <hr>
+              <p style="color: gray; font-size: 12px;">
+                IP: ${req.ip || req.connection.remoteAddress}<br>
+                Reçu le: ${new Date().toLocaleString('fr-FR')}
+              </p>
+            `,
+            replyTo: email
+          }).then(() => {
+            console.log('✅ Email envoyé à l\'association');
+          }).catch(err => {
+            console.warn('⚠️  Erreur envoi email association:', err.message);
+          });
 
-        // Email de confirmation à l'expéditeur
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER || 'association.rbe@gmail.com',
-          to: email,
-          subject: 'Confirmation de votre message - RétroBus Essonne',
-          html: `
-            <h2>Merci pour votre message</h2>
-            <p>Bonjour ${name},</p>
-            <p>Nous avons bien reçu votre message du <strong>${new Date().toLocaleString('fr-FR')}</strong>.</p>
-            <p>L'association RétroBus Essonne vous répondra dès que possible.</p>
-            <hr>
-            <p><strong>Récapitulatif de votre message:</strong></p>
-            <p><strong>Sujet:</strong> ${subject}</p>
-            <p>${message.replace(/\n/g, '<br>')}</p>
-            <hr>
-            <p>Cordialement,<br>L'équipe RétroBus Essonne<br>
-            <a href="https://association-rbe.fr">association-rbe.fr</a><br>
-            <a href="mailto:association.rbe@gmail.com">association.rbe@gmail.com</a></p>
-          `
-        });
-        console.log('✅ Email de confirmation envoyé à', email);
+          // Email de confirmation à l'expéditeur
+          transporter.sendMail({
+            from: process.env.EMAIL_USER || 'association.rbe@gmail.com',
+            to: email,
+            subject: 'Confirmation de votre message - RétroBus Essonne',
+            html: `
+              <h2>Merci pour votre message</h2>
+              <p>Bonjour ${name},</p>
+              <p>Nous avons bien reçu votre message du <strong>${new Date().toLocaleString('fr-FR')}</strong>.</p>
+              <p>L'association RétroBus Essonne vous répondra dès que possible.</p>
+              <hr>
+              <p><strong>Récapitulatif de votre message:</strong></p>
+              <p><strong>Sujet:</strong> ${subject}</p>
+              <p>${message.replace(/\n/g, '<br>')}</p>
+              <hr>
+              <p>Cordialement,<br>L'équipe RétroBus Essonne<br>
+              <a href="https://association-rbe.fr">association-rbe.fr</a><br>
+              <a href="mailto:association.rbe@gmail.com">association.rbe@gmail.com</a></p>
+            `
+          }).then(() => {
+            console.log('✅ Email de confirmation envoyé à', email);
+          }).catch(err => {
+            console.warn('⚠️  Erreur envoi email confirmation:', err.message);
+          });
+        }
       } catch (emailError) {
-        console.warn('⚠️  Erreur envoi email:', emailError.message);
-        // L'email n'est pas critique, on continue quand même
+        console.warn('⚠️  Erreur préparation emails:', emailError.message);
       }
     } else {
       console.warn('⚠️  Transporter email non configuré - message enregistré mais email non envoyé');
