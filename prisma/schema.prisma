@@ -1116,3 +1116,70 @@ model ContactMessage {
   @@index([email])
   @@index([createdAt])
 }
+
+// ============================================================================
+// RETROMERCH - Boutique en ligne
+// ============================================================================
+
+model retromerch_categories {
+  id        String                    @id @default(cuid())
+  name      String                    @unique @db.VarChar(255)
+  description String?                 @db.Text
+  createdAt DateTime                  @default(now())
+  updatedAt DateTime                  @updatedAt
+  products  retromerch_products[]
+
+  @@index([name])
+}
+
+model retromerch_products {
+  id          String                  @id @default(cuid())
+  name        String                  @db.VarChar(255)
+  description String?                 @db.Text
+  price       Float                   @default(0)
+  stock       Int                     @default(0)
+  image       String?                 @db.VarChar(500)
+  active      Boolean                 @default(true)
+  categoryId  String?
+  category    retromerch_categories?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  orderItems  retromerch_order_items[]
+
+  @@index([categoryId])
+  @@index([active])
+  @@index([createdAt])
+}
+
+model retromerch_orders {
+  id              String                    @id @default(cuid())
+  customerName    String                    @db.VarChar(255)
+  customerEmail   String?                   @db.VarChar(255)
+  customerPhone   String?                   @db.VarChar(20)
+  shippingAddress String?                   @db.Text
+  totalAmount     Float                     @default(0)
+  status          String                    @default("PENDING")  // PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED
+  notes           String?                   @db.Text
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  items           retromerch_order_items[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([customerEmail])
+}
+
+model retromerch_order_items {
+  id          String                  @id @default(cuid())
+  orderId     String
+  order       retromerch_orders       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     retromerch_products     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity    Int                     @default(1)
+  unitPrice   Float                   @default(0)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  @@index([orderId])
+  @@index([productId])
+}

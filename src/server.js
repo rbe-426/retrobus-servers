@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
 import nodemailer from 'nodemailer';
 import subventionsRouter from './subventions.mjs';
+import retromerchRouter from './retromerch.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -6464,6 +6465,9 @@ app.delete('/api/finance/scheduled-operations/:operationId/payments/:paymentId',
 
 // ============ SUBVENTIONS ROUTER ============
 app.use('/api/subventions', subventionsRouter);
+
+// ============ RETROMERCH ROUTER ============
+app.use('/api/retromerch', retromerchRouter);
 
 // Generic error handler
 app.use((err, req, res, next) => {
