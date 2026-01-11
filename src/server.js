@@ -6467,7 +6467,7 @@ app.delete('/api/finance/scheduled-operations/:operationId/payments/:paymentId',
 app.use('/api/subventions', subventionsRouter);
 
 // ============ RETROMERCH ROUTER ============
-app.use('/api/retromerch', retromerchRouter);
+app.use('/api/retromerch', retromerchRouter(prisma));
 
 // Generic error handler
 app.use((err, req, res, next) => {
