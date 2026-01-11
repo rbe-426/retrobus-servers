@@ -1288,6 +1288,73 @@ app.post(['/public/events/:id/join-helloasso', '/api/public/events/:id/join-hell
   }
 });
 
+// POST /public/contact - Formulaire de contact externe
+app.post('/public/contact', async (req, res) => {
+  try {
+    const { name, email, subject, message } = req.body;
+
+    // Validation
+    if (!name || !email || !subject || !message) {
+      return res.status(400).json({ 
+        error: 'Tous les champs sont requis (name, email, subject, message)' 
+      });
+    }
+
+    if (!email.includes('@')) {
+      return res.status(400).json({ 
+        error: 'Email invalide' 
+      });
+    }
+
+    console.log('📧 Message de contact reçu:', { name, email, subject });
+
+    // Sauvegarder en base de données pour archivage
+    try {
+      await prisma.contactMessage.create({
+        data: {
+          name,
+          email,
+          subject,
+          message,
+          ip: req.ip || req.connection.remoteAddress,
+          userAgent: req.get('user-agent') || ''
+        }
+      });
+    } catch (dbError) {
+      // Table doesn't exist yet, log to memory
+      if (!state.contactMessages) {
+        state.contactMessages = [];
+      }
+      state.contactMessages.push({
+        id: uid(),
+        name,
+        email,
+        subject,
+        message,
+        ip: req.ip || req.connection.remoteAddress,
+        userAgent: req.get('user-agent') || '',
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    // Envoyer un email de notification à l'association
+    // (intégration email à faire)
+    console.log('✅ Message de contact enregistré avec succès');
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Message envoyé avec succès. Nous vous répondrons bientôt !',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ POST /public/contact error:', error.message);
+    res.status(500).json({ 
+      error: 'Erreur lors de l\'envoi du message',
+      details: error.message 
+    });
+  }
+});
+
 // ⛔ ENDPOINT DÉPLACÉ - Voir ligne ~1443 pour version avec fallback mémoire
 // app.get(['/events','/api/events'], requireAuth, async (req, res) => {
 //   try {
@@ -6384,6 +6451,7 @@ app.listen(PORT, async () => {
   console.log('📊 Endpoints disponibles:');
   console.log('   GET  /public/events     - Événements publiés');
   console.log('   GET  /public/vehicles   - Véhicules');
+  console.log('   POST /public/contact    - Formulaire de contact');
   console.log('   GET  /api/events        - Tous les événements (auth)');
   console.log('   POST /api/events        - Créer événement (auth)');
   console.log('   PUT  /api/events/:id    - Modifier événement (auth)');
