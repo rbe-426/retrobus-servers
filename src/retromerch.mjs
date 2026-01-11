@@ -18,12 +18,25 @@ export default function createRetroMerchRouter(prismaInstance) {
     next();
   };
 
+  // Endpoint public GET products - sans authentification
+  router.get('/products-public', async (req, res) => {
+    try {
+      const products = await prisma.retromerch_products.findMany({
+        orderBy: { createdAt: 'desc' }
+      });
+      res.json(products);
+    } catch (error) {
+      console.error('❌ GET products-public error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ============================================================================
   // PRODUITS
   // ============================================================================
 
   /**
-   * GET /api/retromerch/products - Récupérer tous les produits
+   * GET /api/retromerch/products - Récupérer tous les produits (SANS authentification)
    */
   router.get('/products', async (req, res) => {
     try {
@@ -133,6 +146,19 @@ export default function createRetroMerchRouter(prismaInstance) {
       if (error.code === 'P2025') {
         return res.status(404).json({ error: 'Product not found' });
       }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Endpoint public GET categories - sans authentification
+  router.get('/categories-public', async (req, res) => {
+    try {
+      const categories = await prisma.retromerch_categories.findMany({
+        orderBy: { name: 'asc' }
+      });
+      res.json(categories);
+    } catch (error) {
+      console.error('❌ GET categories-public error:', error.message);
       res.status(500).json({ error: error.message });
     }
   });
