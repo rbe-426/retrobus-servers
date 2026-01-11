@@ -38,10 +38,12 @@ export default function createRetroMerchRouter(prismaInstance) {
 
   // Endpoint public GET products - sans authentification requise
   router.get('/products', optionalAuth, async (req, res) => {
+    console.log('📦 GET /products - User:', req.user ? `${req.user.email}` : 'ANONYMOUS');
     try {
       const products = await prisma.retromerch_products.findMany({
         orderBy: { createdAt: 'desc' }
       });
+      console.log(`✅ GET /products - Returned ${products.length} products`);
       res.json(products);
     } catch (error) {
       console.error('❌ GET products error:', error.message);
