@@ -9,41 +9,39 @@ export default function createRetroMerchRouter(prismaInstance) {
   const router = express.Router();
   const prisma = prismaInstance;
 
-  // Middleware d'authentification basique
-  const requireAuth = (req, res, next) => {
+  // Middleware d'authentification OPTIONNELLE (ne bloque pas si pas présente)
+  const optionalAuth = (req, res, next) => {
+    // Extrait le token s'il existe, mais ne bloque pas s'il n'y a rien
     const authHeader = req.headers.authorization;
-    if (!authHeader) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      try {
+        if (token.startsWith('stub.')) {
+          const emailB64 = token.slice(5);
+          const email = Buffer.from(emailB64, 'base64').toString('utf-8');
+          req.user = { email: email, id: email };
+        }
+      } catch (e) {
+        // Silently fail
+      }
+    }
+    next();
+  };
+
+  // Middleware d'authentification requise
+  const requireAuth = (req, res, next) => {
+    if (!req.user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     next();
   };
 
-  // Endpoint public GET products - sans authentification
-  router.get('/products-public', async (req, res) => {
+  // Endpoint public GET products - sans authentification requise
+  router.get('/products', optionalAuth, async (req, res) => {
     try {
       const products = await prisma.retromerch_products.findMany({
         orderBy: { createdAt: 'desc' }
       });
-      res.json(products);
-    } catch (error) {
-      console.error('❌ GET products-public error:', error.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // ============================================================================
-  // PRODUITS
-  // ============================================================================
-
-  /**
-   * GET /api/retromerch/products - Récupérer tous les produits (SANS authentification)
-   */
-  router.get('/products', async (req, res) => {
-    try {
-      const products = await prisma.retromerch_products.findMany({
-        orderBy: { createdAt: 'desc' }
-      });
-
       res.json(products);
     } catch (error) {
       console.error('❌ GET products error:', error.message);
@@ -54,7 +52,7 @@ export default function createRetroMerchRouter(prismaInstance) {
   /**
    * GET /api/retromerch/products/:id - Récupérer un produit spécifique
    */
-  router.get('/products/:id', async (req, res) => {
+  router.get('/products/:id', optionalAuth, async (req, res) => {
     try {
       const product = await prisma.retromerch_products.findUnique({
         where: { id: req.params.id }
@@ -150,19 +148,6 @@ export default function createRetroMerchRouter(prismaInstance) {
     }
   });
 
-  // Endpoint public GET categories - sans authentification
-  router.get('/categories-public', async (req, res) => {
-    try {
-      const categories = await prisma.retromerch_categories.findMany({
-        orderBy: { name: 'asc' }
-      });
-      res.json(categories);
-    } catch (error) {
-      console.error('❌ GET categories-public error:', error.message);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   // ============================================================================
   // CATÉGORIES
   // ============================================================================
@@ -170,7 +155,7 @@ export default function createRetroMerchRouter(prismaInstance) {
   /**
    * GET /api/retromerch/categories - Récupérer toutes les catégories
    */
-  router.get('/categories', async (req, res) => {
+  router.get('/categories', optionalAuth, async (req, res) => {
     try {
       const categories = await prisma.retromerch_categories.findMany({
         orderBy: { name: 'asc' }
@@ -215,7 +200,7 @@ export default function createRetroMerchRouter(prismaInstance) {
   /**
    * GET /api/retromerch/orders - Récupérer toutes les commandes
    */
-  router.get('/orders', async (req, res) => {
+  router.get('/orders', optionalAuth, async (req, res) => {
     try {
       const orders = await prisma.retromerch_orders.findMany({
         orderBy: { createdAt: 'desc' }
@@ -231,7 +216,7 @@ export default function createRetroMerchRouter(prismaInstance) {
   /**
    * GET /api/retromerch/orders/:id - Récupérer une commande spécifique
    */
-  router.get('/orders/:id', async (req, res) => {
+  router.get('/orders/:id', optionalAuth, async (req, res) => {
     try {
       const order = await prisma.retromerch_orders.findUnique({
         where: { id: req.params.id }
