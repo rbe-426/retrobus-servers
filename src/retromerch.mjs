@@ -346,7 +346,7 @@ export default function createRetroMerchRouter(prismaInstance) {
   /**
    * GET /api/retromerch/stats - Récupérer les statistiques
    */
-  router.get('/stats', async (req, res) => {
+  router.get('/stats', optionalAuth, async (req, res) => {
     try {
       const productCount = await prisma.retromerch_products.count();
       const categoryCount = await prisma.retromerch_categories.count();
