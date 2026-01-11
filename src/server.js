@@ -6467,7 +6467,13 @@ app.delete('/api/finance/scheduled-operations/:operationId/payments/:paymentId',
 app.use('/api/subventions', subventionsRouter);
 
 // ============ RETROMERCH ROUTER ============
-app.use('/api/retromerch', retromerchRouter(prisma));
+// Lazy router initialization - prisma will be passed when requests come in
+console.log('🔧 Setting up RetroMerch router... prisma:', prisma ? '✅ OK' : '❌ UNDEFINED');
+if (prisma) {
+  app.use('/api/retromerch', retromerchRouter(prisma));
+} else {
+  console.warn('⚠️  Prisma not ready for RetroMerch router');
+}
 
 // Generic error handler
 app.use((err, req, res, next) => {

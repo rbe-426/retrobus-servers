@@ -1,25 +1,13 @@
 /**
  * Routes RétroMerch - Gestion de la boutique en ligne
- * GET    /api/retromerch/products          - Liste des produits
- * POST   /api/retromerch/products          - Créer un produit
- * GET    /api/retromerch/products/:id      - Détail d'un produit
- * PUT    /api/retromerch/products/:id      - Mettre à jour un produit
- * DELETE /api/retromerch/products/:id      - Supprimer un produit
- * GET    /api/retromerch/categories        - Liste des catégories
- * POST   /api/retromerch/categories        - Créer une catégorie
- * GET    /api/retromerch/orders            - Liste des commandes
- * POST   /api/retromerch/orders            - Créer une commande
- * GET    /api/retromerch/orders/:id        - Détail d'une commande
- * PUT    /api/retromerch/orders/:id/status - Mettre à jour le statut
+ * Factory function qui crée et retourne un Express router configuré
  */
 
 import express from 'express';
 
-/**
- * Factory function pour créer le router avec une instance Prisma partagée
- */
-export default function createRetroMerchRouter(prisma) {
+export default function createRetroMerchRouter(prismaInstance) {
   const router = express.Router();
+  const prisma = prismaInstance;
 
   // Middleware d'authentification basique
   const requireAuth = (req, res, next) => {
@@ -40,17 +28,10 @@ export default function createRetroMerchRouter(prisma) {
   router.get('/products', async (req, res) => {
     try {
       const products = await prisma.retromerch_products.findMany({
-        include: {
-          category: true
-        },
         orderBy: { createdAt: 'desc' }
       });
 
-      res.json({
-        success: true,
-        data: products,
-        count: products.length
-      });
+      res.json(products);
     } catch (error) {
       console.error('❌ GET products error:', error.message);
       res.status(500).json({ error: error.message });
@@ -63,15 +44,14 @@ export default function createRetroMerchRouter(prisma) {
   router.get('/products/:id', async (req, res) => {
     try {
       const product = await prisma.retromerch_products.findUnique({
-        where: { id: req.params.id },
-        include: { category: true }
+        where: { id: req.params.id }
       });
 
       if (!product) {
         return res.status(404).json({ error: 'Product not found' });
       }
 
-      res.json({ success: true, data: product });
+      res.json(product);
     } catch (error) {
       console.error('❌ GET product error:', error.message);
       res.status(500).json({ error: error.message });
@@ -97,17 +77,11 @@ export default function createRetroMerchRouter(prisma) {
           stock: parseInt(stock) || 0,
           categoryId: categoryId || null,
           image: image || '',
-          active: active !== false,
-          createdAt: new Date()
-        },
-        include: { category: true }
+          active: active !== false
+        }
       });
 
-      res.status(201).json({
-        success: true,
-        message: 'Product created',
-        data: product
-      });
+      res.status(201).json(product);
     } catch (error) {
       console.error('❌ POST product error:', error.message);
       res.status(500).json({ error: error.message });
@@ -130,17 +104,11 @@ export default function createRetroMerchRouter(prisma) {
           ...(stock !== undefined && { stock: parseInt(stock) }),
           ...(categoryId !== undefined && { categoryId }),
           ...(image !== undefined && { image }),
-          ...(active !== undefined && { active }),
-          updatedAt: new Date()
-        },
-        include: { category: true }
+          ...(active !== undefined && { active })
+        }
       });
 
-      res.json({
-        success: true,
-        message: 'Product updated',
-        data: product
-      });
+      res.json(product);
     } catch (error) {
       console.error('❌ PUT product error:', error.message);
       if (error.code === 'P2025') {
@@ -159,10 +127,7 @@ export default function createRetroMerchRouter(prisma) {
         where: { id: req.params.id }
       });
 
-      res.json({
-        success: true,
-        message: 'Product deleted'
-      });
+      res.json({ success: true });
     } catch (error) {
       console.error('❌ DELETE product error:', error.message);
       if (error.code === 'P2025') {
@@ -182,23 +147,10 @@ export default function createRetroMerchRouter(prisma) {
   router.get('/categories', async (req, res) => {
     try {
       const categories = await prisma.retromerch_categories.findMany({
-        include: {
-          products: {
-            select: { id: true }
-          }
-        },
         orderBy: { name: 'asc' }
       });
 
-      res.json({
-        success: true,
-        data: categories.map(cat => ({
-          ...cat,
-          productCount: cat.products.length,
-          products: undefined
-        })),
-        count: categories.length
-      });
+      res.json(categories);
     } catch (error) {
       console.error('❌ GET categories error:', error.message);
       res.status(500).json({ error: error.message });
@@ -219,16 +171,11 @@ export default function createRetroMerchRouter(prisma) {
       const category = await prisma.retromerch_categories.create({
         data: {
           name,
-          description: description || '',
-          createdAt: new Date()
+          description: description || ''
         }
       });
 
-      res.status(201).json({
-        success: true,
-        message: 'Category created',
-        data: category
-      });
+      res.status(201).json(category);
     } catch (error) {
       console.error('❌ POST category error:', error.message);
       res.status(500).json({ error: error.message });
@@ -245,21 +192,10 @@ export default function createRetroMerchRouter(prisma) {
   router.get('/orders', async (req, res) => {
     try {
       const orders = await prisma.retromerch_orders.findMany({
-        include: {
-          items: {
-            include: {
-              product: true
-            }
-          }
-        },
         orderBy: { createdAt: 'desc' }
       });
 
-      res.json({
-        success: true,
-        data: orders,
-        count: orders.length
-      });
+      res.json(orders);
     } catch (error) {
       console.error('❌ GET orders error:', error.message);
       res.status(500).json({ error: error.message });
@@ -272,21 +208,14 @@ export default function createRetroMerchRouter(prisma) {
   router.get('/orders/:id', async (req, res) => {
     try {
       const order = await prisma.retromerch_orders.findUnique({
-        where: { id: req.params.id },
-        include: {
-          items: {
-            include: {
-              product: true
-            }
-          }
-        }
+        where: { id: req.params.id }
       });
 
       if (!order) {
         return res.status(404).json({ error: 'Order not found' });
       }
 
-      res.json({ success: true, data: order });
+      res.json(order);
     } catch (error) {
       console.error('❌ GET order error:', error.message);
       res.status(500).json({ error: error.message });
@@ -298,15 +227,7 @@ export default function createRetroMerchRouter(prisma) {
    */
   router.post('/orders', async (req, res) => {
     try {
-      const {
-        customerName,
-        customerEmail,
-        customerPhone,
-        shippingAddress,
-        items,
-        totalAmount,
-        notes
-      } = req.body;
+      const { customerName, customerEmail, customerPhone, shippingAddress, items, totalAmount, notes } = req.body;
 
       if (!customerName || !items || items.length === 0) {
         return res.status(400).json({ error: 'Customer name and items are required' });
@@ -321,7 +242,6 @@ export default function createRetroMerchRouter(prisma) {
           totalAmount: parseFloat(totalAmount) || 0,
           status: 'PENDING',
           notes: notes || '',
-          createdAt: new Date(),
           items: {
             create: items.map(item => ({
               productId: item.productId,
@@ -329,19 +249,10 @@ export default function createRetroMerchRouter(prisma) {
               unitPrice: parseFloat(item.unitPrice) || 0
             }))
           }
-        },
-        include: {
-          items: {
-            include: { product: true }
-          }
         }
       });
 
-      res.status(201).json({
-        success: true,
-        message: 'Order created',
-        data: order
-      });
+      res.status(201).json(order);
     } catch (error) {
       console.error('❌ POST order error:', error.message);
       res.status(500).json({ error: error.message });
@@ -349,7 +260,7 @@ export default function createRetroMerchRouter(prisma) {
   });
 
   /**
-   * PUT /api/retromerch/orders/:id/status - Mettre à jour le statut d'une commande
+   * PUT /api/retromerch/orders/:id/status - Mettre à jour le statut
    */
   router.put('/orders/:id/status', requireAuth, async (req, res) => {
     try {
@@ -359,34 +270,14 @@ export default function createRetroMerchRouter(prisma) {
         return res.status(400).json({ error: 'Status is required' });
       }
 
-      const validStatuses = ['PENDING', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({ error: 'Invalid status' });
-      }
-
       const order = await prisma.retromerch_orders.update({
         where: { id: req.params.id },
-        data: {
-          status,
-          updatedAt: new Date()
-        },
-        include: {
-          items: {
-            include: { product: true }
-          }
-        }
+        data: { status }
       });
 
-      res.json({
-        success: true,
-        message: 'Order status updated',
-        data: order
-      });
+      res.json(order);
     } catch (error) {
       console.error('❌ PUT order status error:', error.message);
-      if (error.code === 'P2025') {
-        return res.status(404).json({ error: 'Order not found' });
-      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -406,26 +297,13 @@ export default function createRetroMerchRouter(prisma) {
           ...(customerPhone !== undefined && { customerPhone }),
           ...(shippingAddress !== undefined && { shippingAddress }),
           ...(notes !== undefined && { notes }),
-          ...(status && { status }),
-          updatedAt: new Date()
-        },
-        include: {
-          items: {
-            include: { product: true }
-          }
+          ...(status && { status })
         }
       });
 
-      res.json({
-        success: true,
-        message: 'Order updated',
-        data: order
-      });
+      res.json(order);
     } catch (error) {
       console.error('❌ PUT order error:', error.message);
-      if (error.code === 'P2025') {
-        return res.status(404).json({ error: 'Order not found' });
-      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -435,25 +313,17 @@ export default function createRetroMerchRouter(prisma) {
    */
   router.delete('/orders/:id', requireAuth, async (req, res) => {
     try {
-      // Supprimer d'abord les items
       await prisma.retromerch_order_items.deleteMany({
         where: { orderId: req.params.id }
       });
 
-      // Puis la commande
       await prisma.retromerch_orders.delete({
         where: { id: req.params.id }
       });
 
-      res.json({
-        success: true,
-        message: 'Order deleted'
-      });
+      res.json({ success: true });
     } catch (error) {
       console.error('❌ DELETE order error:', error.message);
-      if (error.code === 'P2025') {
-        return res.status(404).json({ error: 'Order not found' });
-      }
       res.status(500).json({ error: error.message });
     }
   });
@@ -476,23 +346,11 @@ export default function createRetroMerchRouter(prisma) {
         where: { status: { not: 'CANCELLED' } }
       });
 
-      const recentOrders = await prisma.retromerch_orders.findMany({
-        take: 5,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          items: true
-        }
-      });
-
       res.json({
-        success: true,
-        data: {
-          totalProducts: productCount,
-          totalCategories: categoryCount,
-          totalOrders: orderCount,
-          totalRevenue: totalRevenue._sum.totalAmount || 0,
-          recentOrders
-        }
+        totalProducts: productCount,
+        totalCategories: categoryCount,
+        totalOrders: orderCount,
+        totalRevenue: totalRevenue._sum.totalAmount || 0
       });
     } catch (error) {
       console.error('❌ GET stats error:', error.message);
