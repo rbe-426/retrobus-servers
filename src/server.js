@@ -3261,7 +3261,7 @@ app.get('/api/documents/:id/download', requireAuth, (req, res) => {
 app.get(['/events', '/api/events'], requireAuth, async (req, res) => {
   try {
     const events = await prisma.event.findMany({ orderBy: { date: 'desc' } });
-    res.json({ events });
+    res.json(events);
   } catch (e) {
     console.error('❌ GET /events error:', e.message);
     res.status(500).json({ error: 'Failed to fetch events', details: e.message });
