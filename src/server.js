@@ -3285,7 +3285,7 @@ app.get(['/vehicles', '/api/vehicles'], requireAuth, async (req, res) => {
     try {
       const vehicles = await prisma.vehicle.findMany({ orderBy: { parc: 'asc' } });
       const normalized = vehicles.map(v => normalizeVehicleWithCaracteristiques(v));
-      return res.json({ vehicles: normalized });
+      return res.json(normalized);
     } catch (e) {
       console.error('❌ GET /vehicles error:', e.message);
       return res.status(500).json({ error: 'Failed to fetch vehicles', details: e.message });
