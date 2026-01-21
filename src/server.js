@@ -1953,11 +1953,16 @@ app.get(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, 
     const filters = [{ parc }];
     if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
     const vehicle = await prisma.vehicle.findFirst({ where: { OR: filters } });
-    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
-    res.json({ gallery: parseGalleryValue(vehicle.gallery) });
+    if (!vehicle) {
+      console.warn(`⚠️  Vehicle not found for gallery GET: ${parc}`);
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+    const gallery = parseGalleryValue(vehicle.gallery);
+    console.log(`📸 GET gallery for ${parc}: ${gallery.length} images`);
+    res.json({ gallery });
   } catch (e) {
     console.error('❌ GET /vehicles/:parc/gallery error:', e.message);
-    res.status(500).json({ error: 'Failed to fetch gallery' });
+    res.status(500).json({ error: 'Failed to fetch gallery', details: e.message });
   }
 });
 
@@ -1967,8 +1972,14 @@ app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth,
     const idCandidate = Number(parc);
     const filters = [{ parc }];
     if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
+    
+    console.log(`📸 Gallery upload for vehicle: ${parc}, files: ${req.files?.length || 0}`);
+    
     const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
-    if (!existing) return res.status(404).json({ error: 'Vehicle not found' });
+    if (!existing) {
+      console.error(`❌ Vehicle not found: ${parc}`);
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
 
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) {
@@ -1998,10 +2009,11 @@ app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth,
     }
 
     console.log(`✅ Gallery uploaded for vehicle ${parc}: ${newItems.length} files added, total: ${nextGallery.length}`);
+    console.log(`📝 Gallery URLs:`, nextGallery);
     res.status(201).json({ gallery: nextGallery });
   } catch (e) {
     console.error('❌ POST /vehicles/:parc/gallery error:', e.message);
-    res.status(500).json({ error: 'Failed to upload images' });
+    res.status(500).json({ error: 'Failed to upload images', details: e.message });
   }
 });
 
@@ -2010,6 +2022,8 @@ app.delete(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAut
     const parc = String(req.params.parc);
     const { image } = req.body || {};
     if (!image) return res.status(400).json({ error: 'Missing image' });
+
+    console.log(`🗑️  Deleting gallery image for ${parc}: ${image}`);
 
     const idCandidate = Number(parc);
     const filters = [{ parc }];
@@ -2043,10 +2057,11 @@ app.delete(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAut
       debouncedSave();
     }
 
+    console.log(`✅ Gallery image deleted for ${parc}. Remaining: ${nextGallery.length}`);
     res.json({ gallery: nextGallery });
   } catch (e) {
     console.error('❌ DELETE /vehicles/:parc/gallery error:', e.message);
-    res.status(500).json({ error: 'Failed to delete image' });
+    res.status(500).json({ error: 'Failed to delete image', details: e.message });
   }
 });
 
