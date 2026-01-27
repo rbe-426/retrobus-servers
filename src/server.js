@@ -1219,7 +1219,9 @@ const normalizeVehicleWithCaracteristiques = (vehicle) => {
 
 app.get('/public/vehicles', async (req, res) => {
   try {
-    const vehicles = await prisma.vehicle.findMany();
+    const vehicles = await prisma.vehicle.findMany({
+      where: { isPublic: true }
+    });
     const normalized = vehicles.map(v => normalizeVehicleWithCaracteristiques(v));
     res.json(normalized);
   } catch (e) {
@@ -1231,7 +1233,10 @@ app.get('/public/vehicles', async (req, res) => {
 app.get('/public/vehicles/:id', async (req, res) => {
   try {
     const vehicle = await prisma.vehicle.findFirst({
-      where: { OR: [{ id: parseInt(req.params.id) || 0 }, { parc: req.params.id }] }
+      where: { 
+        isPublic: true,
+        OR: [{ id: parseInt(req.params.id) || 0 }, { parc: req.params.id }] 
+      }
     });
     if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
     const normalized = normalizeVehicleWithCaracteristiques(vehicle);
@@ -1244,6 +1249,15 @@ app.get('/public/vehicles/:id', async (req, res) => {
 
 app.get('/public/vehicles/:id/events', async (req, res) => {
   try {
+    // Vérifier que le véhicule est public
+    const vehicle = await prisma.vehicle.findFirst({
+      where: { 
+        isPublic: true,
+        OR: [{ parc: req.params.id }] 
+      }
+    });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found or not public' });
+
     const events = await prisma.event.findMany({
       where: {
         vehicleId: req.params.id,
