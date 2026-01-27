@@ -28,6 +28,77 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * GET /api/subventions/stats/summary - Récupérer les statistiques globales des campagnes
+ */
+router.get('/stats/summary', async (req, res) => {
+  try {
+    const campaigns = await prisma.subventionCampaign.findMany({
+      include: { SubventionExpense: true }
+    });
+
+    const expenses = await prisma.subventionExpense.findMany();
+
+    const stats = {
+      campaigns: {
+        total: campaigns.length,
+        active: campaigns.filter(c => c.status === 'ACTIVE' && new Date(c.deadline) > new Date()).length,
+        expired: campaigns.filter(c => new Date(c.deadline) <= new Date()).length,
+        totalBudget: campaigns.reduce((sum, c) => sum + (c.maxAmount || 0), 0),
+        minBudgetAvailable: campaigns.reduce((sum, c) => sum + (c.minAmount || 0), 0)
+      },
+      expenses: {
+        total: expenses.reduce((sum, e) => sum + e.amount, 0),
+        count: expenses.length,
+        approved: expenses.filter(e => e.status === 'APPROVED').reduce((sum, e) => sum + e.amount, 0),
+        approvedCount: expenses.filter(e => e.status === 'APPROVED').length,
+        pending: expenses.filter(e => e.status === 'SUBMITTED').reduce((sum, e) => sum + e.amount, 0),
+        pendingCount: expenses.filter(e => e.status === 'SUBMITTED').length,
+        rejected: expenses.filter(e => e.status === 'REJECTED').reduce((sum, e) => sum + e.amount, 0),
+        rejectedCount: expenses.filter(e => e.status === 'REJECTED').length,
+        byCategory: {}
+      },
+      kpis: {
+        budgetUtilization: campaigns.length > 0 
+          ? ((expenses.reduce((sum, e) => sum + e.amount, 0) / campaigns.reduce((sum, c) => sum + (c.maxAmount || 0), 0)) * 100).toFixed(2)
+          : 0,
+        expenseApprovalRate: expenses.length > 0
+          ? ((expenses.filter(e => e.status === 'APPROVED').length / expenses.length) * 100).toFixed(2)
+          : 0,
+        averageExpenseAmount: expenses.length > 0
+          ? (expenses.reduce((sum, e) => sum + e.amount, 0) / expenses.length).toFixed(2)
+          : 0,
+        nextDeadline: campaigns.length > 0 
+          ? campaigns
+              .filter(c => c.status === 'ACTIVE' && new Date(c.deadline) > new Date())
+              .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))[0]?.deadline || null
+          : null
+      }
+    };
+
+    // Grouper les dépenses par catégorie
+    expenses.forEach(e => {
+      if (!stats.expenses.byCategory[e.category]) {
+        stats.expenses.byCategory[e.category] = {
+          count: 0,
+          total: 0,
+          approved: 0,
+          pending: 0
+        };
+      }
+      stats.expenses.byCategory[e.category].count += 1;
+      stats.expenses.byCategory[e.category].total += e.amount;
+      if (e.status === 'APPROVED') stats.expenses.byCategory[e.category].approved += e.amount;
+      if (e.status === 'SUBMITTED') stats.expenses.byCategory[e.category].pending += e.amount;
+    });
+
+    res.json(stats);
+  } catch (error) {
+    console.error('Erreur GET /api/subventions/stats/summary:', error);
+    res.status(500).json({ error: 'Erreur serveur', details: error.message });
+  }
+});
+
+/**
  * GET /api/subventions/:id - Récupérer une campagne spécifique
  */
 router.get('/:id', async (req, res) => {
