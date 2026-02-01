@@ -3289,6 +3289,116 @@ app.get('/api/documents/:id/download', requireAuth, (req, res) => {
   res.status(404).json({ error: 'Not implemented file storage' });
 });
 
+// MEMBER DOCUMENTS - NEW ENDPOINTS FOR ADHESION BULLETINS
+// GET /api/members/:memberId/documents - Fetch all documents for a member
+app.get('/api/members/:memberId/documents', requireAuth, async (req, res) => {
+  try {
+    const { memberId } = req.params;
+    console.log(`📄 Fetching documents for member: ${memberId}`);
+    
+    const documents = await prisma.document.findMany({
+      where: { memberId: memberId },
+      orderBy: { uploadedAt: 'desc' }
+    });
+    
+    console.log(`✅ Found ${documents.length} documents for member ${memberId}`);
+    res.json({ documents });
+  } catch (e) {
+    console.error(`❌ Error fetching documents for member ${req.params.memberId}:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/members/:memberId/documents - Upload a new document for a member
+app.post('/api/members/:memberId/documents', requireAuth, async (req, res) => {
+  try {
+    const { memberId } = req.params;
+    const { fileName, fileType, fileData } = req.body;
+    
+    console.log(`📤 Uploading document for member ${memberId}: ${fileName}`);
+    
+    if (!fileName || !fileData) {
+      return res.status(400).json({ error: 'fileName and fileData are required' });
+    }
+    
+    // Calculate file size from base64
+    const fileSize = Math.ceil((fileData.length * 3) / 4);
+    
+    const document = await prisma.document.create({
+      data: {
+        id: uid(),
+        memberId: memberId,
+        fileName: fileName,
+        filePath: fileData, // Store base64 data in filePath
+        fileSize: fileSize,
+        mimeType: fileType || 'application/pdf',
+        type: 'MEMBERSHIP_FORM',
+        status: 'PENDING',
+        uploadedAt: new Date(),
+        reviewedBy: req.user?.email || null
+      }
+    });
+    
+    console.log(`✅ Document uploaded successfully: ${document.id}`);
+    res.status(201).json({ document });
+  } catch (e) {
+    console.error(`❌ Error uploading document for member ${req.params.memberId}:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/documents/:documentId - Delete a document
+app.delete('/api/documents/:documentId', requireAuth, async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    console.log(`🗑️ Deleting document: ${documentId}`);
+    
+    const document = await prisma.document.delete({
+      where: { id: documentId }
+    });
+    
+    console.log(`✅ Document deleted successfully: ${documentId}`);
+    res.json({ ok: true, document });
+  } catch (e) {
+    if (e.code === 'P2025') {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    console.error(`❌ Error deleting document ${req.params.documentId}:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/documents/:documentId/download - Download a document
+app.get('/api/documents/:documentId/download', requireAuth, async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    console.log(`📥 Downloading document: ${documentId}`);
+    
+    const document = await prisma.document.findUnique({
+      where: { id: documentId }
+    });
+    
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    // Set proper headers for file download
+    res.set('Content-Type', document.mimeType || 'application/octet-stream');
+    res.set('Content-Disposition', `attachment; filename="${document.fileName}"`);
+    
+    // Send the file data (base64 decoded)
+    if (document.filePath) {
+      const buffer = Buffer.from(document.filePath, 'base64');
+      res.send(buffer);
+    } else {
+      res.status(404).json({ error: 'No file data available' });
+    }
+  } catch (e) {
+    console.error(`❌ Error downloading document ${req.params.documentId}:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // EVENTS - PRISMA avec fallback optionnel
 app.get(['/events', '/api/events'], requireAuth, async (req, res) => {
   try {
