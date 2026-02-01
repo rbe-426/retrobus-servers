@@ -2869,11 +2869,14 @@ app.delete(['/api/retro-news/:id'], requireAuth, async (req, res) => {
 app.get(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
     const limit = Number(req.query.limit) || undefined;
+    console.log('📍 GET /api/members - fetching with limit:', limit);
     const members = await prisma.members.findMany({ take: limit });
+    console.log('✅ Found members:', members.length);
     return res.json({ members });
   } catch (e) {
     console.error('❌ Error fetching members:', e.message);
-    res.status(500).json({ error: 'Failed to fetch members' });
+    console.error('❌ Prisma error details:', e);
+    res.status(500).json({ error: 'Failed to fetch members', details: e.message });
   }
 });
 app.get(['/api/members/me'], requireAuth, (req, res) => {
