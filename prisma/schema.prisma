@@ -415,37 +415,43 @@ model finance_transactions {
 }
 
 model financial_documents {
-  id                 String         @id
-  type               String         @default("QUOTE")
-  number             String
-  title              String
-  description        String?
-  date               DateTime       @default(now())
-  dueDate            DateTime?
-  amount             Float
-  taxRate            Float          @default(20)
-  taxAmount          Float          @default(0)
-  amountExcludingTax Float          @default(0)
-  quoteStatus        String?
-  invoiceStatus      String?
-  eventId            String?
-  memberId           String?
-  replacedById       String?
-  replaces           String?
-  notes              String?
-  internalNotes      String?
-  paymentMethod      String?
-  paymentDate        DateTime?
-  amountPaid         Float          @default(0)
-  templateId         String?
-  createdBy          String
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime
-  documentUrl        String?
-  htmlContent        String?
-  retroRequestId     String?
-  paymentHistory     String         @default("[]")
-  retro_request      retro_request? @relation(fields: [retroRequestId], references: [id])
+  id                      String         @id
+  type                    String         @default("QUOTE")
+  number                  String
+  title                   String
+  description             String?
+  date                    DateTime       @default(now())
+  dueDate                 DateTime?
+  amount                  Float
+  taxRate                 Float          @default(20)
+  taxAmount               Float          @default(0)
+  amountExcludingTax      Float          @default(0)
+  quoteStatus             String?
+  invoiceStatus           String?
+  eventId                 String?
+  memberId                String?
+  replacedById            String?
+  replaces                String?
+  notes                   String?
+  internalNotes           String?
+  paymentMethod           String?
+  paymentDate             DateTime?
+  amountPaid              Float          @default(0)
+  paymentTerms            String?        @default("30")
+  templateId              String?
+  createdBy               String?
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime
+  documentUrl             String?
+  htmlContent             String?
+  retroRequestId          String?
+  paymentHistory          String         @default("[]")
+  // Infos destinataire/client
+  destinataireName        String?
+  destinataireAdresse     String?
+  destinataireSociete     String?
+  destinataireContacts    String?
+  retro_request           retro_request? @relation(fields: [retroRequestId], references: [id])
 
   @@unique([type, number])
   @@index([date])

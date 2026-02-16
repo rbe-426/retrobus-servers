@@ -5339,7 +5339,19 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
       amount: Number(req.body.amount || 0),
       taxRate: Number(req.body.taxRate || 20),
       taxAmount: Number(req.body.taxAmount || 0),
-      amountExcludingTax: Number(req.body.amountExcludingTax || 0)
+      amountExcludingTax: Number(req.body.amountExcludingTax || 0),
+      // Infos destinataire/client
+      destinataireName: req.body.destinataireName || null,
+      destinataireAdresse: req.body.destinataireAdresse || null,
+      destinataireSociete: req.body.destinataireSociete || null,
+      destinataireContacts: req.body.destinataireContacts || null,
+      // Autres champs
+      paymentTerms: req.body.paymentTerms || '30',
+      paymentMethod: req.body.paymentMethod || null,
+      notes: req.body.notes || null,
+      internalNotes: req.body.internalNotes || null,
+      createdBy: req.user?.email || req.user?.name || 'API',
+      updatedAt: new Date()
     };
     
     const doc = await prisma.financial_documents.create({
@@ -5359,11 +5371,11 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
     console.log('✅ Document créé dans Prisma:', docId);
     res.status(201).json(result);
   } catch (e) {
-    console.error('❌ POST /api/finance/documents error:', e.message);
-    // Fallback
+    console.error('❌ POST /api/finance/documents error:', e.message, e.code);
+    // Fallback si Prisma échoue
     const doc = {
       id: uid(),
-      createdBy: req.user?.name || req.user?.email || 'Anonymous',
+      createdBy: req.user?.email || req.user?.name || 'API',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...req.body
