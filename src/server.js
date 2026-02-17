@@ -6710,6 +6710,21 @@ app.listen(PORT, async () => {
     console.warn('⚠️ Failed to load flashes from Prisma:', e.message);
   }
 
+  // Load simulations from Prisma
+  try {
+    const prismaSimulations = await prisma.finance_simulation_scenarios.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    state.simulations = prismaSimulations.map(s => ({
+      ...s,
+      createdAt: s.createdAt instanceof Date ? s.createdAt.toISOString() : s.createdAt,
+      updatedAt: s.updatedAt instanceof Date ? s.updatedAt.toISOString() : s.updatedAt
+    }));
+    console.log(`✅ Loaded ${state.simulations.length} simulations from Prisma`);
+  } catch (e) {
+    console.warn('⚠️ Failed to load simulations from Prisma:', e.message);
+  }
+
   console.log('');
   console.log(`🌐 API accessible sur: http://localhost:${PORT}`);
   console.log('');
