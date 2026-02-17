@@ -5311,16 +5311,18 @@ app.get('/api/finance/documents', requireAuth, async (req, res) => {
     });
     state.financialDocuments = docs.map(d => ({
       ...d,
+      // Normaliser le statut selon le type
+      status: d.type === 'INVOICE' ? (d.invoiceStatus || 'DRAFT') : (d.quoteStatus || 'DRAFT'),
       createdAt: d.createdAt.toISOString(),
       updatedAt: d.updatedAt.toISOString(),
       date: d.date?.toISOString?.() || d.date,
       dueDate: d.dueDate?.toISOString?.() || d.dueDate
     }));
     console.log('✅ Documents financiers chargés depuis Prisma');
-    res.json({ documents: state.financialDocuments || [] });
+    res.json(state.financialDocuments || []);
   } catch (e) {
     console.error('⚠️ GET /api/finance/documents fallback:', e.message);
-    res.json({ documents: state.financialDocuments || [] });
+    res.json(state.financialDocuments || []);
   }
 });
 
@@ -5328,9 +5330,10 @@ app.get('/api/finance/documents', requireAuth, async (req, res) => {
 app.post('/api/finance/documents', requireAuth, async (req, res) => {
   try {
     const docId = uid();
+    const type = req.body.type || 'QUOTE';
     const docData = {
       id: docId,
-      type: req.body.type || 'QUOTE',
+      type: type,
       number: req.body.number || `DOC-${Date.now()}`,
       title: req.body.title || '',
       description: req.body.description || null,
@@ -5350,6 +5353,9 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
       paymentMethod: req.body.paymentMethod || null,
       notes: req.body.notes || null,
       internalNotes: req.body.internalNotes || null,
+      // Initialiser le statut selon le type
+      quoteStatus: type === 'QUOTE' ? 'DRAFT' : null,
+      invoiceStatus: type === 'INVOICE' ? 'DRAFT' : null,
       createdBy: req.user?.email || req.user?.name || 'API',
       updatedAt: new Date()
     };
@@ -5360,6 +5366,7 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
     
     const result = {
       ...doc,
+      status: type === 'INVOICE' ? (doc.invoiceStatus || 'DRAFT') : (doc.quoteStatus || 'DRAFT'),
       createdAt: doc.createdAt.toISOString(),
       updatedAt: doc.updatedAt.toISOString(),
       date: doc.date.toISOString(),
@@ -5389,20 +5396,34 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
 // PUT /api/finance/documents/:id -> update document
 app.put('/api/finance/documents/:id', requireAuth, async (req, res) => {
   try {
+    const updateData = {
+      title: req.body.title,
+      description: req.body.description,
+      htmlContent: req.body.htmlContent,
+      amount: req.body.amount ? Number(req.body.amount) : undefined,
+      taxRate: req.body.taxRate ? Number(req.body.taxRate) : undefined,
+      taxAmount: req.body.taxAmount ? Number(req.body.taxAmount) : undefined,
+      amountExcludingTax: req.body.amountExcludingTax ? Number(req.body.amountExcludingTax) : undefined,
+      destinataireName: req.body.destinataireName,
+      destinataireAdresse: req.body.destinataireAdresse,
+      destinataireSociete: req.body.destinataireSociete,
+      destinataireContacts: req.body.destinataireContacts,
+      notes: req.body.notes,
+      paymentTerms: req.body.paymentTerms,
+      paymentMethod: req.body.paymentMethod
+    };
+    
+    // Nettoyer les undefined
+    Object.keys(updateData).forEach(k => updateData[k] === undefined && delete updateData[k]);
+    
     const updated = await prisma.financial_documents.update({
       where: { id: req.params.id },
-      data: {
-        title: req.body.title,
-        description: req.body.description,
-        amount: req.body.amount ? Number(req.body.amount) : undefined,
-        taxRate: req.body.taxRate ? Number(req.body.taxRate) : undefined,
-        taxAmount: req.body.taxAmount ? Number(req.body.taxAmount) : undefined,
-        amountExcludingTax: req.body.amountExcludingTax ? Number(req.body.amountExcludingTax) : undefined
-      }
+      data: updateData
     });
     
     const result = {
       ...updated,
+      status: updated.type === 'INVOICE' ? (updated.invoiceStatus || 'DRAFT') : (updated.quoteStatus || 'DRAFT'),
       createdAt: updated.createdAt.toISOString(),
       updatedAt: updated.updatedAt.toISOString(),
       date: updated.date.toISOString(),
@@ -5450,7 +5471,7 @@ app.delete('/api/finance/documents/:id', requireAuth, async (req, res) => {
 });
 
 // PATCH /api/finance/documents/:id/status -> update document status + auto-create invoice or transaction
-app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status'], requireAuth, (req, res) => {
+app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status'], requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -5460,11 +5481,24 @@ app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status']
     if (docIdx === -1) return res.status(404).json({ error: 'Document not found' });
     
     const doc = state.financialDocuments[docIdx];
-    const oldStatus = doc.status;
     
-    // Mettre à jour le statut
-    state.financialDocuments[docIdx].status = status;
+    // Déterminer le champ de statut selon le type
+    const statusField = doc.type === 'INVOICE' ? 'invoiceStatus' : 'quoteStatus';
+    const oldStatus = doc[statusField] || doc.status;
+    
+    // Mettre à jour le statut dans state (en mémoire)
+    state.financialDocuments[docIdx][statusField] = status;
+    state.financialDocuments[docIdx].status = status; // Pour compatibilité
     state.financialDocuments[docIdx].updatedAt = new Date().toISOString();
+    
+    // Mettre à jour dans Prisma
+    await prisma.financial_documents.update({
+      where: { id },
+      data: {
+        [statusField]: status,
+        updatedAt: new Date()
+      }
+    });
     
     let response = { ...state.financialDocuments[docIdx] };
     
@@ -5474,19 +5508,22 @@ app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status']
     if (doc.type === 'QUOTE' && status === 'ACCEPTED' && oldStatus !== 'ACCEPTED') {
       try {
         // Créer la facture depuis le devis
-        const invoice = {
-          id: uid(),
+        const invoiceId = uid();
+        const invoiceNumber = `FAC-${doc.number.replace('DV-', '')}`;
+        
+        const invoiceData = {
+          id: invoiceId,
           type: 'INVOICE',
-          number: `FAC-${doc.number.replace('DV-', '')}`,
+          number: invoiceNumber,
           title: doc.title,
           description: doc.description,
-          date: new Date().toISOString().split('T')[0],
+          date: new Date(),
           dueDate: doc.dueDate,
           amountExcludingTax: doc.amountExcludingTax,
           taxRate: doc.taxRate || 0,
           taxAmount: doc.taxAmount || 0,
           amount: doc.amount,
-          status: 'DRAFT',
+          invoiceStatus: 'DRAFT',
           linkedQuoteId: doc.id,
           linkedQuoteNumber: doc.number,
           eventId: doc.eventId || '',
@@ -5497,16 +5534,29 @@ app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status']
           destinataireContacts: doc.destinataireContacts || '',
           notes: doc.notes || '',
           createdBy: req.user?.name || req.user?.email || 'Anonymous',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date()
         };
         
-        state.financialDocuments.push(invoice);
-        response.invoiceCreated = true;
-        response.invoiceId = invoice.id;
-        response.invoiceNumber = invoice.number;
+        // Créer dans Prisma
+        const invoice = await prisma.financial_documents.create({
+          data: invoiceData
+        });
         
-        console.log(`✅ Facture auto-créée à partir du devis ${doc.number}: ${invoice.number}`);
+        const invoiceResult = {
+          ...invoice,
+          status: 'DRAFT',
+          createdAt: invoice.createdAt.toISOString(),
+          updatedAt: invoice.updatedAt.toISOString(),
+          date: invoice.date.toISOString(),
+          dueDate: invoice.dueDate?.toISOString?.() || null
+        };
+        
+        state.financialDocuments.push(invoiceResult);
+        response.invoiceCreated = true;
+        response.invoiceId = invoiceId;
+        response.invoiceNumber = invoiceNumber;
+        
+        console.log(`✅ Facture auto-créée à partir du devis ${doc.number}: ${invoiceNumber}`);
       } catch (invoiceErr) {
         console.error('❌ Erreur création facture auto:', invoiceErr.message);
         response.invoiceError = invoiceErr.message;
@@ -5668,6 +5718,67 @@ app.delete('/api/devis-lines/:lineId', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Line not found' });
     }
     res.status(500).json({ error: 'Failed to delete devis line', details: e.message });
+  }
+});
+
+// ===== FACTURE-LINES ENDPOINTS =====
+app.get('/api/facture-lines/:factureId', requireAuth, async (req, res) => {
+  try {
+    const lines = await prisma.factureLine.findMany({
+      where: { factureId: req.params.factureId },
+      orderBy: { order: 'asc' }
+    });
+    res.json(lines);
+  } catch (e) {
+    console.error('❌ GET /api/facture-lines/:factureId error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch facture lines', details: e.message });
+  }
+});
+
+app.post('/api/facture-lines', requireAuth, async (req, res) => {
+  try {
+    const line = await prisma.factureLine.create({
+      data: { 
+        id: uid(),
+        updatedAt: new Date(),
+        ...req.body
+      }
+    });
+    res.status(201).json(line);
+  } catch (e) {
+    console.error('❌ POST /api/facture-lines error:', e.message);
+    res.status(500).json({ error: 'Failed to create facture line', details: e.message });
+  }
+});
+
+app.put('/api/facture-lines/:lineId', requireAuth, async (req, res) => {
+  try {
+    const line = await prisma.factureLine.update({
+      where: { id: req.params.lineId },
+      data: req.body
+    });
+    res.json(line);
+  } catch (e) {
+    console.error('❌ PUT /api/facture-lines/:lineId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Line not found' });
+    }
+    res.status(500).json({ error: 'Failed to update facture line', details: e.message });
+  }
+});
+
+app.delete('/api/facture-lines/:lineId', requireAuth, async (req, res) => {
+  try {
+    await prisma.factureLine.delete({
+      where: { id: req.params.lineId }
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/facture-lines/:lineId error:', e.message);
+    if (e?.code === 'P2025') {
+      return res.status(404).json({ error: 'Line not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete facture line', details: e.message });
   }
 });
 

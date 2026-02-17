@@ -21,15 +21,34 @@ model Changelog {
 model DevisLine {
   id          String   @id
   devisId     String
+  type        String   @default("ARTICLE")  // ARTICLE, REDUCTION, REMISE, ACOMPTE_A_VERSER, ACOMPTE_VERSE
   quantity    Float    @default(1)
   description String
   unitPrice   Float
   totalPrice  Float
+  amount      Float?   // Pour réductions/remises/acomptes
   order       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime
 
   @@index([devisId])
+  @@index([order])
+}
+
+model FactureLine {
+  id          String   @id
+  factureId   String
+  type        String   @default("ARTICLE")  // ARTICLE, REDUCTION, REMISE, ACOMPTE_A_VERSER, ACOMPTE_VERSE
+  quantity    Float    @default(1)
+  description String
+  unitPrice   Float
+  totalPrice  Float
+  amount      Float?   // Pour réductions/remises/acomptes
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([factureId])
   @@index([order])
 }
 
