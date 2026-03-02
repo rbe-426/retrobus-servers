@@ -2126,42 +2126,62 @@ app.put(['/vehicles/:parc/cg/mark-old-barred','/api/vehicles/:parc/cg/mark-old-b
   res.json(cg);
 });
 
-// ASSURANCE
-app.get(['/vehicles/:parc/assurance','/api/vehicles/:parc/assurance'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const assurance = state.vehicleAssurance.find(a => a.parc === parc);
-  if (!assurance) return res.json({ parc, attestationPath: null, dateValidityStart: null, dateValidityEnd: null, timeValidityStart: null, timeValidityEnd: null, isActive: false, notes: '' });
-  
-  const now = new Date();
-  const endDate = assurance.dateValidityEnd ? new Date(assurance.dateValidityEnd) : null;
-  assurance.isActive = endDate ? endDate > now : false;
-  
-  res.json(assurance);
+// ASSURANCE - Prisma-backed
+app.get(['/vehicles/:parc/assurance','/api/vehicles/:parc/assurance'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const assurance = await prisma.vehicleAssurance.findUnique({
+      where: { parc }
+    });
+    if (!assurance) return res.json({ parc, attestationPath: null, dateValidityStart: null, dateValidityEnd: null, timeValidityStart: null, timeValidityEnd: null, isActive: false, notes: '' });
+    
+    const now = new Date();
+    const endDate = assurance.dateValidityEnd ? new Date(assurance.dateValidityEnd) : null;
+    assurance.isActive = endDate ? endDate > now : false;
+    
+    res.json(assurance);
+  } catch (e) {
+    console.error('❌ GET /assurance error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch assurance', details: e.message });
+  }
 });
 
-app.post(['/vehicles/:parc/assurance','/api/vehicles/:parc/assurance'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const { attestationPath, dateValidityStart, dateValidityEnd, timeValidityStart, timeValidityEnd, notes } = req.body;
-  
-  let assurance = state.vehicleAssurance.find(a => a.parc === parc);
-  if (!assurance) {
-    assurance = { id: uid(), parc, attestationPath: null, dateValidityStart: null, dateValidityEnd: null, timeValidityStart: null, timeValidityEnd: null, isActive: false, notes: '' };
-    state.vehicleAssurance.push(assurance);
+app.post(['/vehicles/:parc/assurance','/api/vehicles/:parc/assurance'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const { attestationPath, dateValidityStart, dateValidityEnd, timeValidityStart, timeValidityEnd, notes } = req.body;
+    
+    const assurance = await prisma.vehicleAssurance.upsert({
+      where: { parc },
+      update: {
+        attestationPath,
+        dateValidityStart: dateValidityStart ? new Date(dateValidityStart) : undefined,
+        dateValidityEnd: dateValidityEnd ? new Date(dateValidityEnd) : undefined,
+        timeValidityStart,
+        timeValidityEnd,
+        notes: notes || ''
+      },
+      create: {
+        id: uid(),
+        parc,
+        attestationPath,
+        dateValidityStart: dateValidityStart ? new Date(dateValidityStart) : null,
+        dateValidityEnd: dateValidityEnd ? new Date(dateValidityEnd) : null,
+        timeValidityStart,
+        timeValidityEnd,
+        notes: notes || ''
+      }
+    });
+    
+    const now = new Date();
+    const endDate = assurance.dateValidityEnd ? new Date(assurance.dateValidityEnd) : null;
+    assurance.isActive = endDate ? endDate > now : false;
+    
+    res.json(assurance);
+  } catch (e) {
+    console.error('❌ POST /assurance error:', e.message);
+    res.status(500).json({ error: 'Failed to save assurance', details: e.message });
   }
-  
-  assurance.attestationPath = attestationPath || assurance.attestationPath;
-  assurance.dateValidityStart = dateValidityStart || assurance.dateValidityStart;
-  assurance.dateValidityEnd = dateValidityEnd || assurance.dateValidityEnd;
-  assurance.timeValidityStart = timeValidityStart || assurance.timeValidityStart;
-  assurance.timeValidityEnd = timeValidityEnd || assurance.timeValidityEnd;
-  assurance.notes = notes !== undefined ? notes : assurance.notes;
-  
-  const now = new Date();
-  const endDate = assurance.dateValidityEnd ? new Date(assurance.dateValidityEnd) : null;
-  assurance.isActive = endDate ? endDate > now : false;
-  
-  debouncedSave();
-  res.json(assurance);
 });
 
 // CERTIFICAT TEMPORAIRE (CG en cours de changement)

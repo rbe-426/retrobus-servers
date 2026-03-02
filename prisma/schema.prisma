@@ -910,6 +910,24 @@ model VehicleControlTechnique {
   @@index([ctDate])
 }
 
+model VehicleAssurance {
+  id                  String   @id
+  parc                String   @unique
+  vehicleId           String?
+  attestationPath     String?
+  dateValidityStart   DateTime?
+  dateValidityEnd     DateTime?
+  timeValidityStart   String?   // Format: "HH:mm"
+  timeValidityEnd     String?   // Format: "HH:mm"
+  isActive            Boolean   @default(false)
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([parc])
+  @@index([vehicleId])
+}
+
 model VehicleCessionCertificate {
   id              String   @id
   parc            String   @unique
