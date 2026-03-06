@@ -3215,19 +3215,33 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
       return res.json({ permissions: [], role: 'MEMBER' });
     }
     
-    // Get permissions from member object
+    // Get permissions from member object (legacy)
     const memberPermissions = member.permissions || [];
-    console.log(`   ✅ Found member: ${member.email}, permissions: ${memberPermissions.length}`);
     
-    // Try to find site_user to get role
-    const siteUser = await prisma.site_users.findFirst({
+    // 🆕 También cargar permissions desde la tabla user_permissions (Prisma)
+    let siteUser = await prisma.site_users.findFirst({
       where: { linkedMemberId: member.id }
     });
     
+    const dbPermissions = siteUser 
+      ? await prisma.user_permissions.findMany({
+          where: { userId: siteUser.id }
+        })
+      : [];
+    
+    // Mergear permisos: legacy (memberPermissions) + base de datos (dbPermissions)
+    const allPermissions = [
+      ...memberPermissions,
+      ...dbPermissions
+    ];
+    
     const role = siteUser?.role || 'MEMBER';
     
+    console.log(`   ✅ Found member: ${member.email}, permissions: ${allPermissions.length}`);
+    
     res.json({ 
-      permissions: memberPermissions, 
+      permissions: allPermissions,
+      success: true,
       role, 
       memberId: member.id,
       email: member.email

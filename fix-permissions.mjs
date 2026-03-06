@@ -4,7 +4,7 @@ import crypto from 'crypto';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🔒 Configuration des restrictions d\'accès...\n');
+  console.log('🔄 Correction des restrictions d\'accès (actions format)...\n');
 
   const users = ['jsalim.camaroudine', 'm.ravichandran'];
   
@@ -30,19 +30,19 @@ async function main() {
     }
 
     // Supprimer les permissions existantes pour ce user
-    await prisma.user_permissions.deleteMany({
+    const deleted = await prisma.user_permissions.deleteMany({
       where: { userId: siteUser.id }
     });
-    console.log(`   🗑️  Permissions précédentes supprimées`);
+    console.log(`   🗑️  ${deleted.count} permission(s) supprimée(s)`);
 
-    // Ajouter les restrictions
+    // Ajouter les restrictions avec le bon format
     for (const { resource, label } of restrictedResources) {
       await prisma.user_permissions.create({
         data: {
           id: crypto.randomUUID(),
           userId: siteUser.id,
           resource: resource,
-          actions: JSON.stringify(['DENY']), // 🔒 Stocké comme JSON string
+          actions: JSON.stringify(['DENY']), // ✅ Au format JSON string
           grantedBy: 'SYSTEM',
           reason: 'Accès temporairement restreint',
           createdAt: new Date(),
@@ -55,23 +55,28 @@ async function main() {
   }
 
   console.log('\n' + '='.repeat(80));
-  console.log('📋 RÉSUMÉ DES RESTRICTIONS');
+  console.log('📋 VÉRIFICATION FINALE');
   console.log('='.repeat(80) + '\n');
 
-  console.log('❌ ACCÈS REFUSÉ À:');
-  restrictedResources.forEach(({ label }) => {
-    console.log(`   • ${label}`);
-  });
+  for (const username of users) {
+    const siteUser = await prisma.site_users.findUnique({
+      where: { username }
+    });
 
-  console.log('\n✅ ACCÈS AUTORISÉ À:');
-  console.log(`   • Tableau de bord`);
-  console.log(`   • Gestion des véhicules (parc)`);
-  console.log(`   • Gestion de la maintenance`);
-  console.log(`   • Événements`);
-  console.log(`   • Autres fonctionnalités`);
+    if (!siteUser) continue;
 
-  console.log('\n⏰ STATUT: TEMPORAIRE');
-  console.log('ℹ️  Peut être révoqué quand nécessaire\n');
+    const perms = await prisma.user_permissions.findMany({
+      where: { userId: siteUser.id }
+    });
+
+    console.log(`👤 ${username}:`);
+    perms.forEach(p => {
+      const actions = JSON.parse(p.actions || '[]');
+      console.log(`   • ${p.resource}: ${JSON.stringify(actions)}`);
+    });
+  }
+
+  console.log('\n✅ Restrictions corrigées!\n');
 }
 
 main()
