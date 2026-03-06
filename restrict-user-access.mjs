@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🔒 Configuration des restrictions d\'accès...\n');
 
-  const users = ['jsalim.camaroudine', 'm.ravichandran'];
+  const users = ['jsalim.camaroudine', 'm.ravichandran', 'j.amolot'];
   
   const restrictedResources = [
     { resource: 'FINANCE', label: 'Finances' },
