@@ -3436,11 +3436,40 @@ app.get('/api/documents/:documentId/download', requireAuth, async (req, res) => 
 // EVENTS - PRISMA avec fallback optionnel
 app.get(['/events', '/api/events'], requireAuth, async (req, res) => {
   try {
-    const events = await prisma.event.findMany({ orderBy: { date: 'desc' } });
-    res.json(events);
+    const { month, year } = req.query;
+    let where = {};
+
+    if (month !== undefined && year !== undefined) {
+      const monthNum = parseInt(month);
+      const yearNum = parseInt(year);
+      
+      const startDate = new Date(yearNum, monthNum, 1);
+      const endDate = new Date(yearNum, monthNum + 1, 0);
+      
+      where = {
+        date: {
+          gte: startDate,
+          lte: endDate
+        }
+      };
+    }
+
+    const events = await prisma.event.findMany({
+      where,
+      orderBy: { date: 'asc' }
+    });
+
+    res.json({
+      success: true,
+      data: events
+    });
   } catch (e) {
     console.error('❌ GET /events error:', e.message);
-    res.status(500).json({ error: 'Failed to fetch events', details: e.message });
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch events', 
+      details: e.message 
+    });
   }
 });
 
@@ -3834,6 +3863,114 @@ app.delete(['/events/:id/transactions/:transactionId', '/api/events/:id/transact
       return res.status(404).json({ error: 'Transaction not found' });
     }
     res.status(500).json({ error: 'Failed to unlink transaction', details: e.message });
+  }
+});
+
+// ============================================
+// DISPONIBILITÉS UTILISATEUR (PLANNING INDIVIDUEL)
+// ============================================
+app.get(['/planning/availabilities/:userId', '/api/planning/availabilities/:userId'], requireAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { month, year } = req.query;
+
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        error: 'month and year query parameters are required'
+      });
+    }
+
+    const monthNum = parseInt(month);
+    const yearNum = parseInt(year);
+
+    const availabilities = await prisma.userAvailability.findMany({
+      where: {
+        userId,
+        month: monthNum,
+        year: yearNum
+      }
+    });
+
+    // Transformer en objet date => isAvailable
+    const data = {};
+    availabilities.forEach(av => {
+      const key = `${av.year}-${av.month}-${av.day}`;
+      data[key] = av.isAvailable;
+    });
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (e) {
+    console.error('❌ GET /planning/availabilities/:userId error:', e.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch availabilities',
+      details: e.message
+    });
+  }
+});
+
+app.post(['/planning/availabilities', '/api/planning/availabilities'], requireAuth, async (req, res) => {
+  try {
+    const { userId, month, year, availabilities } = req.body;
+
+    if (!userId || month === undefined || year === undefined || !availabilities) {
+      return res.status(400).json({
+        success: false,
+        error: 'userId, month, year, and availabilities are required'
+      });
+    }
+
+    // Supprimer les disponibilités existantes pour ce mois
+    await prisma.userAvailability.deleteMany({
+      where: {
+        userId,
+        month: parseInt(month),
+        year: parseInt(year)
+      }
+    });
+
+    // Créer les nouvelles disponibilités
+    const created = [];
+    for (const [key, isAvailable] of Object.entries(availabilities)) {
+      // key est au format YYYY-MM-DD
+      const [y, m, d] = key.split('-').map(Number);
+      
+      const availability = await prisma.userAvailability.create({
+        data: {
+          id: `${userId}-${key}`,
+          userId,
+          year: y,
+          month: m,
+          day: d,
+          isAvailable
+        }
+      });
+      created.push(availability);
+    }
+
+    res.json({
+      success: true,
+      data: created,
+      message: `${created.length} availabilities saved`
+    });
+  } catch (e) {
+    console.error('❌ POST /planning/availabilities error:', e.message);
+    if (e.code === 'P2002') {
+      // Violation de contrainte unique
+      return res.status(400).json({
+        success: false,
+        error: 'Some availabilities already exist for this period'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save availabilities',
+      details: e.message
+    });
   }
 });
 

@@ -1226,3 +1226,18 @@ model retromerch_order_items {
   @@index([orderId])
   @@index([productId])
 }
+
+model UserAvailability {
+  id          String   @id @default(cuid())
+  userId      String
+  year        Int
+  month       Int
+  day         Int
+  isAvailable Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, year, month, day])
+  @@index([userId])
+  @@index([year, month])
+}
