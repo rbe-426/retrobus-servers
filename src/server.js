@@ -4143,6 +4143,37 @@ app.delete(['/invitations/:invitationId', '/api/invitations/:invitationId'], req
 });
 
 // ============================================
+// ACTIVE MEMBERS ENDPOINTS (pour les invitations)
+// ============================================
+app.get(['/members/active', '/api/members/active'], requireAuth, async (req, res) => {
+  try {
+    const activeMembers = await prisma.site_users.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        username: true
+      },
+      orderBy: { firstName: 'asc' }
+    });
+
+    res.json({
+      success: true,
+      data: activeMembers
+    });
+  } catch (e) {
+    console.error('❌ GET /members/active error:', e.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch active members',
+      details: e.message
+    });
+  }
+});
+
+// ============================================
 // ============================================
 // PLANIFICATIONS ENDPOINTS
 // ============================================
