@@ -3975,6 +3975,174 @@ app.post(['/planning/availabilities', '/api/planning/availabilities'], requireAu
 });
 
 // ============================================
+// EVENT INVITATIONS
+// ============================================
+app.get(['/events/:eventId/invitations', '/api/events/:eventId/invitations'], requireAuth, async (req, res) => {
+  try {
+    const invitations = await prisma.eventInvitation.findMany({
+      where: { eventId: req.params.eventId }
+    });
+    res.json({
+      success: true,
+      data: invitations
+    });
+  } catch (e) {
+    console.error('❌ GET /events/:eventId/invitations error:', e.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch invitations',
+      details: e.message
+    });
+  }
+});
+
+app.post(['/events/:eventId/invite', '/api/events/:eventId/invite'], requireAuth, async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userIds } = req.body;
+
+    if (!userIds || !Array.isArray(userIds)) {
+      return res.status(400).json({
+        success: false,
+        error: 'userIds array is required'
+      });
+    }
+
+    const invitations = [];
+    for (const userId of userIds) {
+      const invitation = await prisma.eventInvitation.upsert({
+        where: {
+          eventId_userId: {
+            eventId,
+            userId
+          }
+        },
+        update: { status: 'PENDING' },
+        create: {
+          eventId,
+          userId,
+          status: 'PENDING'
+        }
+      });
+      invitations.push(invitation);
+    }
+
+    res.json({
+      success: true,
+      data: invitations,
+      message: `${invitations.length} users invited`
+    });
+  } catch (e) {
+    console.error('❌ POST /events/:eventId/invite error:', e.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to invite users',
+      details: e.message
+    });
+  }
+});
+
+app.put(['/invitations/:invitationId/status', '/api/invitations/:invitationId/status'], requireAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    if (!['PENDING', 'ACCEPTED', 'DECLINED', 'MAYBE'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status'
+      });
+    }
+
+    const invitation = await prisma.eventInvitation.update({
+      where: { id: req.params.invitationId },
+      data: { status }
+    });
+
+    res.json({
+      success: true,
+      data: invitation
+    });
+  } catch (e) {
+    console.error('❌ PUT /invitations/:invitationId/status error:', e.message);
+    if (e.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        error: 'Invitation not found'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update invitation',
+      details: e.message
+    });
+  }
+});
+
+app.get(['/user/:userId/event-invitations', '/api/user/:userId/event-invitations'], requireAuth, async (req, res) => {
+  try {
+    const invitations = await prisma.eventInvitation.findMany({
+      where: { userId: req.params.userId },
+      include: {
+        // Pas de relation Event ici, on fera un join manuel si nécessaire
+      }
+    });
+
+    // Récupérer les événements associés
+    const eventIds = [...new Set(invitations.map(i => i.eventId))];
+    const events = await prisma.event.findMany({
+      where: { id: { in: eventIds } }
+    });
+
+    const eventMap = {};
+    events.forEach(e => {
+      eventMap[e.id] = e;
+    });
+
+    const data = invitations.map(inv => ({
+      ...inv,
+      event: eventMap[inv.eventId]
+    }));
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (e) {
+    console.error('❌ GET /user/:userId/event-invitations error:', e.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch invitations',
+      details: e.message
+    });
+  }
+});
+
+app.delete(['/invitations/:invitationId', '/api/invitations/:invitationId'], requireAuth, async (req, res) => {
+  try {
+    await prisma.eventInvitation.delete({
+      where: { id: req.params.invitationId }
+    });
+    res.json({
+      success: true,
+      message: 'Invitation deleted'
+    });
+  } catch (e) {
+    console.error('❌ DELETE /invitations/:invitationId error:', e.message);
+    if (e.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        error: 'Invitation not found'
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete invitation',
+      details: e.message
+    });
+  }
+});
+
+// ============================================
 // ============================================
 // PLANIFICATIONS ENDPOINTS
 // ============================================

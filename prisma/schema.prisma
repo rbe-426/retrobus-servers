@@ -1241,3 +1241,17 @@ model UserAvailability {
   @@index([userId])
   @@index([year, month])
 }
+
+model EventInvitation {
+  id        String   @id @default(cuid())
+  eventId   String
+  userId    String
+  status    String   @default("PENDING")  // PENDING, ACCEPTED, DECLINED, MAYBE
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+  @@index([status])
+}
