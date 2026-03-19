@@ -5676,9 +5676,11 @@ app.post('/api/finance/simulations/:id/run', requireAuth, (req, res) => {
 // /api/finance/documents -> returns all documents (finance perspective)
 app.get('/api/finance/documents', requireAuth, async (req, res) => {
   try {
+    console.log('📥 GET /api/finance/documents started...');
     const docs = await prisma.financial_documents.findMany({
       orderBy: { createdAt: 'desc' }
     });
+    console.log(`✅ ${docs.length} documents trouvés dans Prisma`);
     state.financialDocuments = docs.map(d => ({
       ...d,
       // Normaliser le statut selon le type
@@ -5688,11 +5690,16 @@ app.get('/api/finance/documents', requireAuth, async (req, res) => {
       date: d.date?.toISOString?.() || d.date,
       dueDate: d.dueDate?.toISOString?.() || d.dueDate
     }));
-    console.log('✅ Documents financiers chargés depuis Prisma');
+    console.log('✅ Documents financiers chargés et normalisés');
     res.json(state.financialDocuments || []);
   } catch (e) {
-    console.error('⚠️ GET /api/finance/documents fallback:', e.message);
-    res.json(state.financialDocuments || []);
+    console.error('❌ Erreur GET /api/finance/documents:', e.message);
+    console.error('📋 Stack:', e.stack);
+    res.status(500).json({
+      success: false,
+      error: 'Impossible de charger les documents',
+      details: e.message
+    });
   }
 });
 
@@ -5701,10 +5708,14 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
   try {
     const docId = uid();
     const type = req.body.type || 'QUOTE';
+    const number = req.body.number || `${type === 'QUOTE' ? 'DEV' : 'FACT'}-${Date.now()}`;
+    
+    console.log(`📝 Creating new document: type=${type}, number=${number}`);
+    
     const docData = {
       id: docId,
       type: type,
-      number: req.body.number || `DOC-${Date.now()}`,
+      number: number,
       title: req.body.title || '',
       description: req.body.description || null,
       date: req.body.date ? new Date(req.body.date) : new Date(),
@@ -5730,9 +5741,13 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
       updatedAt: new Date()
     };
     
+    console.log(`🔧 Document data prepared: ${JSON.stringify({...docData, documentUrl: docData.documentUrl ? '✅' : '❌'}).substring(0, 200)}...`);
+    
     const doc = await prisma.financial_documents.create({
       data: docData
     });
+    
+    console.log(`✅ Document created in Prisma: ${docId}`);
     
     const result = {
       ...doc,
@@ -5745,21 +5760,31 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
     
     state.financialDocuments.push(result);
     debouncedSave();
-    console.log('✅ Document créé dans Prisma:', docId);
+    
     res.status(201).json(result);
   } catch (e) {
-    console.error('❌ POST /api/finance/documents error:', e.message, e.code);
-    // Fallback si Prisma échoue
-    const doc = {
-      id: uid(),
-      createdBy: req.user?.email || req.user?.name || 'API',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      ...req.body
-    };
-    state.financialDocuments.push(doc);
-    debouncedSave();
-    res.status(201).json(doc);
+    console.error('❌ POST /api/finance/documents error:', e.message);
+    console.error('📋 Error code:', e.code);
+    console.error('📋 Error meta:', e.meta);
+    console.error('📋 Full error:', e);
+    
+    // Check for unique constraint violation
+    if (e.code === 'P2002') {
+      console.error('⚠️ Unique constraint violation on fields:', e.meta?.target);
+      return res.status(400).json({
+        success: false,
+        error: 'Unique constraint violation',
+        details: `Un document avec le type "${req.body.type}" et le numéro "${req.body.number}" existe déjà`,
+        code: 'UNIQUE_CONSTRAINT'
+      });
+    }
+    
+    // Return error response instead of fallback
+    res.status(500).json({
+      success: false,
+      error: 'Impossible de créer le document',
+      details: e.message
+    });
   }
 });
 
