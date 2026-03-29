@@ -531,6 +531,9 @@ model members {
   notes               String?
   matricule           String?     @unique
   password            String?
+  isPasswordTemporary Boolean     @default(false)
+  mustChangePassword  Boolean     @default(false)
+  passwordChangedAt   DateTime?
   role                String      @default("USER")
   status              String      @default("active")
   permissions         Json?

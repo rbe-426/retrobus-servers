@@ -8,6 +8,12 @@ import { PrismaClient } from '@prisma/client';
 import nodemailer from 'nodemailer';
 import subventionsRouter from './subventions.mjs';
 import retromerchRouter from './retromerch.mjs';
+import { 
+  generateTemporaryPassword, 
+  hashPasswordForStorage, 
+  verifyPassword, 
+  validatePasswordStrength 
+} from './lib/passwordUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -807,40 +813,89 @@ app.post(['/auth/login','/api/auth/login'], (req, res) => {
 });
 
 // Member login endpoint - accepts identifier (email or username) and password
-app.post(['/auth/member-login','/api/auth/member-login'], (req, res) => {
-  const { identifier, password } = req.body || {};
-  if (!identifier || !password) return res.status(400).json({ error: 'identifier & password requis' });
-  
-  // Try to find member by matricule, email (exact or partial), or firstname+lastname
-  let member = state.members.find(m => {
-    const id = identifier.toLowerCase();
-    const matricule = m.matricule?.toLowerCase() || '';
-    const email = m.email?.toLowerCase() || '';
-    const fullName = `${m.firstName || ''}${m.lastName || ''}`.toLowerCase();
+app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
+  try {
+    const { identifier, password } = req.body || {};
+    if (!identifier || !password) return res.status(400).json({ error: 'identifier & password requis' });
     
-    // Exact matricule match (primary - this is the login field)
-    if (matricule === id) return true;
-    // Exact email match
-    if (email === id) return true;
-    // Partial email match: identifier matches beginning of email (w.belaidi matches w.belaidi@...)
-    if (email.startsWith(id)) return true;
-    // Or if identifier includes @, try exact email
-    if (id.includes('@') && email === id) return true;
-    // Or full name match
-    if (fullName.includes(id)) return true;
+    // Try to find member from Prisma by matricule, email or firstname+lastname
+    let member = await prisma.members.findFirst({
+      where: {
+        OR: [
+          { matricule: identifier },
+          { email: identifier },
+          { email: { startsWith: identifier } }
+        ]
+      }
+    });
+
+    // If not found in Prisma, try state.members (legacy fallback)
+    if (!member) {
+      const stateM = state.members.find(m => {
+        const id = identifier.toLowerCase();
+        const matricule = m.matricule?.toLowerCase() || '';
+        const email = m.email?.toLowerCase() || '';
+        
+        if (matricule === id) return true;
+        if (email === id) return true;
+        if (email.startsWith(id)) return true;
+        if (id.includes('@') && email === id) return true;
+        
+        return false;
+      });
+
+      if (!stateM) {
+        return res.status(401).json({ error: 'Identifiants invalides' });
+      }
+
+      member = stateM;
+    }
     
-    return false;
-  });
-  
-  // If not found, return error
-  if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
-  
-  // Get role from member.role first, fall back to site_users if needed
-  let role = member.role || 'MEMBER';
-  
-  const email = member.email || '';
-  const token = 'stub.' + Buffer.from(email).toString('base64');
-  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, lastName: member.lastName, role: role, permissions: member.permissions || [] } });
+    // Verify password
+    if (!member.password) {
+      return res.status(401).json({ error: 'No password set for this account' });
+    }
+
+    // Try to verify with new hashed format first, then legacy plaintext
+    let passwordValid = false;
+    if (member.password.includes(':')) {
+      // New format: hash:salt:iterations
+      passwordValid = verifyPassword(password, member.password);
+    } else {
+      // Legacy plaintext password
+      passwordValid = (password === member.password);
+    }
+
+    if (!passwordValid) {
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+    
+    // Get role
+    let role = member.role || 'MEMBER';
+    
+    const email = member.email || '';
+    const token = 'stub.' + Buffer.from(email).toString('base64');
+
+    // Check if password must be changed
+    const mustChangePassword = member.mustChangePassword === true || member.isPasswordTemporary === true;
+    
+    res.json({ 
+      token, 
+      user: { 
+        id: member.id, 
+        email: member.email, 
+        firstName: member.firstName, 
+        lastName: member.lastName, 
+        role: role, 
+        permissions: member.permissions || [],
+        mustChangePassword: mustChangePassword,
+        isPasswordTemporary: member.isPasswordTemporary === true
+      } 
+    });
+  } catch (e) {
+    console.error('❌ POST /api/auth/member-login error:', e.message);
+    res.status(500).json({ error: 'Login failed', details: e.message });
+  }
 });
 
 app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
@@ -5169,6 +5224,148 @@ app.delete('/api/admin/users/:id', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('❌ DELETE /api/admin/users/:id error:', e.message);
     res.status(500).json({ error: 'Failed to delete user', details: e.message });
+  }
+});
+
+// POST /api/admin/users/:id/reset-password - Generate temporary password
+app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if user exists
+    const user = await prisma.members.findUnique({
+      where: { id }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Generate temporary password
+    const tempPassword = generateTemporaryPassword();
+    const hashedPassword = hashPasswordForStorage(tempPassword);
+
+    // Update user with hashed temporary password
+    const updatedUser = await prisma.members.update({
+      where: { id },
+      data: {
+        password: hashedPassword,
+        isPasswordTemporary: true,
+        mustChangePassword: true,
+        updatedAt: new Date()
+      }
+    });
+
+    // Update in memory state
+    const stateIndex = state.members.findIndex(m => m.id === id);
+    if (stateIndex !== -1) {
+      state.members[stateIndex] = {
+        ...state.members[stateIndex],
+        password: hashedPassword,
+        isPasswordTemporary: true,
+        mustChangePassword: true
+      };
+    }
+
+    debouncedSave();
+
+    console.log('✅ Temporary password generated for user:', id);
+    
+    // Return temporary password (only time it will be visible)
+    res.json({ 
+      success: true,
+      tempPassword: tempPassword,
+      message: 'Mot de passe temporaire généré. L\'utilisateur doit le changer à la première connexion.',
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName
+      }
+    });
+  } catch (e) {
+    console.error('❌ POST /api/admin/users/:id/reset-password error:', e.message);
+    res.status(500).json({ error: 'Failed to reset password', details: e.message });
+  }
+});
+
+// POST /api/auth/change-password - Change user password
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'Passwords do not match' });
+    }
+
+    // Get user from Prisma
+    const user = await prisma.members.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Verify current password
+    if (!user.password || !verifyPassword(currentPassword, user.password)) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    // Validate new password strength
+    const validation = validatePasswordStrength(newPassword);
+    if (!validation.isValid) {
+      return res.status(400).json({ 
+        error: 'Password does not meet requirements',
+        requirements: validation.errors
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = hashPasswordForStorage(newPassword);
+
+    // Update user
+    const updatedUser = await prisma.members.update({
+      where: { id: userId },
+      data: {
+        password: hashedPassword,
+        isPasswordTemporary: false,
+        mustChangePassword: false,
+        passwordChangedAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+
+    // Update in memory state
+    const stateIndex = state.members.findIndex(m => m.id === userId);
+    if (stateIndex !== -1) {
+      state.members[stateIndex] = {
+        ...state.members[stateIndex],
+        password: hashedPassword,
+        isPasswordTemporary: false,
+        mustChangePassword: false
+      };
+    }
+
+    debouncedSave();
+
+    console.log('✅ Password changed for user:', userId);
+    res.json({ 
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (e) {
+    console.error('❌ POST /api/auth/change-password error:', e.message);
+    res.status(500).json({ error: 'Failed to change password', details: e.message });
   }
 });
 
