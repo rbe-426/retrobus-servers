@@ -559,7 +559,8 @@ const loadStateFromPrisma = async () => {
       documents,
       scheduledOps,
       financialDocs,
-      categories
+      categories,
+      retroNews
     ] = await Promise.all([
       prisma.finance_expense_reports.findMany().catch(() => []),
       prisma.finance_transactions.findMany().catch(() => []),
@@ -567,7 +568,8 @@ const loadStateFromPrisma = async () => {
       prisma.Document.findMany().catch(() => []),
       prisma.scheduled_operations.findMany().catch(() => []),
       prisma.financial_documents.findMany().catch(() => []),
-      prisma.finance_categories.findMany().catch(() => [])
+      prisma.finance_categories.findMany().catch(() => []),
+      prisma.RetroNews.findMany().catch(() => [])
     ]);
     
     if (expenseReports.length > 0) {
@@ -609,6 +611,15 @@ const loadStateFromPrisma = async () => {
         type: c.type || 'BASIC'
       }));
       console.log(`✅ ${categories.length} catégories chargées depuis Prisma`);
+    }
+    if (retroNews.length > 0) {
+      state.retroNews = retroNews.map(n => ({
+        ...n,
+        createdAt: n.createdAt?.toISOString?.() || n.createdAt,
+        updatedAt: n.updatedAt?.toISOString?.() || n.updatedAt,
+        publishedAt: n.publishedAt?.toISOString?.() || n.publishedAt
+      }));
+      console.log(`✅ ${retroNews.length} actualités chargées depuis Prisma`);
     }
   } catch (error) {
     console.warn('⚠️  Erreur chargement Prisma au démarrage:', error.message);
