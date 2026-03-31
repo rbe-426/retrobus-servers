@@ -5501,9 +5501,9 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   try {
     const { currentPassword, newPassword, confirmPassword } = req.body;
-    const userId = req.user?.id;
+    const userEmail = req.user?.id; // Decoded from token (usually email)
 
-    if (!userId) {
+    if (!userEmail) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
@@ -5515,23 +5515,34 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Passwords do not match' });
     }
 
-    // Try to find user in members first
-    let user = await prisma.members.findUnique({
-      where: { id: userId }
+    // Try to find user in members by email first
+    let user = await prisma.members.findFirst({
+      where: { 
+        OR: [
+          { email: userEmail },
+          { id: userEmail }
+        ]
+      }
     });
     let userType = 'members';
 
-    // If not found in members, try site_users
+    // If not found in members, try site_users by email
     if (!user) {
-      user = await prisma.site_users.findUnique({
-        where: { id: userId }
+      user = await prisma.site_users.findFirst({
+        where: {
+          OR: [
+            { email: userEmail },
+            { username: userEmail },
+            { id: userEmail }
+          ]
+        }
       });
       userType = 'site_users';
     }
 
     // Fallback to state.members if still not found
     if (!user) {
-      user = state.members.find(m => m.id === userId);
+      user = state.members.find(m => m.id === userEmail || m.email === userEmail);
       userType = 'state_members';
     }
 
@@ -5559,7 +5570,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     // Update user based on type
     if (userType === 'members') {
       await prisma.members.update({
-        where: { id: userId },
+        where: { id: user.id },
         data: {
           password: hashedPassword,
           isPasswordTemporary: false,
@@ -5569,7 +5580,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
       });
     } else if (userType === 'site_users') {
       await prisma.site_users.update({
-        where: { id: userId },
+        where: { id: user.id },
         data: {
           password: hashedPassword,
           mustChangePassword: false,
@@ -5579,7 +5590,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     }
 
     // Update in memory state
-    const stateIndex = state.members.findIndex(m => m.id === userId);
+    const stateIndex = state.members.findIndex(m => m.id === user.id);
     if (stateIndex !== -1) {
       state.members[stateIndex] = {
         ...state.members[stateIndex],
@@ -5591,7 +5602,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 
     debouncedSave();
 
-    console.log('✅ Password changed for user:', userId, 'type:', userType);
+    console.log('✅ Password changed for user:', user.id, 'email:', userEmail, 'type:', userType);
     res.json({ 
       success: true,
       message: 'Password changed successfully'
