@@ -5515,10 +5515,25 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Passwords do not match' });
     }
 
-    // Get user from Prisma
-    const user = await prisma.members.findUnique({
+    // Try to find user in members first
+    let user = await prisma.members.findUnique({
       where: { id: userId }
     });
+    let userType = 'members';
+
+    // If not found in members, try site_users
+    if (!user) {
+      user = await prisma.site_users.findUnique({
+        where: { id: userId }
+      });
+      userType = 'site_users';
+    }
+
+    // Fallback to state.members if still not found
+    if (!user) {
+      user = state.members.find(m => m.id === userId);
+      userType = 'state_members';
+    }
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -5541,17 +5556,27 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     // Hash new password
     const hashedPassword = hashPasswordForStorage(newPassword);
 
-    // Update user
-    const updatedUser = await prisma.members.update({
-      where: { id: userId },
-      data: {
-        password: hashedPassword,
-        isPasswordTemporary: false,
-        mustChangePassword: false,
-        passwordChangedAt: new Date(),
-        updatedAt: new Date()
-      }
-    });
+    // Update user based on type
+    if (userType === 'members') {
+      await prisma.members.update({
+        where: { id: userId },
+        data: {
+          password: hashedPassword,
+          isPasswordTemporary: false,
+          mustChangePassword: false,
+          updatedAt: new Date()
+        }
+      });
+    } else if (userType === 'site_users') {
+      await prisma.site_users.update({
+        where: { id: userId },
+        data: {
+          password: hashedPassword,
+          mustChangePassword: false,
+          updatedAt: new Date()
+        }
+      });
+    }
 
     // Update in memory state
     const stateIndex = state.members.findIndex(m => m.id === userId);
@@ -5566,7 +5591,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 
     debouncedSave();
 
-    console.log('✅ Password changed for user:', userId);
+    console.log('✅ Password changed for user:', userId, 'type:', userType);
     res.json({ 
       success: true,
       message: 'Password changed successfully'
