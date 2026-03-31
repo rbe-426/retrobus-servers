@@ -4,6 +4,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import nodemailer from 'nodemailer';
 import subventionsRouter from './subventions.mjs';
@@ -2904,135 +2905,139 @@ app.post(['/api/retro-requests/:id/link-facture'], requireAuth, async (req, res)
 });
 
 // RETRO NEWS (content management) - PERSISTED IN PRISMA
-app.get(['/api/retro-news'], requireAuth, async (req, res) => {
+// 🎯 HELPER: Normalize RetroNews field mapping (frontend → Prisma)
+const normalizeRetroNewsForPrisma = (data, userId) => {
+  return {
+    id: data.id || randomUUID(), // Generate UUID if not provided
+    title: String(data.title || 'Sans titre').trim(),
+    content: String(data.content || data.body || '').trim(), // Prisma schema uses 'content'
+    excerpt: data.excerpt ? String(data.excerpt).trim() : undefined,
+    imageUrl: data.imageUrl ? String(data.imageUrl).trim() : undefined,
+    author: String(data.author || userId || 'anonyme').trim(),
+    published: Boolean(data.published !== undefined ? data.published : data.status === 'published'), // Convert status → published boolean
+    featured: Boolean(data.featured || data.isFeatured || false),
+    showOnExternal: Boolean(data.showOnExternal || false),
+    createdBy: data.createdBy || userId,
+    publishedAt: data.publishedAt || (Boolean(data.published) ? new Date() : null),
+    updatedAt: new Date()
+  };
+};
+
+// 🎯 HELPER: Response format (Prisma → frontend)
+const formatRetroNewsForFrontend = (prismaNews) => ({
+  id: prismaNews.id,
+  title: prismaNews.title,
+  body: prismaNews.content, // Map content to body for frontend
+  content: prismaNews.content,
+  excerpt: prismaNews.excerpt,
+  imageUrl: prismaNews.imageUrl,
+  author: prismaNews.author,
+  status: prismaNews.published ? 'published' : 'draft', // Map published boolean to status string
+  published: prismaNews.published,
+  isFeatured: prismaNews.featured, // Map featured to isFeatured for frontend
+  featured: prismaNews.featured,
+  showOnExternal: prismaNews.showOnExternal,
+  createdBy: prismaNews.createdBy,
+  publishedAt: prismaNews.publishedAt,
+  createdAt: prismaNews.createdAt,
+  updatedAt: prismaNews.updatedAt
+});
+
+// ============================================
+// RETRO NEWS ENDPOINTS
+// ============================================
+
+// ✅ GET /api/retro-news - Fetch all news
+app.get('/api/retro-news', async (req, res) => {
   try {
-    // Load from Prisma (source of truth)
-    const newsFromDb = await prisma.retroNews.findMany({
-      orderBy: { createdAt: 'desc' }
+    const news = await prisma.retroNews.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100 // Limit results
     });
-    // Also return in-memory state for backward compatibility
-    res.json(newsFromDb.length > 0 ? newsFromDb : state.retroNews || []);
+    console.log(`✅ Loaded ${news.length} retro news from Prisma`);
+    res.json(news.map(formatRetroNewsForFrontend));
   } catch (e) {
-    console.warn('⚠️ Failed to load news from Prisma:', e.message);
-    res.json(state.retroNews || []);
+    console.error('❌ GET /api/retro-news error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch news' });
   }
 });
 
+// ✅ POST /api/retro-news - Create new news
 app.post(['/api/retro-news'], requireAuth, async (req, res) => {
   try {
-    console.log('📝 POST /api/retro-news:', { title: req.body.title, body: req.body.body, content: req.body.content });
+    const newsData = normalizeRetroNewsForPrisma(req.body, req.user?.id || req.user?.email);
     
-    const newsId = uid();
-    const newsData = {
-      id: newsId,
-      title: req.body.title || 'Sans titre',
-      content: req.body.body || req.body.content || '',  // Save in 'content' field for Prisma
-      author: req.user?.name || req.user?.email || 'anonyme',
-      published: req.body.status === 'published',
-      createdBy: req.user?.id || req.user?.email || 'anonymous',
-      publishedAt: req.body.status === 'published' ? new Date() : null,
-      updatedAt: new Date()  // ✅ REQUIRED by Prisma schema
-    };
-    
-    // Save to Prisma (source of truth)
-    const savedNews = await prisma.retroNews.create({ data: newsData });
-    
-    // Also update in-memory state
-    state.retroNews.push({
-      ...savedNews,
-      body: savedNews.content  // Alias for backward compatibility
+    console.log('📝 Creating RetroNews:', { 
+      title: newsData.title, 
+      author: newsData.author, 
+      published: newsData.published 
     });
-    debouncedSave();
     
-    console.log('✅ News créée dans Prisma:', { id: newsId, title: newsData.title });
-    res.status(201).json({ ...savedNews, body: savedNews.content });
+    const created = await prisma.retroNews.create({
+      data: newsData
+    });
+    
+    console.log(`✅ RetroNews created: ${created.id}`);
+    res.status(201).json(formatRetroNewsForFrontend(created));
   } catch (e) {
     console.error('❌ POST /api/retro-news error:', e.message);
-    // Fallback: save to memory only
-    const news = {
-      id: uid(),
-      title: req.body.title,
-      content: req.body.body || req.body.content || '',
-      body: req.body.body || req.body.content || '',
-      author: req.user?.name || req.user?.email || 'anonyme',
-      published: req.body.status === 'published',
-      createdBy: req.user?.id || req.user?.email || 'anonymous',
-      createdAt: new Date().toISOString(),
-      publishedAt: new Date().toISOString()
-    };
-    state.retroNews.push(news);
-    debouncedSave();
-    res.status(201).json(news);
+    res.status(500).json({ error: 'Failed to create news: ' + e.message });
   }
 });
 
+// ✅ PUT /api/retro-news/:id - Update news
 app.put(['/api/retro-news/:id'], requireAuth, async (req, res) => {
   try {
     const newsId = req.params.id;
-    const updateData = {
-      title: req.body.title,
-      content: req.body.body || req.body.content,  // Save in 'content' field
-      published: req.body.status === 'published',
-      featured: req.body.isFeatured || false,  // ✅ Use 'featured' not 'isFeatured'
-      publishedAt: req.body.status === 'published' ? new Date() : null,
-      updatedAt: new Date()  // ✅ REQUIRED by Prisma schema
-    };
+    const newsData = normalizeRetroNewsForPrisma(req.body, req.user?.id || req.user?.email);
     
-    // Update in Prisma
+    // Remove fields that shouldn't be updated
+    const updateData = { ...newsData };
+    delete updateData.id; // Cannot update primary key
+    delete updateData.createdAt; // Cannot update creation date
+    delete updateData.createdBy; // Cannot change original creator
+    
+    console.log('🔄 Updating RetroNews:', { id: newsId, title: updateData.title });
+    
     const updated = await prisma.retroNews.update({
       where: { id: newsId },
       data: updateData
     });
     
-    // Update in-memory state
-    const idx = state.retroNews.findIndex(r => r.id === newsId);
-    if (idx !== -1) {
-      state.retroNews[idx] = {
-        ...updated,
-        body: updated.content,
-        status: updated.published ? 'published' : 'draft'
-      };
-    }
-    debouncedSave();
-    
-    res.json({ ...updated, body: updated.content, status: updated.published ? 'published' : 'draft' });
+    console.log(`✅ RetroNews updated: ${newsId}`);
+    res.json(formatRetroNewsForFrontend(updated));
   } catch (e) {
+    if (e.code === 'P2025') {
+      // Not found
+      console.warn(`⚠️ RetroNews not found: ${req.params.id}`);
+      return res.status(404).json({ error: 'News not found' });
+    }
     console.error('❌ PUT /api/retro-news error:', e.message);
-    // Fallback: update in memory
-    const idx = state.retroNews.findIndex(r => r.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'News not found' });
-    
-    state.retroNews[idx] = {
-      ...state.retroNews[idx],
-      title: req.body.title || state.retroNews[idx].title,
-      body: req.body.body || req.body.content || state.retroNews[idx].body,
-      content: req.body.body || req.body.content || state.retroNews[idx].content,
-      status: req.body.status || state.retroNews[idx].status,
-      updatedAt: new Date().toISOString()
-    };
-    debouncedSave();
-    res.json(state.retroNews[idx]);
+    res.status(500).json({ error: 'Failed to update news: ' + e.message });
   }
 });
 
+// ✅ DELETE /api/retro-news/:id - Delete news
 app.delete(['/api/retro-news/:id'], requireAuth, async (req, res) => {
   try {
-    // Delete from Prisma
-    await prisma.retroNews.delete({
-      where: { id: req.params.id }
+    const newsId = req.params.id;
+    
+    console.log('🗑️ Deleting RetroNews:', newsId);
+    
+    const deleted = await prisma.retroNews.delete({
+      where: { id: newsId }
     });
     
-    // Delete from in-memory state
-    state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
-    debouncedSave();
-    
-    res.json({ ok: true });
+    console.log(`✅ RetroNews deleted: ${newsId}`);
+    res.json({ ok: true, id: newsId });
   } catch (e) {
+    if (e.code === 'P2025') {
+      // Not found
+      console.warn(`⚠️ RetroNews not found: ${req.params.id}`);
+      return res.status(404).json({ error: 'News not found' });
+    }
     console.error('❌ DELETE /api/retro-news error:', e.message);
-    // Fallback: delete from memory only
-    state.retroNews = state.retroNews.filter(r => r.id !== req.params.id);
-    debouncedSave();
-    res.json({ ok: true });
+    res.status(500).json({ error: 'Failed to delete news: ' + e.message });
   }
 });
 
