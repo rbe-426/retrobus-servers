@@ -2930,7 +2930,8 @@ app.post(['/api/retro-news'], requireAuth, async (req, res) => {
       author: req.user?.name || req.user?.email || 'anonyme',
       published: req.body.status === 'published',
       createdBy: req.user?.id || req.user?.email || 'anonymous',
-      publishedAt: req.body.status === 'published' ? new Date() : null
+      publishedAt: req.body.status === 'published' ? new Date() : null,
+      updatedAt: new Date()  // ✅ REQUIRED by Prisma schema
     };
     
     // Save to Prisma (source of truth)
@@ -2972,8 +2973,9 @@ app.put(['/api/retro-news/:id'], requireAuth, async (req, res) => {
       title: req.body.title,
       content: req.body.body || req.body.content,  // Save in 'content' field
       published: req.body.status === 'published',
+      featured: req.body.isFeatured || false,  // ✅ Use 'featured' not 'isFeatured'
       publishedAt: req.body.status === 'published' ? new Date() : null,
-      isFeatured: req.body.isFeatured || false  // Ajout du statut vedette
+      updatedAt: new Date()  // ✅ REQUIRED by Prisma schema
     };
     
     // Update in Prisma
