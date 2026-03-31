@@ -5180,6 +5180,10 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Email is required' });
     }
     
+    if (!firstName || !lastName) {
+      return res.status(400).json({ error: 'firstName and lastName are required' });
+    }
+    
     // Check if user already exists in Prisma
     const existingInPrisma = await prisma.members.findUnique({
       where: { email }
@@ -5189,19 +5193,24 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       return res.status(409).json({ error: 'User with this email already exists' });
     }
     
+    // Generate temporary password if not provided
+    const tempPassword = password || generateTemporaryPassword();
+    const hashedPassword = hashPasswordForStorage(tempPassword);
+    
     // Create in Prisma (single source of truth)
     const newMember = await prisma.members.create({
       data: {
         id: uid(),
         email,
-        firstName: firstName || '',
-        lastName: lastName || '',
+        firstName,
+        lastName,
         matricule: matricule || '',
-        password: password || '',
+        password: hashedPassword,
+        isPasswordTemporary: !password ? true : false,
+        mustChangePassword: !password ? true : false,
         role: role || 'USER',
         status: 'active',
-        permissions: [],
-        loginEnabled: true,
+        permissions: {},
         createdAt: new Date(),
         updatedAt: new Date()
       }
@@ -5217,16 +5226,19 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       password: newMember.password,
       role: newMember.role,
       status: newMember.status,
-      permissions: newMember.permissions || [],
-      loginEnabled: newMember.loginEnabled,
-      lastLoginAt: newMember.lastLoginAt?.toISOString(),
+      isPasswordTemporary: newMember.isPasswordTemporary,
+      mustChangePassword: newMember.mustChangePassword,
+      permissions: newMember.permissions || {},
       createdAt: newMember.createdAt.toISOString()
     });
     
     debouncedSave();
     
-    console.log('✅ User créé:', newMember.id, email, 'role:', role, 'loginEnabled: true');
-    res.status(201).json({ user: newMember });
+    console.log('✅ User créé:', newMember.id, email, 'role:', role, 'isPasswordTemporary:', newMember.isPasswordTemporary, 'tempPassword:', tempPassword);
+    res.status(201).json({ 
+      user: newMember,
+      temporaryPassword: tempPassword // Return temp password for admin to communicate
+    });
   } catch (e) {
     console.error('❌ POST /api/admin/users error:', e.message);
     res.status(500).json({ error: 'Failed to create user', details: e.message });
@@ -5321,6 +5333,10 @@ app.post('/api/admin/users/create-with-password', requireAuth, async (req, res) 
       return res.status(400).json({ error: 'Email and password are required' });
     }
     
+    if (!firstName || !lastName) {
+      return res.status(400).json({ error: 'firstName and lastName are required' });
+    }
+    
     // Check if user already exists
     const existingInPrisma = await prisma.members.findUnique({
       where: { email }
@@ -5330,19 +5346,21 @@ app.post('/api/admin/users/create-with-password', requireAuth, async (req, res) 
       return res.status(409).json({ error: 'User with this email already exists' });
     }
     
-    // Create with PERMANENT password (plaintext) - no temporary redirect
+    // Store with hashed password (permanent)
+    const hashedPassword = hashPasswordForStorage(password);
+    
+    // Create with PERMANENT password - no temporary redirect
     const newMember = await prisma.members.create({
       data: {
         id: uid(),
         email,
-        firstName: firstName || '',
-        lastName: lastName || '',
-        password: password, // Store plaintext for simple auth
+        firstName,
+        lastName,
+        password: hashedPassword,
         role: role || 'USER',
         status: 'active',
-        permissions: [],
-        loginEnabled: true,
-        isPasswordTemporary: false, // NOT temporary - direct login
+        permissions: {},
+        isPasswordTemporary: false,
         mustChangePassword: false,
         createdAt: new Date(),
         updatedAt: new Date()
@@ -5358,10 +5376,9 @@ app.post('/api/admin/users/create-with-password', requireAuth, async (req, res) 
       password: newMember.password,
       role: newMember.role,
       status: newMember.status,
-      permissions: newMember.permissions || [],
-      loginEnabled: newMember.loginEnabled,
       isPasswordTemporary: false,
       mustChangePassword: false,
+      permissions: newMember.permissions || {},
       createdAt: newMember.createdAt.toISOString()
     });
     
