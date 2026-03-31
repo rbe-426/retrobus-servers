@@ -5249,10 +5249,47 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
 app.put('/api/admin/users/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { firstName, lastName, role } = req.body;
+    const { firstName, lastName, role, hasInternalAccess, hasExternalAccess } = req.body;
 
-    // Check if user exists
-    const existingUser = await prisma.members.findUnique({
+    // Try site_users first (admin users)
+    let existingUser = await prisma.site_users.findUnique({
+      where: { id }
+    });
+
+    if (existingUser) {
+      // Update in site_users (admin accounts)
+      const updatedUser = await prisma.site_users.update({
+        where: { id },
+        data: {
+          firstName: firstName !== undefined ? firstName : existingUser.firstName,
+          lastName: lastName !== undefined ? lastName : existingUser.lastName,
+          role: role !== undefined ? role : existingUser.role,
+          hasInternalAccess: hasInternalAccess !== undefined ? hasInternalAccess : existingUser.hasInternalAccess,
+          hasExternalAccess: hasExternalAccess !== undefined ? hasExternalAccess : existingUser.hasExternalAccess,
+          updatedAt: new Date()
+        }
+      });
+
+      // Also update in state if exists
+      const stateIndex = state.members.findIndex(m => m.id === id);
+      if (stateIndex !== -1) {
+        state.members[stateIndex] = {
+          ...state.members[stateIndex],
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          role: updatedUser.role,
+          hasInternalAccess: updatedUser.hasInternalAccess,
+          hasExternalAccess: updatedUser.hasExternalAccess
+        };
+      }
+
+      debouncedSave();
+      console.log('✅ Admin user updated:', id, firstName, lastName, `intranet:${hasInternalAccess}`, `externe:${hasExternalAccess}`);
+      return res.json({ user: updatedUser });
+    }
+
+    // Fall back to members (member accounts)
+    existingUser = await prisma.members.findUnique({
       where: { id }
     });
 
@@ -5260,7 +5297,7 @@ app.put('/api/admin/users/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Update in Prisma
+    // Update in members
     const updatedMember = await prisma.members.update({
       where: { id },
       data: {
@@ -5283,8 +5320,7 @@ app.put('/api/admin/users/:id', requireAuth, async (req, res) => {
     }
 
     debouncedSave();
-
-    console.log('✅ User updated:', id, firstName, lastName);
+    console.log('✅ Member updated:', id, firstName, lastName);
     res.json({ user: updatedMember });
   } catch (e) {
     console.error('❌ PUT /api/admin/users/:id error:', e.message);
