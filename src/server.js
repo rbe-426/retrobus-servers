@@ -819,8 +819,6 @@ app.post(['/auth/login','/api/auth/login'], async (req, res) => {
           role: member.role,
           status: member.status,
           permissions: member.permissions || [],
-          loginEnabled: member.loginEnabled,
-          lastLoginAt: member.lastLoginAt?.toISOString(),
           createdAt: member.createdAt instanceof Date ? member.createdAt.toISOString() : member.createdAt
         });
       }
@@ -928,23 +926,26 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
     
-    // ✅ AUTO-ACTIVATE LOGIN & UPDATE LAST LOGIN on successful auth
+    // ✅ Check if login is enabled (status === "active")
+    if (member.status && member.status !== 'active') {
+      return res.status(403).json({ error: 'Compte désactivé. Veuillez contacter un administrateur.' });
+    }
+    
+    // Update last login timestamp
     try {
       if (member.id && typeof member.id === 'string' && member.id.length > 0) {
         // Prisma member: update in database
         await prisma.members.update({
           where: { id: member.id },
           data: {
-            loginEnabled: true,  // Auto-activate access on first successful login
-            lastLoginAt: new Date()
+            status: 'active',  // Ensure status is active on successful login
+            passwordChangedAt: member.isPasswordTemporary ? member.passwordChangedAt : new Date()
           }
         });
-        member.loginEnabled = true;
-        member.lastLoginAt = new Date();
+        member.status = 'active';
       } else {
         // Legacy state.members: update in state
-        member.loginEnabled = true;
-        member.lastLoginAt = new Date();
+        member.status = 'active';
       }
     } catch (err) {
       console.warn('⚠️ Could not update login status:', err.message);
@@ -971,8 +972,7 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
         permissions: member.permissions || [],
         mustChangePassword: mustChangePassword,
         isPasswordTemporary: member.isPasswordTemporary === true,
-        loginEnabled: member.loginEnabled === true,
-        lastLoginAt: member.lastLoginAt
+        accountStatus: member.status || 'active'
       } 
     });
   } catch (e) {
@@ -7615,8 +7615,6 @@ app.listen(PORT, async () => {
       role: m.role,
       status: m.status,
       permissions: m.permissions || [],
-      loginEnabled: m.loginEnabled,
-      lastLoginAt: m.lastLoginAt instanceof Date ? m.lastLoginAt.toISOString() : m.lastLoginAt,
       createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt
     }));
     console.log(`✅ Loaded ${state.members.length} members from Prisma`);
