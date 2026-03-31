@@ -793,14 +793,71 @@ app.get(['/api/export/state', '/export/state'], async (req, res) => {
 });
 
 // AUTH
-app.post(['/auth/login','/api/auth/login'], (req, res) => {
+app.post(['/auth/login','/api/auth/login'], async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email & password requis' });
-  const member = state.members.find(m => m.email === email);
+  
+  // Try in-memory first
+  let member = state.members.find(m => m.email === email);
+  
+  // If not found in memory, try Prisma directly
+  if (!member) {
+    try {
+      member = await prisma.members.findUnique({
+        where: { email }
+      });
+      // Also update state.members if found
+      if (member) {
+        state.members.push({
+          id: member.id,
+          email: member.email,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          matricule: member.matricule,
+          password: member.password,
+          role: member.role,
+          status: member.status,
+          permissions: member.permissions || [],
+          loginEnabled: member.loginEnabled,
+          lastLoginAt: member.lastLoginAt?.toISOString(),
+          createdAt: member.createdAt instanceof Date ? member.createdAt.toISOString() : member.createdAt
+        });
+      }
+    } catch (e) {
+      console.error('❌ Error checking Prisma for admin user:', e.message);
+    }
+  }
+  
   if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
   
+  // Verify password (support both plaintext and hashed)
+  let passwordValid = false;
+  if (member.password?.includes(':')) {
+    // New format: hash:salt:iterations
+    passwordValid = verifyPassword(password, member.password);
+  } else {
+    // Legacy plaintext password
+    passwordValid = (password === member.password);
+  }
+  
+  if (!passwordValid) {
+    return res.status(401).json({ error: 'Identifiants invalides' });
+  }
+  
+  // Update last login in Prisma
+  try {
+    if (member.id) {
+      await prisma.members.update({
+        where: { id: member.id },
+        data: { lastLoginAt: new Date() }
+      });
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not update lastLoginAt:', e.message);
+  }
+  
   // Find user's role from site_users via linkedMemberId
-  let role = 'MEMBER'; // default
+  let role = member.role || 'MEMBER';
   if (state.siteUsers && member.id) {
     const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
     if (siteUser) {
@@ -7388,6 +7445,8 @@ app.listen(PORT, async () => {
       role: m.role,
       status: m.status,
       permissions: m.permissions || [],
+      loginEnabled: m.loginEnabled,
+      lastLoginAt: m.lastLoginAt instanceof Date ? m.lastLoginAt.toISOString() : m.lastLoginAt,
       createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt
     }));
     console.log(`✅ Loaded ${state.members.length} members from Prisma`);
