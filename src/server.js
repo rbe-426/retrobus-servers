@@ -5312,6 +5312,76 @@ app.delete('/api/admin/users/:id', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/admin/users/create-with-password - Create user with permanent password (no temporary redirect)
+app.post('/api/admin/users/create-with-password', requireAuth, async (req, res) => {
+  try {
+    const { email, firstName, lastName, password, role } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    
+    // Check if user already exists
+    const existingInPrisma = await prisma.members.findUnique({
+      where: { email }
+    });
+    
+    if (existingInPrisma) {
+      return res.status(409).json({ error: 'User with this email already exists' });
+    }
+    
+    // Create with PERMANENT password (plaintext) - no temporary redirect
+    const newMember = await prisma.members.create({
+      data: {
+        id: uid(),
+        email,
+        firstName: firstName || '',
+        lastName: lastName || '',
+        password: password, // Store plaintext for simple auth
+        role: role || 'USER',
+        status: 'active',
+        permissions: [],
+        loginEnabled: true,
+        isPasswordTemporary: false, // NOT temporary - direct login
+        mustChangePassword: false,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    
+    // Also add to state.members
+    state.members.push({
+      id: newMember.id,
+      email: newMember.email,
+      firstName: newMember.firstName,
+      lastName: newMember.lastName,
+      password: newMember.password,
+      role: newMember.role,
+      status: newMember.status,
+      permissions: newMember.permissions || [],
+      loginEnabled: newMember.loginEnabled,
+      isPasswordTemporary: false,
+      mustChangePassword: false,
+      createdAt: newMember.createdAt.toISOString()
+    });
+    
+    debouncedSave();
+    
+    console.log(`✅ Admin créé: ${email} (mot de passe permanent, pas de redirection)`);
+    res.status(201).json({ 
+      user: newMember,
+      message: 'User created with permanent password - no temporary redirect',
+      loginInfo: {
+        email: newMember.email,
+        password: password
+      }
+    });
+  } catch (e) {
+    console.error('❌ POST /api/admin/users/create-with-password error:', e.message);
+    res.status(500).json({ error: 'Failed to create user', details: e.message });
+  }
+});
+
 // POST /api/admin/users/:id/reset-password - Generate temporary password
 app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) => {
   try {
