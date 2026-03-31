@@ -870,6 +870,29 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
     
+    // ✅ AUTO-ACTIVATE LOGIN & UPDATE LAST LOGIN on successful auth
+    try {
+      if (member.id && typeof member.id === 'string' && member.id.length > 0) {
+        // Prisma member: update in database
+        await prisma.members.update({
+          where: { id: member.id },
+          data: {
+            loginEnabled: true,  // Auto-activate access on first successful login
+            lastLoginAt: new Date()
+          }
+        });
+        member.loginEnabled = true;
+        member.lastLoginAt = new Date();
+      } else {
+        // Legacy state.members: update in state
+        member.loginEnabled = true;
+        member.lastLoginAt = new Date();
+      }
+    } catch (err) {
+      console.warn('⚠️ Could not update login status:', err.message);
+      // Non-blocking: still allow login even if we can't update status
+    }
+    
     // Get role
     let role = member.role || 'MEMBER';
     
@@ -889,7 +912,9 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
         role: role, 
         permissions: member.permissions || [],
         mustChangePassword: mustChangePassword,
-        isPasswordTemporary: member.isPasswordTemporary === true
+        isPasswordTemporary: member.isPasswordTemporary === true,
+        loginEnabled: member.loginEnabled === true,
+        lastLoginAt: member.lastLoginAt
       } 
     });
   } catch (e) {
