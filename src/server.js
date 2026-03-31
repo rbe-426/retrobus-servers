@@ -15,6 +15,25 @@ import {
   verifyPassword, 
   validatePasswordStrength 
 } from './lib/passwordUtils.js';
+// 🔐 Import modules de sécurité
+import {
+  helmetConfig,
+  generalLimiter,
+  authLimiter,
+  uploadLimiter,
+  sanitizeInput,
+  sanitizeObject,
+  validateEmail,
+  validatePassword,
+  validateMatricule,
+  validateName,
+  handleValidationErrors,
+  maskSensitiveData,
+  secureLogger,
+  encryptSensitiveData,
+  decryptSensitiveData,
+  auditLog
+} from './security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -681,22 +700,42 @@ const allowedOrigins = [
 ];
 
 console.log('🔐 CORS Origins allowed:', allowedOrigins);
+console.log('🛡️  Sécurités activées: Helmet, Rate Limiting, Input Validation, Data Encryption');
 
-// TEMPORARY: Permissive CORS for debugging
+// ============================================================
+// 🛡️ SÉCURITÉ - Middlewares de protection
+// ============================================================
+
+// 1. Helmet - Headers de sécurité (CSP, X-Frame-Options, etc)
+app.use(helmetConfig);
+
+// 2. Rate limiting global
+app.use(generalLimiter);
+
+// 3. Secure CORS configuration
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  // TEMPORARY: Allow all origins for debugging
-  if (origin) {
+  // Vérifie l'origine
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (['localhost', '127.0.0.1'].some(h => origin?.includes(h))) {
+    // Autoriser localhost en dev
     res.header('Access-Control-Allow-Origin', origin);
   } else {
-    res.header('Access-Control-Allow-Origin', '*');
+    // Refuse l'accès pour les origins non autorisées
+    console.warn(`⚠️  CORS blocked for origin: ${origin}`);
   }
   
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
   res.header('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,x-qr-token,x-user-matricule');
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400');
+  res.header('Access-Control-Max-Age', '3600'); // Réduit de 86400 à 1h
+  
+  // Security headers supplémentaires
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'DENY');
+  res.header('X-XSS-Protection', '1; mode=block');
   
   if (req.method === 'OPTIONS') {
     console.log(`✅ Preflight OK for ${origin}`);
@@ -709,6 +748,10 @@ app.use((req, res, next) => {
 
 // Middleware JSON
 app.use(express.json());
+
+// 4. Secure logging - masque les données sensibles
+app.use(secureLogger);
+
 // Static files (serve uploaded content)
 app.use('/uploads', express.static(pathRoot + '/uploads'));
 
@@ -794,85 +837,109 @@ app.get(['/api/export/state', '/export/state'], async (req, res) => {
 });
 
 // AUTH
-app.post(['/auth/login','/api/auth/login'], async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'email & password requis' });
-  
-  // Try in-memory first
-  let member = state.members.find(m => m.email === email);
-  
-  // If not found in memory, try Prisma directly
-  if (!member) {
+app.post(['/auth/login','/api/auth/login'], authLimiter, async (req, res) => {
+  try {
+    // 🔐 Validation et sanitization des entrées
+    const email = sanitizeInput(req.body?.email || '').toLowerCase().trim();
+    const password = sanitizeInput(req.body?.password || '');
+    
+    if (!email || !password) {
+      auditLog('LOGIN_ATTEMPT_MISSING_FIELDS', email, { email: !!email, password: !!password }, 'failed');
+      return res.status(400).json({ error: 'email & password requis' });
+    }
+    
+    // Try in-memory first
+    let member = state.members.find(m => m.email === email);
+    
+    // If not found in memory, try Prisma directly
+    if (!member) {
+      try {
+        member = await prisma.members.findUnique({
+          where: { email }
+        });
+        // Also update state.members if found
+        if (member) {
+          state.members.push({
+            id: member.id,
+            email: member.email,
+            firstName: member.firstName,
+            lastName: member.lastName,
+            matricule: member.matricule,
+            password: member.password,
+            role: member.role,
+            status: member.status,
+            permissions: member.permissions || [],
+            createdAt: member.createdAt instanceof Date ? member.createdAt.toISOString() : member.createdAt
+          });
+        }
+      } catch (e) {
+        console.error('❌ Error checking Prisma for admin user:', e.message);
+        auditLog('LOGIN_DB_ERROR', email, { error: e.message }, 'failed');
+      }
+    }
+    
+    if (!member) {
+      auditLog('LOGIN_USER_NOT_FOUND', email, { path: '/auth/login' }, 'failed');
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+    
+    // Verify password (support both plaintext and hashed)
+    let passwordValid = false;
+    if (member.password?.includes(':')) {
+      // New format: hash:salt:iterations
+      passwordValid = verifyPassword(password, member.password);
+    } else {
+      // Legacy plaintext password
+      passwordValid = (password === member.password);
+    }
+    
+    if (!passwordValid) {
+      auditLog('LOGIN_INVALID_PASSWORD', email, { path: '/auth/login' }, 'failed');
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+    
+    // Update last login in Prisma
     try {
-      member = await prisma.members.findUnique({
-        where: { email }
-      });
-      // Also update state.members if found
-      if (member) {
-        state.members.push({
-          id: member.id,
-          email: member.email,
-          firstName: member.firstName,
-          lastName: member.lastName,
-          matricule: member.matricule,
-          password: member.password,
-          role: member.role,
-          status: member.status,
-          permissions: member.permissions || [],
-          createdAt: member.createdAt instanceof Date ? member.createdAt.toISOString() : member.createdAt
+      if (member.id) {
+        await prisma.members.update({
+          where: { id: member.id },
+          data: { lastLoginAt: new Date() }
         });
       }
     } catch (e) {
-      console.error('❌ Error checking Prisma for admin user:', e.message);
+      console.warn('⚠️ Could not update lastLoginAt:', e.message);
     }
-  }
-  
-  if (!member) return res.status(401).json({ error: 'Identifiants invalides' });
-  
-  // Verify password (support both plaintext and hashed)
-  let passwordValid = false;
-  if (member.password?.includes(':')) {
-    // New format: hash:salt:iterations
-    passwordValid = verifyPassword(password, member.password);
-  } else {
-    // Legacy plaintext password
-    passwordValid = (password === member.password);
-  }
-  
-  if (!passwordValid) {
-    return res.status(401).json({ error: 'Identifiants invalides' });
-  }
-  
-  // Update last login in Prisma
-  try {
-    if (member.id) {
-      await prisma.members.update({
-        where: { id: member.id },
-        data: { lastLoginAt: new Date() }
-      });
+    
+    // Find user's role from site_users via linkedMemberId
+    let role = member.role || 'MEMBER';
+    if (state.siteUsers && member.id) {
+      const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
+      if (siteUser) {
+        role = siteUser.role || 'MEMBER';
+      }
     }
-  } catch (e) {
-    console.warn('⚠️ Could not update lastLoginAt:', e.message);
+    
+    const token = 'stub.' + Buffer.from(email).toString('base64');
+    auditLog('LOGIN_SUCCESS', email, { role, hasPermissions: !!member.permissions }, 'success');
+    res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, role: role, permissions: member.permissions || [] } });
+  } catch (error) {
+    console.error('❌ Login error:', error);
+    auditLog('LOGIN_EXCEPTION', req.body?.email, { error: error.message }, 'failed');
+    res.status(500).json({ error: 'Erreur serveur' });
   }
-  
-  // Find user's role from site_users via linkedMemberId
-  let role = member.role || 'MEMBER';
-  if (state.siteUsers && member.id) {
-    const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
-    if (siteUser) {
-      role = siteUser.role || 'MEMBER';
-    }
-  }
-  
-  const token = 'stub.' + Buffer.from(email).toString('base64');
-  res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, role: role, permissions: member.permissions || [] } });
 });
 
 // Member login endpoint - accepts identifier (email or username) and password
-app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
+app.post(['/auth/member-login','/api/auth/member-login'], authLimiter, async (req, res) => {
   try {
-    const { identifier, password } = req.body || {};
-    if (!identifier || !password) return res.status(400).json({ error: 'identifier & password requis' });
+    // 🔐 Validation et sanitization des entrées
+    const identifier = sanitizeInput(req.body?.identifier || '').toLowerCase().trim();
+    const password = sanitizeInput(req.body?.password || '');
+    
+    if (!identifier || !password) {
+      auditLog('MEMBER_LOGIN_MISSING_FIELDS', identifier, { identifier: !!identifier, password: !!password }, 'failed');
+      return res.status(400).json({ error: 'identifier & password requis' });
+    }
     
     // Try to find member from Prisma by matricule, email or firstname+lastname
     let member = await prisma.members.findFirst({
@@ -901,6 +968,7 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
       });
 
       if (!stateM) {
+        auditLog('MEMBER_LOGIN_NOT_FOUND', identifier, { path: '/auth/member-login' }, 'failed');
         return res.status(401).json({ error: 'Identifiants invalides' });
       }
 
@@ -909,6 +977,7 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
     
     // Verify password
     if (!member.password) {
+      auditLog('MEMBER_LOGIN_NO_PASSWORD', identifier, { memberId: member.id }, 'failed');
       return res.status(401).json({ error: 'No password set for this account' });
     }
 
@@ -923,11 +992,13 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
     }
 
     if (!passwordValid) {
+      auditLog('MEMBER_LOGIN_INVALID_PASSWORD', identifier, { memberId: member.id }, 'failed');
       return res.status(401).json({ error: 'Identifiants invalides' });
     }
     
     // ✅ Check if login is enabled (status === "active")
     if (member.status && member.status !== 'active') {
+      auditLog('MEMBER_LOGIN_DISABLED_ACCOUNT', identifier, { status: member.status }, 'failed');
       return res.status(403).json({ error: 'Compte désactivé. Veuillez contacter un administrateur.' });
     }
     
@@ -961,6 +1032,7 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
     // Check if password must be changed
     const mustChangePassword = member.mustChangePassword === true || member.isPasswordTemporary === true;
     
+    auditLog('MEMBER_LOGIN_SUCCESS', identifier, { role, hasPermissions: !!member.permissions }, 'success');
     res.json({ 
       token, 
       user: { 
@@ -977,6 +1049,7 @@ app.post(['/auth/member-login','/api/auth/member-login'], async (req, res) => {
     });
   } catch (e) {
     console.error('❌ POST /api/auth/member-login error:', e.message);
+    auditLog('MEMBER_LOGIN_EXCEPTION', req.body?.identifier, { error: e.message }, 'failed');
     res.status(500).json({ error: 'Login failed', details: e.message });
   }
 });
@@ -2129,7 +2202,7 @@ app.get(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, 
   }
 });
 
-app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, galleryUpload.array('images', 12), async (req, res) => {
+app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, uploadLimiter, galleryUpload.array('images', 12), async (req, res) => {
   try {
     const parc = String(req.params.parc);
     const idCandidate = Number(parc);
@@ -2728,7 +2801,7 @@ app.post(['/api/retro-requests/:id/status'], requireAuth, async (req, res) => {
 });
 
 // Upload file to retro request
-app.post(['/api/retro-requests/:id/upload'], requireAuth, multer({ storage: multer.memoryStorage() }).single('file'), async (req, res) => {
+app.post(['/api/retro-requests/:id/upload'], requireAuth, uploadLimiter, multer({ storage: multer.memoryStorage() }).single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
@@ -4904,7 +4977,7 @@ app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAut
     res.json({ reports: list });
   }
 });
-app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, upload.single('file'), async (req, res) => {
+app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, uploadLimiter, upload.single('file'), async (req, res) => {
   try {
     const { date, description, amount, status = 'open', planned = false, eventId } = req.body;
     
@@ -5508,18 +5581,24 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
 // POST /api/auth/change-password - Change user password
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   try {
-    const { currentPassword, newPassword, confirmPassword } = req.body;
+    // 🔐 Validation et sanitization des entrées
+    const currentPassword = sanitizeInput(req.body?.currentPassword || '');
+    const newPassword = sanitizeInput(req.body?.newPassword || '');
+    const confirmPassword = sanitizeInput(req.body?.confirmPassword || '');
     const userEmail = req.user?.id; // Decoded from token (usually email)
 
     if (!userEmail) {
+      auditLog('PASSWORD_CHANGE_NOT_AUTH', 'ANONYMOUS', { reason: 'No auth' }, 'failed');
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
     if (!currentPassword || !newPassword) {
+      auditLog('PASSWORD_CHANGE_MISSING_FIELDS', userEmail, { current: !!currentPassword, new: !!newPassword }, 'failed');
       return res.status(400).json({ error: 'Current password and new password are required' });
     }
 
     if (newPassword !== confirmPassword) {
+      auditLog('PASSWORD_CHANGE_MISMATCH', userEmail, { path: '/api/auth/change-password' }, 'failed');
       return res.status(400).json({ error: 'Passwords do not match' });
     }
 
@@ -5555,17 +5634,20 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     }
 
     if (!user) {
+      auditLog('PASSWORD_CHANGE_USER_NOT_FOUND', userEmail, { searchType: userType }, 'failed');
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Verify current password
     if (!user.password || !verifyPassword(currentPassword, user.password)) {
+      auditLog('PASSWORD_CHANGE_INVALID_CURRENT', userEmail, { userType }, 'failed');
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
     // Validate new password strength
     const validation = validatePasswordStrength(newPassword);
     if (!validation.isValid) {
+      auditLog('PASSWORD_CHANGE_WEAK_PASSWORD', userEmail, { requirements: validation.errors }, 'failed');
       return res.status(400).json({ 
         error: 'Password does not meet requirements',
         requirements: validation.errors
@@ -5610,14 +5692,15 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 
     debouncedSave();
 
-    console.log('✅ Password changed for user:', user.id, 'email:', userEmail, 'type:', userType);
+    auditLog('PASSWORD_CHANGE_SUCCESS', userEmail, { userType, userId: user.id }, 'success');
     res.json({ 
       success: true,
       message: 'Password changed successfully'
     });
   } catch (e) {
     console.error('❌ POST /api/auth/change-password error:', e.message);
-    res.status(500).json({ error: 'Failed to change password', details: e.message });
+    auditLog('PASSWORD_CHANGE_EXCEPTION', req.user?.id, { error: e.message }, 'failed');
+    res.status(500).json({ error: 'Failed to change password' });
   }
 });
 
