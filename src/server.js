@@ -5201,6 +5201,7 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
         role: role || 'USER',
         status: 'active',
         permissions: [],
+        loginEnabled: true,
         createdAt: new Date(),
         updatedAt: new Date()
       }
@@ -5217,12 +5218,14 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       role: newMember.role,
       status: newMember.status,
       permissions: newMember.permissions || [],
+      loginEnabled: newMember.loginEnabled,
+      lastLoginAt: newMember.lastLoginAt?.toISOString(),
       createdAt: newMember.createdAt.toISOString()
     });
     
     debouncedSave();
     
-    console.log('✅ User créé:', newMember.id, email, 'matricule:', matricule);
+    console.log('✅ User créé:', newMember.id, email, 'role:', role, 'loginEnabled: true');
     res.status(201).json({ user: newMember });
   } catch (e) {
     console.error('❌ POST /api/admin/users error:', e.message);
