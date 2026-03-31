@@ -5174,7 +5174,7 @@ app.get('/api/admin/users', requireAuth, async (req, res) => {
 
 app.post('/api/admin/users', requireAuth, async (req, res) => {
   try {
-    const { email, firstName, lastName, matricule, password, role } = req.body;
+    const { email, firstName, lastName, matricule, password, temporaryPassword, role } = req.body;
     
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
@@ -5193,8 +5193,8 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       return res.status(409).json({ error: 'User with this email already exists' });
     }
     
-    // Generate temporary password if not provided
-    const tempPassword = password || generateTemporaryPassword();
+    // Use password from any source (password, temporaryPassword, or generate new)
+    const tempPassword = password || temporaryPassword || generateTemporaryPassword();
     const hashedPassword = hashPasswordForStorage(tempPassword);
     
     // Create in Prisma (single source of truth)
