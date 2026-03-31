@@ -2972,7 +2972,8 @@ app.put(['/api/retro-news/:id'], requireAuth, async (req, res) => {
       title: req.body.title,
       content: req.body.body || req.body.content,  // Save in 'content' field
       published: req.body.status === 'published',
-      publishedAt: req.body.status === 'published' ? new Date() : null
+      publishedAt: req.body.status === 'published' ? new Date() : null,
+      isFeatured: req.body.isFeatured || false  // Ajout du statut vedette
     };
     
     // Update in Prisma
