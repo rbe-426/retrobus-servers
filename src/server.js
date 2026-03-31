@@ -3444,10 +3444,31 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
       return res.json({ permissions: [], role: 'MEMBER' });
     }
     
-    // Get permissions from member object (legacy)
-    const memberPermissions = member.permissions || [];
+    console.log(`   📋 Member found: ${member.email}, permissions field:`, member.permissions);
     
-    // 🆕 También cargar permissions desde la tabla user_permissions (Prisma)
+    // Convert member permissions JSON format to standard format
+    let convertedPermissions = [];
+    
+    if (member.permissions && typeof member.permissions === 'object') {
+      // Handle both formats:
+      // 1. New format: { blockedResources: [...], restrictiveMode: true }
+      // 2. Old format: { deniedResources: [...], restrictiveMode: true }
+      
+      const blockedList = member.permissions.blockedResources || member.permissions.deniedResources || [];
+      
+      if (member.permissions.restrictiveMode && Array.isArray(blockedList)) {
+        // Convert each blocked resource to the format MyRBE.jsx expects
+        convertedPermissions = blockedList.map(resource => ({
+          resource,
+          actions: ['DENY'],
+          reason: 'Restrictive mode enabled'
+        }));
+        
+        console.log(`   🔒 Restrictive mode active. Blocked resources: ${blockedList.join(', ')}`);
+      }
+    }
+    
+    // 🆕 Also load permissions from user_permissions table (Prisma)
     let siteUser = await prisma.site_users.findFirst({
       where: { linkedMemberId: member.id }
     });
@@ -3458,15 +3479,15 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
         })
       : [];
     
-    // Mergear permisos: legacy (memberPermissions) + base de datos (dbPermissions)
+    // Merge permissions: converted JSON + database table permissions
     const allPermissions = [
-      ...memberPermissions,
+      ...convertedPermissions,
       ...dbPermissions
     ];
     
     const role = siteUser?.role || 'MEMBER';
     
-    console.log(`   ✅ Found member: ${member.email}, permissions: ${allPermissions.length}`);
+    console.log(`   ✅ Total permissions loaded: ${allPermissions.length}`, allPermissions);
     
     res.json({ 
       permissions: allPermissions,
