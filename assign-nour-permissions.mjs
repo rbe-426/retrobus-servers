@@ -34,7 +34,7 @@ async function assignNourPermissions() {
 
     console.log(`✅ Trouvé: Nour BAYOUDH (${nour.id})\n`);
 
-    // 1. Mettre à jour customPermissions dans la table members
+    // 1. Mettre à jour permissions dans la table members
     const customPerms = {
       blockedResources: targetResources,
       restrictiveMode: true,
@@ -45,11 +45,11 @@ async function assignNourPermissions() {
     await prisma.members.update({
       where: { id: nour.id },
       data: {
-        customPermissions: JSON.stringify(customPerms)
+        permissions: customPerms
       }
     });
 
-    console.log('✅ customPermissions mis à jour dans members table\n');
+    console.log('✅ permissions mis à jour dans members table\n');
 
     // 2. Créer les 7 entrées dans user_permissions
     for (const resource of targetResources) {
