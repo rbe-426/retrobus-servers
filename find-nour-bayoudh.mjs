@@ -23,7 +23,7 @@ async function checkNourPermissions() {
 
     console.log(`✅ Nour BAYOUDH (${nour.id})`);
     console.log(`   Email: ${nour.email}`);
-    console.log(`   CustomPermissions: ${nour.customPermissions}\n`);
+    console.log(`   Permissions (JSON): ${nour.permissions ? JSON.stringify(nour.permissions) : 'undefined'}\n`);
 
     // Vérifier dans user_permissions
     const perms = await prisma.user_permissions.findMany({
