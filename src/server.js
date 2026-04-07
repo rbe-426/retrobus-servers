@@ -18,6 +18,7 @@ import {
 import { createTokenPair, verifyToken } from './lib/tokenService.js';
 import authRoutes from './routes/auth.routes.js';
 import systemRoutes from './routes/system.routes.js';
+import notificationsRoutes from './routes/notifications.routes.js';
 // 🔐 Import modules de sécurité
 import {
   helmetConfig,
@@ -817,6 +818,10 @@ app.use('/auth', authRoutes);
 // Routes système (health, version, status)
 app.use('/api', systemRoutes);
 app.use('/', systemRoutes);
+
+// Routes notifications (gestion des notifications système)
+app.use('/api/notifications', notificationsRoutes);
+app.use('/notifications', notificationsRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);

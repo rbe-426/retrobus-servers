@@ -997,6 +997,25 @@ model VehicleInspection {
   @@index([inspectionDate])
 }
 
+model Notification {
+  id        String   @id @default(cuid())
+  title     String
+  message   String
+  type      String   @default("info") // info, warning, success, error
+  priority  String   @default("normal") // low, normal, high
+  active    Boolean  @default(true)
+  expiresAt DateTime?
+  targetedTo String  @default("all") // all, admins, members
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+  @@index([createdAt])
+  @@index([expiresAt])
+  @@index([targetedTo])
+}
+
 enum DocumentStatus {
   PENDING
   APPROVED
