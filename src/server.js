@@ -1994,26 +1994,8 @@ app.delete(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) =>
 // });
 // ⛔ FIN ENDPOINT DÉPLACÉ
 
-// NOTIFICATIONS
-app.get(['/api/notifications/inbox','/notifications/inbox'], requireAuth, (req, res) => {
-  const limit = Number(req.query.limit || 20);
-  res.json({ notifications: state.notifications.slice(0, limit) });
-});
-app.get(['/api/notifications/preferences','/notifications/preferences'], requireAuth, (req, res) => {
-  res.json({ preferences: { email: true, sms: false, push: true } });
-});
-app.post(['/api/notifications/inbox','/notifications/inbox'], requireAuth, (req, res) => {
-  const n = { id: 'n' + Date.now(), type: req.body?.type || 'info', message: req.body?.message || '', createdAt: new Date().toISOString(), read: false };
-  state.notifications.unshift(n);
-  debouncedSave();
-  res.status(201).json({ notification: n });
-});
-app.post(['/api/notifications/:id/read','/notifications/:id/read'], requireAuth, (req, res) => {
-  state.notifications = state.notifications.map(n => n.id === req.params.id ? { ...n, read: true } : n);
-  const n = state.notifications.find(n => n.id === req.params.id);
-  debouncedSave();
-  res.json({ notification: n });
-});
+// NOTIFICATIONS - Maintenant gérées via routes modulaires avec Prisma
+// Les endpoints sont enregistrés ci-dessus: app.use('/api/notifications', notificationsRoutes)
 
 // ===== RETROMAIL (stub endpoints) =====
 app.get(['/retromail/list'], requireAuth, (req, res) => {
