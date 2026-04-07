@@ -15,6 +15,9 @@ import {
   verifyPassword, 
   validatePasswordStrength 
 } from './lib/passwordUtils.js';
+import { createTokenPair, verifyToken } from './lib/tokenService.js';
+import authRoutes from './routes/auth.routes.js';
+import systemRoutes from './routes/system.routes.js';
 // 🔐 Import modules de sécurité
 import {
   helmetConfig,
@@ -715,22 +718,24 @@ app.use(generalLimiter);
 // 3. Secure CORS configuration
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  const isDev = process.env.NODE_ENV !== 'production';
   
   // Vérifie l'origine
   if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
-  } else if (['localhost', '127.0.0.1'].some(h => origin?.includes(h))) {
-    // Autoriser localhost en dev
+  } else if (isDev && ['localhost', '127.0.0.1'].some(h => origin?.includes(h))) {
+    // Autoriser localhost en dev seulement
     res.header('Access-Control-Allow-Origin', origin);
   } else {
     // Refuse l'accès pour les origins non autorisées
-    console.warn(`⚠️  CORS blocked for origin: ${origin}`);
+    console.warn(`🚫 CORS BLOCKED: Unauthorized origin "${origin}" attempted access`);
+    // Ne pas ajouter le header Access-Control-Allow-Origin (le navigateur bloquera)
   }
   
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
   res.header('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,x-qr-token,x-user-matricule');
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '3600'); // Réduit de 86400 à 1h
+  res.header('Access-Control-Max-Age', '3600'); // 1 heure
   
   // Security headers supplémentaires
   res.header('X-Content-Type-Options', 'nosniff');
@@ -755,20 +760,42 @@ app.use(secureLogger);
 // Static files (serve uploaded content)
 app.use('/uploads', express.static(pathRoot + '/uploads'));
 
-// Auth middleware - decode token and extract email
+// Auth middleware - decode token and extract user info
 app.use((req, res, next) => {
   const auth = req.headers.authorization;
   if (auth && auth.startsWith('Bearer ')) {
     const token = auth.slice(7);
     try {
+      // Try new JWT format first
+      const decoded = verifyToken(token);
+      if (decoded) {
+        req.user = {
+          id: decoded.userId || decoded.email,
+          email: decoded.email,
+          role: decoded.role,
+          permissions: decoded.permissions || [],
+          iat: decoded.iat,
+          exp: decoded.exp
+        };
+        return next();
+      }
+
+      // Fallback: legacy stub token format for backward-compatibility
       // Token format: 'stub.' + base64(email)
       if (token.startsWith('stub.')) {
+        console.warn('⚠️  Using deprecated stub token format (no expiration). Please login again.');
         const emailB64 = token.slice(5);
         const email = Buffer.from(emailB64, 'base64').toString('utf-8');
-        req.user = { email: email, id: email }; // Use email as ID for consistency
+        req.user = { 
+          email: email, 
+          id: email,
+          legacyToken: true  // Mark as legacy for potential warnings later
+        };
+        return next();
       }
     } catch (e) {
-      // Silently fail
+      console.warn('❌ Token verification failed:', e.message);
+      // Silently fail and continue (no user attached)
     }
   }
   next();
@@ -778,6 +805,28 @@ const requireAuth = (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   next();
 };
+
+// ============================================================
+// 📦 ROUTES MODULAIRES
+// ============================================================
+// Routes d'authentification (login, token, etc)
+app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
+// NOTE: /api/login endpoint is now provided by /api/auth/login via modular routes
+
+// Routes système (health, version, status)
+app.use('/api', systemRoutes);
+app.use('/', systemRoutes);
+
+// TODO: Ajouter d'autres routes modulaires
+// app.use('/api/members', memberRoutes);
+// app.use('/api/vehicles', vehicleRoutes);
+// app.use('/api/finance', financeRoutes);
+// etc.
+
+// ============================================================
+// ENDPOINTS LEGACY (à extraire progressivement)
+// ============================================================
 
 // Health & version
 app.get(['/api/health','/health'], (req, res) => res.json({ ok: true, time: new Date().toISOString(), version: 'rebuild-1' }));
@@ -919,9 +968,28 @@ app.post(['/auth/login','/api/auth/login'], authLimiter, async (req, res) => {
       }
     }
     
-    const token = 'stub.' + Buffer.from(email).toString('base64');
+    // ✅ Créer JWT avec expiration 1h (ancien: token stub sans expiration)
+    const { accessToken, refreshToken } = createTokenPair({
+      userId: member.id,
+      email: email,
+      role: role,
+      permissions: member.permissions || []
+    });
+    
     auditLog('LOGIN_SUCCESS', email, { role, hasPermissions: !!member.permissions }, 'success');
-    res.json({ token, user: { id: member.id, email: member.email, firstName: member.firstName, role: role, permissions: member.permissions || [] } });
+    res.json({ 
+      token: accessToken,  // Pour backward-compatibility (ancien client)
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresIn: '1h',  // Nouveau token expire après 1h
+      user: { 
+        id: member.id, 
+        email: member.email, 
+        firstName: member.firstName, 
+        role: role, 
+        permissions: member.permissions || [] 
+      } 
+    });
   } catch (error) {
     console.error('❌ Login error:', error);
     auditLog('LOGIN_EXCEPTION', req.body?.email, { error: error.message }, 'failed');
@@ -1027,14 +1095,24 @@ app.post(['/auth/member-login','/api/auth/member-login'], authLimiter, async (re
     let role = member.role || 'MEMBER';
     
     const email = member.email || '';
-    const token = 'stub.' + Buffer.from(email).toString('base64');
+    
+    // ✅ Créer JWT avec expiration 1h (ancien: token stub sans expiration)
+    const { accessToken, refreshToken } = createTokenPair({
+      userId: member.id,
+      email: email,
+      role: role,
+      permissions: member.permissions || []
+    });
 
     // Check if password must be changed
     const mustChangePassword = member.mustChangePassword === true || member.isPasswordTemporary === true;
     
     auditLog('MEMBER_LOGIN_SUCCESS', identifier, { role, hasPermissions: !!member.permissions }, 'success');
     res.json({ 
-      token, 
+      token: accessToken,  // Pour backward-compatibility (ancien client)
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresIn: '1h',  // Nouveau token expire après 1h
       user: { 
         id: member.id, 
         email: member.email, 
@@ -1051,6 +1129,46 @@ app.post(['/auth/member-login','/api/auth/member-login'], authLimiter, async (re
     console.error('❌ POST /api/auth/member-login error:', e.message);
     auditLog('MEMBER_LOGIN_EXCEPTION', req.body?.identifier, { error: e.message }, 'failed');
     res.status(500).json({ error: 'Login failed', details: e.message });
+  }
+});
+
+// ============================================================
+// 🔄 REFRESH TOKEN ENDPOINT - Obtenir un nouveau accessToken
+// ============================================================
+// Endpoint pour renouveler les tokens expirés sans se reconnecter
+// Body: { refreshToken: "..." }
+app.post(['/api/auth/refresh-token', '/auth/refresh-token'], async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    
+    if (!refreshToken) {
+      return res.status(400).json({ error: 'refreshToken requis' });
+    }
+
+    // Vérifier le refresh token
+    const decoded = verifyToken(refreshToken);
+    if (!decoded) {
+      auditLog('REFRESH_TOKEN_INVALID', decoded?.email || 'unknown', { reason: 'token expired or invalid' }, 'failed');
+      return res.status(401).json({ error: 'Invalid or expired refresh token' });
+    }
+
+    // Créer une nouvelle paire de tokens
+    const { accessToken, refreshToken: newRefreshToken } = createTokenPair({
+      userId: decoded.userId,
+      email: decoded.email,
+      role: decoded.role,
+      permissions: decoded.permissions || []
+    });
+
+    auditLog('REFRESH_TOKEN_SUCCESS', decoded.email, { userId: decoded.userId }, 'success');
+    res.json({
+      accessToken,
+      refreshToken: newRefreshToken,
+      expiresIn: '1h'
+    });
+  } catch (error) {
+    console.error('❌ Refresh token error:', error.message);
+    res.status(500).json({ error: 'Token refresh failed' });
   }
 });
 

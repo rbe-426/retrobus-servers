@@ -223,52 +223,92 @@ const SENSITIVE_PATTERNS = {
   token: /(Bearer\s+|token['":\s=]+)([a-zA-Z0-9._\-]+)/gi,
   creditCard: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
   ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
+  apiKey: /(api[_-]?key['":\s=]+)([a-zA-Z0-9._\-]+)/gi,
+  authorizationHeader: /(Authorization['":\s=]+[Bb]earer\s+)([a-zA-Z0-9._\-]+)/gi,
+  jwtToken: /eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*/g,
 };
 
 /**
- * Masque les données sensibles dans un string
+ * Masque les données sensibles dans un string ou objet
+ * Gère les strings, objets JSON et arrays
  */
 export const maskSensitiveData = (data) => {
-  let masked = String(data);
+  // Si c'est un objet ou array, le convertir en string d'abord
+  let masked = typeof data === 'string' ? data : JSON.stringify(data);
   
-  // Masque les mots de passe
-  masked = masked.replace(SENSITIVE_PATTERNS.password, 'password=***REDACTED***');
+  // Masque les mots de passe (même formats de config)
+  masked = masked.replace(SENSITIVE_PATTERNS.password, 'password":"***REDACTED***');
+  masked = masked.replace(/(["\']password["\']:\s*["\'])([^"\']*)["\'']/gi, '$1***REDACTED***"');
   
-  // Masque les emails (sauf quelques caractères au début)
-  masked = masked.replace(SENSITIVE_PATTERNS.email, (match) => {
-    const [user] = match.split('@');
-    return user.slice(0, 3) + '***@***.***';
-  });
+  // Masque les tokens JWT complets
+  masked = masked.replace(SENSITIVE_PATTERNS.jwtToken, '***JWT_REDACTED***');
   
-  // Masque les tokens
+  // Masque les Authorization headers
+  masked = masked.replace(SENSITIVE_PATTERNS.authorizationHeader, '$1***REDACTED***');
+  
+  // Masque les tokens génériques
   masked = masked.replace(SENSITIVE_PATTERNS.token, '$1***REDACTED***');
   
-  // Masque les numéros de carte
+  // Masque les API keys
+  masked = masked.replace(SENSITIVE_PATTERNS.apiKey, '$1***REDACTED***');
+  
+  // Masque les emails (sauf les quelques premiers caractères)
+  masked = masked.replace(SENSITIVE_PATTERNS.email, (match) => {
+    const [user] = match.split('@');
+    const maskedUser = user.slice(0, Math.min(3, user.length)) + '***';
+    return maskedUser + '@***.***';
+  });
+  
+  // Masque les numéros de carte de crédit
   masked = masked.replace(SENSITIVE_PATTERNS.creditCard, '****-****-****-****');
   
-  // Masque les SSN
+  // Masque les SSN / Numéros d'identification
   masked = masked.replace(SENSITIVE_PATTERNS.ssn, '***-**-****');
+  
+  // Masque les variables d'environnement sensibles
+  masked = masked.replace(/(["\']?(?:SMTP_|EMAIL_|API_|SECRET_|PRIVATE_|DATABASE_|ADMIN_)[A-Z_]*["\']?:\s*["\'])([^"\']*)["\'']/gi, '$1***REDACTED***"');
   
   return masked;
 };
 
 /**
  * Logger sécurisé pour l'API
+ * Applique le masquage des données sensibles à toutes les requêtes/réponses
  */
 export const secureLogger = (req, res, next) => {
-  const originalJson = res.json;
-  
+  // Log la requête (masquée)
+  const maskedBody = req.body ? maskSensitiveData(JSON.stringify(req.body)) : 'no body';
+  console.log(`📨 [${req.method}] ${req.path} from ${req.ip}`);
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    console.log(`   Body: ${maskedBody.substring(0, 200)}...`); // Log limité
+  }
+
   // Intercepte les réponses JSON
+  const originalJson = res.json;
   res.json = function(data) {
-    // Ne log pas les réponses de données sensibles
-    const path = req.path;
-    if (!path.includes('login') && !path.includes('password') && !path.includes('token')) {
-      const maskedBody = maskSensitiveData(JSON.stringify(data));
-      console.log(`📨 [${req.method}] ${req.path} → Status: ${res.statusCode}`);
+    // Masque les données dans la réponse avant logging
+    const maskedResponse = maskSensitiveData(JSON.stringify(data));
+    if (res.statusCode >= 400) {
+      // Log les erreurs complètement (masquées)
+      console.warn(`❌ [${req.method}] ${req.path} → Status: ${res.statusCode}`);
+      console.warn(`   Body: ${maskedResponse.substring(0, 400)}`);
     }
-    originalJson.call(this, data);
+    
+    // Envoie les données originales (en JSON non-masqué) à la réponse
+    return originalJson.call(this, data);
   };
-  
+
+  // Intercepte aussi les réponses text pour les erreurs
+  const originalSend = res.send;
+  res.send = function(data) {
+    if (typeof data === 'string' && res.statusCode >= 400) {
+      const maskedData = maskSensitiveData(data);
+      console.warn(`❌ [${req.method}] ${req.path} → Status: ${res.statusCode}`);
+      console.warn(`   Error: ${maskedData.substring(0, 400)}`);
+    }
+    return originalSend.call(this, data);
+  };
+
   next();
 };
 
