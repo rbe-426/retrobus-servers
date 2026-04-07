@@ -752,8 +752,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware JSON
-app.use(express.json());
+// Middleware JSON - Accept large payloads for BASE64 images
+app.use(express.json({ limit: '50mb' }));
 
 // 4. Secure logging - masque les données sensibles
 app.use(secureLogger);
@@ -2313,32 +2313,52 @@ app.get(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, 
   }
 });
 
-app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, uploadLimiter, galleryUpload.array('images', 12), async (req, res) => {
+app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth, async (req, res) => {
   try {
     const parc = String(req.params.parc);
+    console.log(`\n📸 [DEBUG] POST /vehicles/:parc/gallery started for parc: ${parc}`);
+    
+    // Accept BASE64 images from body (not Multer files anymore)
+    const { images } = req.body || {};
+    console.log(`📸 [DEBUG] Images received: ${Array.isArray(images) ? images.length : 0}`);
+    
+    if (!Array.isArray(images) || images.length === 0) {
+      console.log(`❌ [DEBUG] No images in request body (expected: { images: [...BASE64] })`);
+      return res.status(400).json({ error: 'No images provided (expected: { images: [...BASE64] })' });
+    }
+    
+    console.log(`📸 [DEBUG] Images details:`, images.map((img, i) => ({ 
+      index: i,
+      type: typeof img,
+      length: img?.length || 0,
+      preview: String(img).substring(0, 50) 
+    })));
+    
     const idCandidate = Number(parc);
     const filters = [{ parc }];
     if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
     
-    console.log(`📸 Gallery upload for vehicle: ${parc}, files: ${req.files?.length || 0}`);
+    console.log(`📸 [DEBUG] Searching for vehicle with filters:`, filters);
     
     const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
     if (!existing) {
-      console.error(`❌ Vehicle not found: ${parc}`);
+      console.error(`❌ [DEBUG] Vehicle not found: ${parc}`);
       return res.status(404).json({ error: 'Vehicle not found' });
     }
 
-    const files = Array.isArray(req.files) ? req.files : [];
-    if (files.length === 0) {
-      return res.status(400).json({ error: 'No files uploaded (field: images)' });
-    }
+    console.log(`✅ [DEBUG] Vehicle found: id=${existing.id}, parc=${existing.parc}`);
 
     const baseGallery = parseGalleryValue(existing.gallery);
-    const newItems = files.map((f) => {
-      const publicPath = `/uploads/vehicles/${existing.parc}/gallery/${path.basename(f.path)}`;
-      return publicPath;
+    console.log(`📸 [DEBUG] Existing gallery items: ${baseGallery.length}`);
+    
+    // Add BASE64 images directly (no file storage)
+    const newItems = images.map((img, i) => {
+      console.log(`  📸 [DEBUG] Adding image ${i+1}/${images.length}: ${img.substring(0, 50)}...`);
+      return img; // Store BASE64 directly
     });
     const nextGallery = [...baseGallery, ...newItems];
+
+    console.log(`📸 [DEBUG] Total gallery after update: ${nextGallery.length} items`);
 
     const updated = await prisma.vehicle.update({
       where: { id: existing.id },
@@ -2355,9 +2375,8 @@ app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth,
       debouncedSave();
     }
 
-    console.log(`✅ Gallery uploaded for vehicle ${parc}: ${newItems.length} files added, total: ${nextGallery.length}`);
-    console.log(`📝 Gallery URLs:`, nextGallery);
-    res.status(201).json({ gallery: nextGallery });
+    console.log(`✅ Gallery images added for ${parc}. Total: ${nextGallery.length}`);
+    res.json({ gallery: nextGallery });
   } catch (e) {
     console.error('❌ POST /vehicles/:parc/gallery error:', e.message);
     res.status(500).json({ error: 'Failed to upload images', details: e.message });
@@ -2413,8 +2432,85 @@ app.delete(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAut
 });
 
 app.get(['/vehicles/:parc/background','/api/vehicles/:parc/background'], requireAuth, (req, res) => {
+  console.log(`🔍 GET /vehicles/:parc/background for ${req.params.parc}`);
   res.json({ background: null });
 });
+
+// POST endpoint for background image (accepts BASE64 or FormData)
+app.post(['/vehicles/:parc/background','/api/vehicles/:parc/background'], requireAuth, async (req, res) => {
+  try {
+    const parc = String(req.params.parc);
+    console.log(`\n📸 [DEBUG] POST /vehicles/:parc/background started for parc: ${parc}`);
+    console.log(`📸 [DEBUG] Content-Type: ${req.headers['content-type']}`);
+    console.log(`📸 [DEBUG] Body type: ${typeof req.body}, keys: ${Object.keys(req.body || {}).join(',')}`);
+    
+    // Try to get image from body (BASE64) or files
+    let imageData = null;
+    
+    // Check if multipart with file
+    if (req.file) {
+      console.log(`📸 [DEBUG] Found file: ${req.file.filename}, size: ${req.file.size}`);
+      imageData = `/uploads/vehicles/${parc}/background/${req.file.filename}`;
+    } else if (req.body?.image) {
+      // Expecting data URI or base64
+      console.log(`📸 [DEBUG] Found image in body, length: ${String(req.body.image).length}`);
+      imageData = req.body.image;
+    } else if (req.body?.backgroundImage) {
+      console.log(`📸 [DEBUG] Found backgroundImage in body, type: ${typeof req.body.backgroundImage}, length: ${String(req.body.backgroundImage).length}`);
+      imageData = req.body.backgroundImage;
+    }
+    
+    if (!imageData) {
+      console.log(`❌ [DEBUG] No image data found in request`);
+      return res.status(400).json({ 
+        error: 'No image provided',
+        debug: { body_type: typeof req.body, body_keys: Object.keys(req.body || {}), has_file: !!req.file }
+      });
+    }
+    
+    console.log(`✅ [DEBUG] Image data received, starting update for parc: ${parc}`);
+    
+    // Find vehicle
+    const idCandidate = Number(parc);
+    const filters = [{ parc }];
+    if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
+    
+    const existing = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!existing) {
+      console.log(`❌ [DEBUG] Vehicle not found for parc: ${parc}`);
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+    
+    console.log(`✅ [DEBUG] Vehicle found: ${existing.parc}, updating backgroundImage`);
+    
+    // Update vehicle with background image
+    const updated = await prisma.vehicle.update({
+      where: { id: existing.id },
+      data: {
+        backgroundImage: imageData,
+        updatedAt: new Date()
+      }
+    });
+    
+    console.log(`✅ [DEBUG] Vehicle updated successfully for ${parc}`);
+    console.log(`✅ [DEBUG] backgroundImage: ${String(imageData).substring(0, 100)}...`);
+    
+    res.status(200).json({ 
+      backgroundImage: imageData,
+      success: true,
+      debug: { vehicle_parc: existing.parc, image_length: String(imageData).length }
+    });
+  } catch (e) {
+    console.error(`❌ [DEBUG] POST /vehicles/:parc/background error:`, e);
+    console.error(`❌ [DEBUG] Stack:`, e.stack);
+    res.status(500).json({ 
+      error: 'Failed to upload background image', 
+      details: e.message,
+      debug: { error_type: e.constructor.name }
+    });
+  }
+});
+
 app.get(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, (req, res) => {
   res.json({ reports: [] });
 });
