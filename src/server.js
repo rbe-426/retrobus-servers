@@ -758,6 +758,12 @@ app.use(express.json());
 // 4. Secure logging - masque les données sensibles
 app.use(secureLogger);
 
+// Middleware - Inject Prisma into app locals for routes to access
+app.use((req, res, next) => {
+  app.locals.prisma = prisma;
+  next();
+});
+
 // Static files (serve uploaded content)
 app.use('/uploads', express.static(pathRoot + '/uploads'));
 

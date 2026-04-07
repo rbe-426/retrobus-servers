@@ -12,20 +12,27 @@
 
 import express from 'express';
 import * as notificationsController from '../controllers/notificationsController.js';
-import { authLimiter } from '../security.js';
+import { generalLimiter } from '../security.js';
 
 const router = express.Router();
 
 // Admin endpoints - Gestion complète des notifications
-router.get('/', authLimiter, notificationsController.getAllNotifications);
-router.post('/', authLimiter, notificationsController.createNotification);
-router.put('/:id', authLimiter, notificationsController.updateNotification);
-router.delete('/:id', authLimiter, notificationsController.deleteNotification);
+// GET toutes les notifications (avec rate limiting doux)
+router.get('/', generalLimiter, notificationsController.getAllNotifications);
 
-// User endpoint - Récupérer les notifications pour l'utilisateur courant
-router.get('/inbox', authLimiter, notificationsController.getUserNotifications);
+// POST créer une notification (avec rate limiting doux)
+router.post('/', generalLimiter, notificationsController.createNotification);
 
-// Mark as read endpoint
-router.put('/:id/read', authLimiter, notificationsController.markAsRead);
+// PUT mettre à jour une notification (avec rate limiting doux)
+router.put('/:id', generalLimiter, notificationsController.updateNotification);
+
+// DELETE supprimer une notification (avec rate limiting doux)
+router.delete('/:id', generalLimiter, notificationsController.deleteNotification);
+
+// User endpoint - Récupérer les notifications pour l'utilisateur courant (avec rate limiting doux)
+router.get('/inbox', generalLimiter, notificationsController.getUserNotifications);
+
+// Mark as read endpoint (avec rate limiting doux)
+router.put('/:id/read', generalLimiter, notificationsController.markAsRead);
 
 export default router;

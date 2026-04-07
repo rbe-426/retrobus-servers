@@ -3,10 +3,30 @@
  * Gère la logique métier pour les notifications système
  */
 
+// Utilitaire pour obtenir prisma depuis l'app
+const getPrisma = (req) => {
+  try {
+    // Essayer req.app.locals d'abord
+    if (req.app?.locals?.prisma) {
+      return req.app.locals.prisma;
+    }
+    
+    // Fallback : importer depuis le parent (pas idéal mais fonctionne)
+    console.warn('⚠️  Prisma non disponible dans req.app.locals, création d\'une instance fallback');
+    const { PrismaClient } = require('@prisma/client');
+    return new PrismaClient();
+  } catch (error) {
+    console.error('❌ Erreur accès Prisma:', error.message);
+    throw error;
+  }
+};
+
 export async function getAllNotifications(req, res, next) {
   try {
-    const { prisma } = req.app.locals;
+    const prisma = getPrisma(req);
     const { active } = req.query;
+
+    console.log('📡 getAllNotifications - active:', active);
 
     // Construire le filtre
     const where = {};
@@ -23,6 +43,7 @@ export async function getAllNotifications(req, res, next) {
       take: 100,
     });
 
+    console.log(`✅ ${notifications.length} notifications trouvées`);
     return res.status(200).json(notifications || []);
   } catch (error) {
     console.error('❌ Erreur getAllNotifications:', error.message);
@@ -35,8 +56,10 @@ export async function getAllNotifications(req, res, next) {
 
 export async function createNotification(req, res, next) {
   try {
-    const { prisma } = req.app.locals;
+    const prisma = getPrisma(req);
     const { title, message, type = 'info', priority = 'normal', active = true, expiresAt, targetedTo = 'all' } = req.body;
+
+    console.log('📝 Création notification:', { title, type, priority, targetedTo });
 
     // Validation
     if (!title || !message) {
@@ -77,7 +100,7 @@ export async function createNotification(req, res, next) {
         active: Boolean(active),
         expiresAt: expiresAt ? new Date(expiresAt) : null,
         targetedTo,
-        createdBy: req.user?.id || 'SYSTEM',
+        createdBy: req.user?.id || req.user?.email || 'SYSTEM',
       },
     });
 
@@ -94,9 +117,11 @@ export async function createNotification(req, res, next) {
 
 export async function updateNotification(req, res, next) {
   try {
-    const { prisma } = req.app.locals;
+    const prisma = getPrisma(req);
     const { id } = req.params;
     const { title, message, type, priority, active, expiresAt, targetedTo } = req.body;
+
+    console.log('📝 Mise à jour notification:', id);
 
     // Vérifier que la notification existe
     const existing = await prisma.notification.findUnique({
@@ -192,8 +217,10 @@ export async function updateNotification(req, res, next) {
 
 export async function deleteNotification(req, res, next) {
   try {
-    const { prisma } = req.app.locals;
+    const prisma = getPrisma(req);
     const { id } = req.params;
+
+    console.log('🗑️  Suppression notification:', id);
 
     // Vérifier que la notification existe
     const existing = await prisma.notification.findUnique({
@@ -225,11 +252,29 @@ export async function deleteNotification(req, res, next) {
 
 export async function getUserNotifications(req, res, next) {
   try {
-    const { prisma } = req.app.locals;
+    const prisma = getPrisma(req);
     const { limit = 20 } = req.query;
-    const userId = req.user?.role || 'USER';
+    
+    // Déterminer le rôle de l'utilisateur
+    const userRole = req.user?.role || 'USER';
+    const isAdmin = userRole === 'ADMIN' || userRole?.includes('ADMIN');
+
+    console.log(`📬 getUserNotifications - userRole: ${userRole}, isAdmin: ${isAdmin}`);
 
     const now = new Date();
+
+    // Construire les conditions OR pour filteringles notifications visibles
+    const orConditions = [
+      { targetedTo: 'all' }, // Toujours visible par tous
+    ];
+
+    // Si admin, ajouter les notifications pour les admins
+    if (isAdmin) {
+      orConditions.push({ targetedTo: 'admins' });
+    } else {
+      // Sinon, ajouter les notifications pour les members
+      orConditions.push({ targetedTo: 'members' });
+    }
 
     // Récupérer les notifications visibles pour l'utilisateur
     const notifications = await prisma.notification.findMany({
@@ -239,18 +284,14 @@ export async function getUserNotifications(req, res, next) {
           { expiresAt: null },
           { expiresAt: { gt: now } },
         ],
-        OR: [
-          { targetedTo: 'all' },
-          // Filter for admins
-          ...(userId === 'ADMIN' || userId.includes('ADMIN')
-            ? [{ targetedTo: 'admins' }]
-            : []),
-          // Filter for members
-          { targetedTo: 'members' },
-        ],
+        AND: [
+          {
+            OR: orConditions,
+          }
+        ]
       },
       orderBy: [
-        { priority: 'desc' }, // High priority first
+        { priority: 'desc' }, // High priority first (si besoin, inverser avec desc)
         { createdAt: 'desc' },
       ],
       take: parseInt(limit),
@@ -269,8 +310,10 @@ export async function getUserNotifications(req, res, next) {
 
 export async function markAsRead(req, res, next) {
   try {
-    const { prisma } = req.app.locals;
+    const prisma = getPrisma(req);
     const { id } = req.params;
+
+    console.log('✓ Marquage lecture notification:', id);
 
     // Vérifier que la notification existe
     const existing = await prisma.notification.findUnique({
