@@ -348,6 +348,12 @@ const booleanVehicleFields = new Set(['isPublic']);
 const coerceVehicleValue = (key, value) => {
   if (value === undefined) return undefined;
   if (value === null) return null;
+  
+  // DEBUG caracteristiques
+  if (key === 'caracteristiques' || key === 'gallery') {
+    console.log(`🔍 [COERCE] ${key}: type=${typeof value}, isArray=${Array.isArray(value)}, value=${typeof value === 'string' ? value.substring(0, 100) : JSON.stringify(value).substring(0, 100)}`);
+  }
+  
   if (numericVehicleFields.has(key)) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
