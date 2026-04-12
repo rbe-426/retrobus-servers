@@ -19,6 +19,7 @@
     "@chakra-ui/icons": "^2.2.4",
     "@prisma/client": "^5.22.0",
     "cors": "^2.8.5",
+    "csurf": "^1.11.0",
     "csv-parse": "^5.3.8",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",

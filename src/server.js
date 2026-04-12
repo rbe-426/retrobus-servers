@@ -16,6 +16,13 @@ import {
   validatePasswordStrength 
 } from './lib/passwordUtils.js';
 import { createTokenPair, verifyToken } from './lib/tokenService.js';
+import { 
+  generateCSRFToken, 
+  csrfProtection, 
+  includeNewCSRFToken, 
+  cleanupExpiredTokens,
+  debugCSRFStatus 
+} from './lib/csrfService.js';
 import authRoutes from './routes/auth.routes.js';
 import systemRoutes from './routes/system.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
@@ -820,7 +827,23 @@ const requireAuth = (req, res, next) => {
 };
 
 // ============================================================
-// 📦 ROUTES MODULAIRES
+// � CSRF PROTECTION MIDDLEWARE
+// ============================================================
+// Ajouter CSRF protection sur POST, PUT, DELETE
+app.use(csrfProtection);
+
+// Ajouter le nouveau token aux réponses
+app.use(includeNewCSRFToken);
+
+// Periodic cleanup des tokens CSRF expirés (toutes les heures)
+setInterval(() => {
+  cleanupExpiredTokens();
+}, 60 * 60 * 1000);
+
+console.log('🔐 CSRF Protection enabled with token-based validation');
+
+// ============================================================
+// �📦 ROUTES MODULAIRES
 // ============================================================
 // Routes d'authentification (login, token, etc)
 app.use('/api/auth', authRoutes);
@@ -847,6 +870,26 @@ app.use('/notifications', notificationsRoutes);
 
 // Health & version
 app.get(['/api/health','/health'], (req, res) => res.json({ ok: true, time: new Date().toISOString(), version: 'rebuild-1' }));
+
+// ============================================================
+// 🔐 CSRF Token Endpoint - Get a new CSRF token
+// ============================================================
+// Accessible à tout le monde (pas besoin d'auth pour obtenir un token)
+// Utilisé par le frontend au login et pour les mutations suivantes
+app.get(['/api/csrf-token', '/csrf-token'], (req, res) => {
+  try {
+    const token = generateCSRFToken();
+    console.log(`✅ CSRF token generated for request from ${req.headers.origin}`);
+    res.json({ 
+      csrfToken: token,
+      expiresIn: '24h',
+      message: 'Store this token and send it in X-CSRF-Token header for all mutations' 
+    });
+  } catch (error) {
+    console.error('❌ Error generating CSRF token:', error.message);
+    res.status(500).json({ error: 'Failed to generate CSRF token' });
+  }
+});
 
 // Export endpoint pour sauvegarde - accessible pour les scripts de backup
 app.get(['/api/export/state', '/export/state'], async (req, res) => {
