@@ -131,6 +131,8 @@ export const csrfProtection = (req, res, next) => {
   const publicRoutes = [
     '/api/auth/login',
     '/api/auth/member-login',
+    '/auth/login',
+    '/auth/member-login',
     '/api/health',
     '/health',
     '/api/csrf-token'

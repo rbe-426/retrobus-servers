@@ -5,7 +5,7 @@
  */
 
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { body, validationResult, query } from 'express-validator';
 import validator from 'validator';
 import sanitizeHtml from 'sanitize-html';
@@ -58,9 +58,7 @@ export const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   // Utilise IP du client (même derrière proxy)
-  keyGenerator: (req) => {
-    return req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-  },
+  keyGenerator: (req) => ipKeyGenerator(req),
 });
 
 // Limite stricte pour les endpoints d'auth
@@ -71,8 +69,9 @@ export const authLimiter = rateLimit({
   skipSuccessfulRequests: true, // Ne compte pas les succès
   skipFailedRequests: false, // Compte les échechs
   keyGenerator: (req) => {
-    // Limite par email/matricule
-    return (req.body?.email || req.body?.matricule || req.ip || '').toLowerCase();
+    // Limite par email/matricule, fallback sur IP normalisée
+    const identifier = (req.body?.email || req.body?.matricule || '').toLowerCase();
+    return identifier || ipKeyGenerator(req);
   },
 });
 
