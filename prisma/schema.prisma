@@ -428,10 +428,14 @@ model finance_transactions {
   category                       String?
   date                           DateTime                         @default(now())
   createdAt                      DateTime                         @default(now())
+  linkedDocumentId               String?                          // ID du document lié (facture, devis, dette)
+  linkedDocumentType             String?                          // Type: "FACTURE", "DEVIS", "DETTE"
+  linkedDocumentNumber           String?                          // Numéro du document (pour affichage)
   finance_transaction_categories finance_transaction_categories[]
 
   @@index([createdAt])
   @@index([date])
+  @@index([linkedDocumentId])
 }
 
 model financial_documents {
