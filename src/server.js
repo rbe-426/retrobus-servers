@@ -5004,6 +5004,29 @@ app.post('/finance/scheduled-expenses/:id/execute', requireAuth, async (req, res
   }
 });
 
+// ─── Import relevé bancaire PDF ──────────────────────────────────────────────
+import { parseBankStatementPDF } from './lib/bankStatementParser.js';
+const bankStatementUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+app.post(
+  ['/finance/import-bank-statement', '/api/finance/import-bank-statement'],
+  requireAuth,
+  bankStatementUpload.single('pdf'),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Aucun fichier PDF reçu' });
+      if (!req.file.mimetype.includes('pdf') && !req.file.originalname?.endsWith('.pdf')) {
+        return res.status(400).json({ error: 'Le fichier doit être un PDF' });
+      }
+      const result = await parseBankStatementPDF(req.file.buffer);
+      res.json(result);
+    } catch (e) {
+      console.error('❌ POST /finance/import-bank-statement error:', e.message);
+      res.status(500).json({ error: 'Impossible de lire le PDF : ' + e.message });
+    }
+  }
+);
+
 // Transactions - Utilisation de Prisma pour la persistance
 app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
   try {
