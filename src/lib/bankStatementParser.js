@@ -6,9 +6,6 @@
 
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-// Disable worker to avoid Canvas dependency
-pdfjsLib.GlobalWorkerOptions.workerSrc = null;
-
 // ─── Catégories automatiques par mot-clé dans la description ──────────────────
 const CATEGORY_RULES = [
   { keywords: ['adhésion', 'cotisation', 'membre', 'inscription'], category: 'ADHESION' },
