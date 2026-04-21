@@ -135,18 +135,11 @@ function parseTransactionsFromText(rawText) {
       const date = parseDate(rawDate);
       if (!date) continue;
 
-      // Nettoyer la description (supprimer les libellés parasites courants)
+      // Nettoyer légèrement la description (garder le maximum d'info)
       description = description
-        .replace(/\s+/g, ' ')
-        .replace(/^\d{6,}\s*/, '') // supprimer code opération
-        .replace(/\bVIR\b|\bCB\b|\bPRL\b|\bCHQ\b|\bREM\b/g, '') // codes comptables
-        .replace(/\bSCT\b|\bINST\b|\bRECU\b|\bSEPA\b/g, '') // codes BNP
-        .replace(/\/FRM\s+.*?\/EID/g, '') // /FRM ... /EID (BNP)
-        .replace(/\/MOTIF\s+/g, '') // /MOTIF (BNP)
-        .replace(/\/REFBEN\s+/g, '') // /REFBEN (BNP)
-        .replace(/\/ORIG\s+/g, '') // /ORIG (BNP)
-        .replace(/\/RNF\s+/g, '') // /RNF (BNP)
-        .replace(/NOTPROVIDED/g, '')
+        .replace(/\s+/g, ' ') // Normaliser les espaces
+        .replace(/^\d{6,}\s*/, '') // Supprimer code opération en début
+        .replace(/NOTPROVIDED/g, '') // Supprimer ce code inutile
         .replace(/\s+/g, ' ')
         .trim();
 
