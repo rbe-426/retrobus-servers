@@ -18,7 +18,6 @@
   "dependencies": {
     "@chakra-ui/icons": "^2.2.4",
     "@prisma/client": "^5.22.0",
-    "canvas": "^2.11.2",
     "cors": "^2.8.5",
     "csurf": "^1.11.0",
     "csv-parse": "^5.3.8",
@@ -30,7 +29,7 @@
     "json2csv": "^6.0.0-alpha.2",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.12",
-    "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^4.9.155",
     "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
     "sanitize-html": "^2.17.2",

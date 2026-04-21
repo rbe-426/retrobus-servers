@@ -4,9 +4,10 @@
  * Compatible avec les formats courants : Crédit Agricole, LCL, BNP, SG, CIC, Banque Postale, Caisse d'Épargne.
  */
 
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse');
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+
+// Disable worker to avoid Canvas dependency
+pdfjsLib.GlobalWorkerOptions.workerSrc = null;
 
 // ─── Catégories automatiques par mot-clé dans la description ──────────────────
 const CATEGORY_RULES = [
@@ -195,18 +196,42 @@ function parseTransactionsFromText(rawText) {
  * @returns {{ bank, period, transactions, rawLineCount }}
  */
 export async function parseBankStatementPDF(pdfBuffer) {
-  const data = await pdfParse(pdfBuffer);
-  const text = data.text;
+  try {
+    // Load the PDF using pdfjs-dist
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(pdfBuffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+    
+    const pdfDocument = await loadingTask.promise;
+    const numPages = pdfDocument.numPages;
+    
+    // Extract text from all pages
+    let fullText = '';
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      const page = await pdfDocument.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map(item => item.str)
+        .join(' ');
+      fullText += pageText + '\n';
+    }
 
-  const bank = detectBankFormat(text);
-  const period = extractPeriod(text);
-  const transactions = parseTransactionsFromText(text);
+    const bank = detectBankFormat(fullText);
+    const period = extractPeriod(fullText);
+    const transactions = parseTransactionsFromText(fullText);
 
-  return {
-    bank,
-    period,
-    transactions,
-    rawLineCount: text.split('\n').filter(l => l.trim()).length,
-    pageCount: data.numpages,
-  };
+    return {
+      bank,
+      period,
+      transactions,
+      rawLineCount: fullText.split('\n').filter(l => l.trim()).length,
+      pageCount: numPages,
+    };
+  } catch (error) {
+    console.error('Erreur parsing PDF:', error);
+    throw new Error(`Impossible de parser le PDF: ${error.message}`);
+  }
 }
