@@ -4,7 +4,9 @@
  * Compatible avec les formats courants : Crédit Agricole, LCL, BNP, SG, CIC, Banque Postale, Caisse d'Épargne.
  */
 
-import pdfParse from 'pdf-parse';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
 
 // ─── Catégories automatiques par mot-clé dans la description ──────────────────
 const CATEGORY_RULES = [
