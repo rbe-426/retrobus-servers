@@ -36,10 +36,11 @@ function categorizeTransaction(description) {
 }
 
 /**
- * Parse une date au format DD/MM/YYYY ou DD/MM/YY → ISO string
+ * Parse une date au format DD/MM/YYYY, DD/MM/YY ou DD.MM.YY (BNP) → ISO string
  */
 function parseDate(str) {
-  const m = str.match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
+  // Support / et . comme séparateurs
+  const m = str.match(/^(\d{2})[\/.](\d{2})[\/.](\d{2,4})$/);
   if (!m) return null;
   const [, d, mo, y] = m;
   const year = y.length === 2 ? (parseInt(y) > 50 ? '19' + y : '20' + y) : y;
@@ -65,6 +66,8 @@ function parseMontant(str) {
  * Certaines banques n'ont qu'un seul montant, signé ou non.
  */
 const TRANSACTION_PATTERNS = [
+  // Format BNP Paribas: DD.MM.YY LIBELLÉ DD.MM.YY MONTANT
+  /^(\d{2}\.\d{2}\.\d{2})\s+(.+?)\s+\d{2}\.\d{2}\.\d{2}\s+(\d[\d\s]*,\d{2})\s*$/,
   // Format standard: DATE LIBELLÉ DÉBIT CRÉDIT  (ex: Crédit Agricole, CIC, SG)
   /^(\d{2}\/\d{2}\/\d{2,4})\s+(.+?)\s+(\d[\d\s]*,\d{2})\s+(\d[\d\s]*,\d{2})\s*$/,
   // Format: DATE LIBELLÉ MONTANT_SIGNÉ  (ex: LCL, Caisse d'Épargne, Boursorama)
@@ -137,6 +140,14 @@ function parseTransactionsFromText(rawText) {
         .replace(/\s+/g, ' ')
         .replace(/^\d{6,}\s*/, '') // supprimer code opération
         .replace(/\bVIR\b|\bCB\b|\bPRL\b|\bCHQ\b|\bREM\b/g, '') // codes comptables
+        .replace(/\bSCT\b|\bINST\b|\bRECU\b|\bSEPA\b/g, '') // codes BNP
+        .replace(/\/FRM\s+.*?\/EID/g, '') // /FRM ... /EID (BNP)
+        .replace(/\/MOTIF\s+/g, '') // /MOTIF (BNP)
+        .replace(/\/REFBEN\s+/g, '') // /REFBEN (BNP)
+        .replace(/\/ORIG\s+/g, '') // /ORIG (BNP)
+        .replace(/\/RNF\s+/g, '') // /RNF (BNP)
+        .replace(/NOTPROVIDED/g, '')
+        .replace(/\s+/g, ' ')
         .trim();
 
       if (description.length < 3) continue;
