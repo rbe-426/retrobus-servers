@@ -762,6 +762,25 @@ model Transaction {
   @@index([category])
 }
 
+model Debt {
+  id          String   @id
+  type        String   // "DETTE" or "CRÉANCE"
+  amount      Float
+  description String
+  debtorType  String   // "MEMBER", "ASSOCIATION", "OTHER"
+  debtorName  String
+  debtorId    String?  // Optional: reference to member if debtorType = MEMBER
+  dueDate     DateTime?
+  status      String   @default("EN_COURS") // EN_COURS, PAYÉE, ANNULÉE
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([type])
+  @@index([status])
+  @@index([dueDate])
+}
+
 // ============================================
 // LEGACY ROUTES MODEL (kept for compatibility)
 // ============================================
