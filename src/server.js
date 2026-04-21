@@ -5030,17 +5030,73 @@ app.post(
 // Transactions - Utilisation de Prisma pour la persistance
 app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
   try {
-    const { page = 1, limit = 20, eventId } = req.query;
+    const {
+      page = 1,
+      limit = 20,
+      search = '',
+      category,
+      dateFrom,
+      dateTo,
+      amountMin,
+      amountMax
+    } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
+    const where = {};
+
+    if (search) {
+      const trimmedSearch = String(search).trim();
+      const numericSearch = Number(trimmedSearch.replace(',', '.'));
+      where.OR = [
+        { description: { contains: trimmedSearch, mode: 'insensitive' } },
+        { category: { contains: trimmedSearch, mode: 'insensitive' } },
+        { linkedDocumentNumber: { contains: trimmedSearch, mode: 'insensitive' } },
+        { linkedDocumentType: { contains: trimmedSearch, mode: 'insensitive' } }
+      ];
+
+      if (!Number.isNaN(Date.parse(trimmedSearch))) {
+        const parsedDate = new Date(trimmedSearch);
+        const nextDate = new Date(parsedDate);
+        nextDate.setDate(nextDate.getDate() + 1);
+        where.OR.push({
+          date: {
+            gte: parsedDate,
+            lt: nextDate
+          }
+        });
+      }
+
+      if (!Number.isNaN(numericSearch)) {
+        where.OR.push({ amount: numericSearch });
+      }
+    }
+
+    if (category && category !== 'Tous') {
+      where.category = category;
+    }
+
+    if (dateFrom || dateTo) {
+      where.date = {
+        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+        ...(dateTo ? { lte: new Date(`${dateTo}T23:59:59.999Z`) } : {})
+      };
+    }
+
+    if (amountMin || amountMax) {
+      where.amount = {
+        ...(amountMin !== undefined && amountMin !== '' ? { gte: Number(amountMin) } : {}),
+        ...(amountMax !== undefined && amountMax !== '' ? { lte: Number(amountMax) } : {})
+      };
+    }
     
     // Load from Prisma first
     let transactions = await prisma.finance_transactions.findMany({
+      where,
       skip,
       take: Number(limit),
       orderBy: { date: 'desc' }
     });
     
-    const total = await prisma.finance_transactions.count();
+    const total = await prisma.finance_transactions.count({ where });
     
     // Format dates
     transactions = transactions.map(t => ({
@@ -5054,10 +5110,41 @@ app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, asy
   } catch (e) {
     console.error('❌ GET /finance/transactions error:', e.message);
     // Fallback to memory
-    const { page = 1, limit = 20 } = req.query;
+    const {
+      page = 1,
+      limit = 20,
+      search = '',
+      category,
+      dateFrom,
+      dateTo,
+      amountMin,
+      amountMax
+    } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
-    const total = state.transactions.length;
-    const transactions = state.transactions.slice(skip, skip + Number(limit));
+    const filteredTransactions = state.transactions.filter((transaction) => {
+      const transactionDate = new Date(transaction.date);
+      const lowerSearch = String(search || '').trim().toLowerCase();
+
+      const matchesSearch = !lowerSearch || [
+        transaction.description,
+        transaction.category,
+        transaction.linkedDocumentNumber,
+        transaction.linkedDocumentType,
+        String(transaction.amount),
+        transactionDate.toLocaleDateString('fr-FR')
+      ].some((value) => String(value || '').toLowerCase().includes(lowerSearch));
+
+      const matchesCategory = !category || category === 'Tous' || transaction.category === category;
+      const matchesDateFrom = !dateFrom || transactionDate >= new Date(dateFrom);
+      const matchesDateTo = !dateTo || transactionDate <= new Date(`${dateTo}T23:59:59.999Z`);
+      const matchesAmountMin = amountMin === undefined || amountMin === '' || Number(transaction.amount) >= Number(amountMin);
+      const matchesAmountMax = amountMax === undefined || amountMax === '' || Number(transaction.amount) <= Number(amountMax);
+
+      return matchesSearch && matchesCategory && matchesDateFrom && matchesDateTo && matchesAmountMin && matchesAmountMax;
+    });
+
+    const total = filteredTransactions.length;
+    const transactions = filteredTransactions.slice(skip, skip + Number(limit));
     
     console.log('⚠️ Transactions chargées depuis memory (fallback)');
     res.json({ transactions, total });

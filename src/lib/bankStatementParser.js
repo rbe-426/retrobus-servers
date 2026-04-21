@@ -59,6 +59,119 @@ function parseMontant(str) {
   return isNaN(n) ? null : n;
 }
 
+function inferTransactionType(description, amount, sectionHint = null) {
+  if (sectionHint === 'CREDIT' || sectionHint === 'DEBIT') {
+    return sectionHint;
+  }
+
+  const descLower = description.toLowerCase();
+  const isCreditKeyword = /\b(recu|recue|depot|espece|remise|vir sepa recu|vir inst recu|vir sct inst recu|cheque recu)\b/.test(descLower);
+  const isDebitKeyword = /\b(emis|emise|prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|commissions|frais|cotisation|cheque emis|vir sepa emis|vir inst emis|vir sct inst emis)\b/.test(descLower);
+
+  if (isCreditKeyword && !isDebitKeyword) return 'CREDIT';
+  if (isDebitKeyword && !isCreditKeyword) return 'DEBIT';
+  return amount >= 0 ? 'CREDIT' : 'DEBIT';
+}
+
+function normalizeTransactionDescription(description) {
+  return String(description || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\/\s*/g, '/')
+    .trim()
+    .toUpperCase();
+}
+
+function deduplicateTransactions(transactions) {
+  const seen = new Set();
+  const uniqueTransactions = [];
+
+  for (const transaction of transactions) {
+    const key = [
+      transaction.date,
+      Number(transaction.amount).toFixed(2),
+      transaction.type,
+      normalizeTransactionDescription(transaction.description)
+    ].join('|');
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uniqueTransactions.push(transaction);
+  }
+
+  return uniqueTransactions.sort((left, right) => {
+    const dateDiff = new Date(left.date) - new Date(right.date);
+    if (dateDiff !== 0) return dateDiff;
+    return normalizeTransactionDescription(left.description).localeCompare(normalizeTransactionDescription(right.description));
+  });
+}
+
+function normalizeBNPLine(line) {
+  return line
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function getBNPSectionType(line) {
+  if (/^\d{2}\.\d{2}\.\d{2}\s+/.test(line)) {
+    return null;
+  }
+
+  const normalized = normalizeBNPLine(line);
+
+  if (
+    normalized.includes('VIREMENTS RECUS') ||
+    normalized.includes('VIREMENTS RECUS') ||
+    normalized.includes('RETROCESSION')
+  ) {
+    return 'CREDIT';
+  }
+
+  if (
+    normalized.includes('VIREMENTS EMIS') ||
+    normalized.includes('VIREMENTS EMIS') ||
+    normalized.includes('PRELEVEMENTS') ||
+    normalized.includes('COMMISSIONS') ||
+    normalized.includes('INTERETS ET COMMISSIONS') ||
+    normalized.includes('FRAIS')
+  ) {
+    return 'DEBIT';
+  }
+
+  return null;
+}
+
+function isIgnorableBNPLine(line) {
+  const normalized = normalizeBNPLine(line);
+
+  return (
+    !normalized ||
+    normalized.startsWith('R ELEVE') ||
+    normalized.startsWith('RELEVE') ||
+    normalized.startsWith('PERIODE DU') ||
+    normalized.startsWith('SOLDE AU') ||
+    normalized.startsWith('SOUS TOTAL') ||
+    normalized.startsWith('TOTAL') ||
+    normalized.startsWith('BNP PARIBAS SA') ||
+    normalized.startsWith('P. ') ||
+    normalized.startsWith('D ATE') ||
+    normalized.startsWith('DATE') ||
+    normalized.startsWith('COMPTABLE') ||
+    normalized.startsWith('VALEUR') ||
+    normalized.startsWith('D EBIT') ||
+    normalized.startsWith('C REDIT') ||
+    /^\d+\s*\(SERVICE GRATUIT/i.test(normalized) ||
+    /^[A-Z0-9]{10,}$/.test(normalized)
+  );
+}
+
 /**
  * Patterns multi-banques pour détecter une ligne de transaction.
  *
@@ -166,30 +279,8 @@ function parseTransactionsFromText(rawText) {
         if (val === null) continue;
         
         // Déterminer si c'est un DEBIT ou CREDIT basé sur le libellé
-        const descLower = description.toLowerCase();
-        
-        // CREDIT (entrée d'argent) : virements REÇUS, dépôts, remises
-        const isCreditKeyword = /\b(recu|recue|depot|espece|remise|vir sepa recu|vir inst recu|vir sct inst recu|cheque recu)\b/.test(descLower);
-        
-        // DEBIT (sortie d'argent) : virements EMIS, prélèvements, CB, frais, commissions
-        const isDebitKeyword = /\b(emis|emise|prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|commissions|frais|cotisation|cheque emis|vir sepa emis|vir inst emis|vir sct inst emis)\b/.test(descLower);
-        
-        if (isCreditKeyword && !isDebitKeyword) {
-          type = 'CREDIT';
-          amount = Math.abs(val);
-        } else if (isDebitKeyword && !isCreditKeyword) {
-          type = 'DEBIT';
-          amount = Math.abs(val);
-        } else {
-          // Par défaut: positif = CREDIT, négatif = DEBIT
-          if (val >= 0) {
-            type = 'CREDIT';
-            amount = val;
-          } else {
-            type = 'DEBIT';
-            amount = Math.abs(val);
-          }
-        }
+        type = inferTransactionType(description, val);
+        amount = Math.abs(val);
       }
 
       if (!amount || amount <= 0) continue;
@@ -210,9 +301,215 @@ function parseTransactionsFromText(rawText) {
   return transactions;
 }
 
+export function parseBNPTransactionsFromText(rawText) {
+  const transactions = [];
+  const lines = rawText
+    .split('\n')
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  let currentSectionType = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const sectionType = getBNPSectionType(line);
+    if (sectionType) {
+      currentSectionType = sectionType;
+      continue;
+    }
+
+    if (isIgnorableBNPLine(line)) {
+      continue;
+    }
+
+    const fullLineMatch = line.match(/^(\d{2}\.\d{2}\.\d{2})\s+(.+?)\s+(\d{2}\.\d{2}\.\d{2})\s+([+-]?\d[\d\s]*,\d{2})$/);
+    if (fullLineMatch) {
+      const [, rawDate, descriptionPart, , rawAmount] = fullLineMatch;
+      const date = parseDate(rawDate);
+      const amount = parseMontant(rawAmount);
+
+      if (date && amount !== null && Math.abs(amount) >= 0.01) {
+        const description = descriptionPart
+          .replace(/\s+/g, ' ')
+          .replace(/^\d{6,}\s*/, '')
+          .replace(/NOTPROVIDED/g, '')
+          .trim();
+
+        if (description.length >= 3) {
+          transactions.push({
+            date,
+            description,
+            type: inferTransactionType(description, amount, currentSectionType),
+            amount: Math.abs(Math.round(amount * 100) / 100),
+            category: categorizeTransaction(description),
+            selected: true,
+          });
+        }
+      }
+      continue;
+    }
+
+    const compactLineMatch = line.match(/^(\d{2}\.\d{2}\.\d{2})\s+(.+?)\s+([+-]?\d[\d\s]*,\d{2})$/);
+    if (compactLineMatch) {
+      const [, rawDate, descriptionPart, rawAmount] = compactLineMatch;
+      const date = parseDate(rawDate);
+      const amount = parseMontant(rawAmount);
+
+      if (date && amount !== null && Math.abs(amount) >= 0.01) {
+        const description = descriptionPart
+          .replace(/\s+/g, ' ')
+          .replace(/^\d{6,}\s*/, '')
+          .replace(/NOTPROVIDED/g, '')
+          .trim();
+
+        if (description.length >= 3) {
+          transactions.push({
+            date,
+            description,
+            type: inferTransactionType(description, amount, currentSectionType),
+            amount: Math.abs(Math.round(amount * 100) / 100),
+            category: categorizeTransaction(description),
+            selected: true,
+          });
+        }
+      }
+      continue;
+    }
+
+    const startMatch = line.match(/^(\d{2}\.\d{2}\.\d{2})\s+(.+)$/);
+    if (!startMatch) {
+      continue;
+    }
+
+    if (/^\d{2}\.\d{2}\.\d{2}\s+[+-]?\d[\d\s]*,\d{2}$/.test(line)) {
+      continue;
+    }
+
+    const [, rawDate, firstDescriptionPart] = startMatch;
+    const date = parseDate(rawDate);
+    if (!date) {
+      continue;
+    }
+
+    const descriptionParts = [firstDescriptionPart];
+    let amount = null;
+    let consumedUntil = i;
+
+    for (let j = i + 1; j < lines.length && j <= i + 12; j++) {
+      const nextLine = lines[j];
+
+      if (getBNPSectionType(nextLine)) {
+        break;
+      }
+
+      if (isIgnorableBNPLine(nextLine)) {
+        if (/^(Sous total|TOTAL|SOLDE)/i.test(nextLine)) {
+          break;
+        }
+        continue;
+      }
+
+      if (/^(Sous total|TOTAL|SOLDE)/i.test(nextLine)) {
+        break;
+      }
+
+      const endMatch = nextLine.match(/^(\d{2}\.\d{2}\.\d{2})\s+([+-]?\d[\d\s]*,\d{2})$/);
+      if (endMatch) {
+        amount = parseMontant(endMatch[2]);
+        consumedUntil = j;
+        break;
+      }
+
+      if (/^\d{2}\.\d{2}\.\d{2}\s+/.test(nextLine)) {
+        break;
+      }
+
+      if (/^(P\.\s*\d+\/\d+|\d+\s*\(service gratuit|SORPSITSPREPFC)/i.test(nextLine)) {
+        continue;
+      }
+
+      descriptionParts.push(nextLine);
+    }
+
+    if (amount === null || Math.abs(amount) < 0.01) {
+      continue;
+    }
+
+    const description = descriptionParts
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^\d{6,}\s*/, '')
+      .replace(/NOTPROVIDED/g, '')
+      .trim();
+
+    if (description.length < 3) {
+      continue;
+    }
+
+    transactions.push({
+      date,
+      description,
+      type: inferTransactionType(description, amount, currentSectionType),
+      amount: Math.abs(Math.round(amount * 100) / 100),
+      category: categorizeTransaction(description),
+      selected: true,
+    });
+
+    i = consumedUntil;
+  }
+
+  return transactions;
+}
+
+function parseBNPTransactionsFromLooseText(rawText) {
+  const normalizedText = rawText.replace(/\r/g, '');
+  const pattern = /(\d{2}\.\d{2}\.\d{2})\s+(.+?)(?=(?:\s+\d{2}\.\d{2}\.\d{2}\s+[+-]?\d[\d\s]*,\d{2})|(?:\n\d{2}\.\d{2}\.\d{2}\s)|$)/gs;
+  const transactions = [];
+
+  let match;
+  while ((match = pattern.exec(normalizedText)) !== null) {
+    const [, rawDate, body] = match;
+    const trimmedBody = body.replace(/\s+/g, ' ').trim();
+    const amountMatch = trimmedBody.match(/(.+?)\s+(\d{2}\.\d{2}\.\d{2})\s+([+-]?\d[\d\s]*,\d{2})$/);
+    if (!amountMatch) {
+      continue;
+    }
+
+    const date = parseDate(rawDate);
+    const amount = parseMontant(amountMatch[3]);
+    if (!date || amount === null || Math.abs(amount) < 0.01) {
+      continue;
+    }
+
+    const description = amountMatch[1]
+      .replace(/\s+/g, ' ')
+  .replace(/^\d{6,}\s*/, '')
+      .replace(/NOTPROVIDED/g, '')
+      .trim();
+
+    if (description.length < 3) {
+      continue;
+    }
+
+    transactions.push({
+      date,
+      description,
+      type: inferTransactionType(description, amount),
+      amount: Math.abs(Math.round(amount * 100) / 100),
+      category: categorizeTransaction(description),
+      selected: true,
+    });
+  }
+
+  return transactions;
+}
+
 /**
- * Extraction spécifique pour BNP Paribas (format tabulaire)
- * Layout typique: Date Opé | Libellé | Date Valeur | Montant
+ * Extraction spécifique pour BNP Paribas (format tabulaire multi-lignes)
+ * Format : 
+ *   Ligne 1: Date opé | Début libellé
+ *   Lignes suivantes: Suite du libellé
+ *   Dernière ligne: Date valeur | Montant
  */
 function extractBNPTableData(allItems) {
   const transactions = [];
@@ -246,79 +543,140 @@ function extractBNPTableData(allItems) {
   
   console.log(`📋 Lignes groupées: ${lineGroups.length}`);
   
-  // Parser chaque ligne comme une potentielle transaction
-  let lineIndex = 0;
-  for (const lineItems of lineGroups) {
-    lineIndex++;
-    
-    // Trier les items de la ligne par position X
+  // Convertir les lignes en texte
+  const lines = lineGroups.map(lineItems => {
     const sortedItems = lineItems.sort((a, b) => a.transform[4] - b.transform[4]);
+    return sortedItems.map(item => item.str.trim()).filter(Boolean);
+  });
+  
+  // Debug: afficher les 50 premières lignes
+  lines.slice(0, 50).forEach((texts, idx) => {
+    console.log(`Ligne ${idx + 1}: [${texts.join(' | ')}]`);
+  });
+  
+  // Parcourir les lignes et détecter les transactions multi-lignes
+  let i = 0;
+  while (i < lines.length) {
+    const texts = lines[i];
     
-    // Extraire le texte de chaque item
-    const texts = sortedItems.map(item => item.str.trim()).filter(Boolean);
-    
-    // Debug: afficher les 20 premières lignes
-    if (lineIndex <= 20) {
-      console.log(`Ligne ${lineIndex}: [${texts.join(' | ')}]`);
-    }
-    
-    if (texts.length < 3) continue; // Ligne trop courte
-    
-    // Pattern BNP: première colonne = date (DD.MM.YY)
+    // Chercher une ligne qui commence par une date (début de transaction)
     const firstText = texts[0];
-    const dateMatch = firstText.match(/^\d{2}\.\d{2}\.\d{2}$/);
-    if (!dateMatch) continue;
-    
-    const date = parseDate(firstText);
-    if (!date) continue;
-    
-    // Dernière colonne = montant
-    const lastText = texts[texts.length - 1];
-    const montantMatch = lastText.match(/^[+-]?\d[\d\s]*,\d{2}$/);
-    if (!montantMatch) continue;
-    
-    const amount = parseMontant(lastText);
-    if (!amount || Math.abs(amount) < 0.01) continue;
-    
-    // Colonnes du milieu = libellé (tout sauf première et dernière)
-    const descriptionParts = texts.slice(1, -1);
-    
-    // Enlever la date valeur si elle existe (format DD.MM.YY en fin de description)
-    const filtered = descriptionParts.filter(part => !/^\d{2}\.\d{2}\.\d{2}$/.test(part));
-    
-    let description = filtered.join(' ')
-      .replace(/\s+/g, ' ')
-      .replace(/^\d{6,}\s*/, '') // Code opération
-      .replace(/NOTPROVIDED/g, '')
-      .trim();
-    
-    if (description.length < 3) continue;
-    
-    console.log(`✅ Transaction trouvée ligne ${lineIndex}: ${date} | ${description} | ${amount}€`);
-    
-    // Déterminer DEBIT/CREDIT
-    const descLower = description.toLowerCase();
-    const isCreditKeyword = /\b(recu|recue|depot|espece|remise|vir sepa recu|vir inst recu|vir sct inst recu|cheque recu)\b/.test(descLower);
-    const isDebitKeyword = /\b(emis|emise|prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|commissions|frais|cotisation|cheque emis|vir sepa emis|vir inst emis|vir sct inst emis)\b/.test(descLower);
-    
-    let type;
-    if (isCreditKeyword && !isDebitKeyword) {
-      type = 'CREDIT';
-    } else if (isDebitKeyword && !isCreditKeyword) {
-      type = 'DEBIT';
-    } else {
-      // Par défaut: positif = CREDIT, négatif = DEBIT
-      type = amount >= 0 ? 'CREDIT' : 'DEBIT';
+    if (!/^\d{2}\.\d{2}\.\d{2}$/.test(firstText)) {
+      i++;
+      continue;
     }
     
-    transactions.push({
-      date,
-      description,
-      type,
-      amount: Math.abs(Math.round(amount * 100) / 100),
-      category: categorizeTransaction(description),
-      selected: true,
-    });
+    const dateOpe = parseDate(firstText);
+    if (!dateOpe) {
+      i++;
+      continue;
+    }
+    
+    // Vérifier si c'est une ligne complète (date + libellé + date valeur + montant)
+    const lastText = texts[texts.length - 1];
+    if (/^[+-]?\d[\d\s]*,\d{2}$/.test(lastText)) {
+      // Ligne complète sur une seule ligne
+      const amount = parseMontant(lastText);
+      if (amount && Math.abs(amount) >= 0.01) {
+        // Colonnes du milieu = libellé
+        const descParts = texts.slice(1, -1).filter(part => !/^\d{2}\.\d{2}\.\d{2}$/.test(part));
+        const description = descParts.join(' ').replace(/\s+/g, ' ').trim();
+        
+        if (description.length >= 3) {
+          const descLower = description.toLowerCase();
+          const isCreditKeyword = /\b(recu|recue|depot|espece|remise|vir sepa recu|vir inst recu|vir sct inst recu|cheque recu)\b/.test(descLower);
+          const isDebitKeyword = /\b(emis|emise|prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|commissions|frais|cotisation|cheque emis|vir sepa emis|vir inst emis|vir sct inst emis)\b/.test(descLower);
+          
+          let type;
+          if (isCreditKeyword && !isDebitKeyword) {
+            type = 'CREDIT';
+          } else if (isDebitKeyword && !isCreditKeyword) {
+            type = 'DEBIT';
+          } else {
+            type = amount >= 0 ? 'CREDIT' : 'DEBIT';
+          }
+          
+          transactions.push({
+            date: dateOpe,
+            description,
+            type,
+            amount: Math.abs(Math.round(amount * 100) / 100),
+            category: categorizeTransaction(description),
+            selected: true,
+          });
+          
+          console.log(`✅ Transaction complète ligne ${i + 1}: ${dateOpe} | ${description} | ${amount}€`);
+        }
+      }
+      i++;
+      continue;
+    }
+    
+    // Transaction multi-lignes : accumuler jusqu'à trouver la ligne avec montant
+    let descriptionParts = texts.slice(1); // Tout sauf la première colonne (date)
+    let j = i + 1;
+    let foundEnd = false;
+    
+    // Chercher les lignes suivantes jusqu'à trouver date + montant
+    while (j < lines.length && j < i + 10) { // Max 10 lignes par transaction
+      const nextLine = lines[j];
+      
+      // Vérifier si dernière colonne est un montant
+      const lastCol = nextLine[nextLine.length - 1];
+      if (/^[+-]?\d[\d\s]*,\d{2}$/.test(lastCol)) {
+        // C'est la ligne de fin avec date valeur + montant
+        const amount = parseMontant(lastCol);
+        
+        if (amount && Math.abs(amount) >= 0.01) {
+          // Combiner toutes les parties du libellé
+          const description = descriptionParts
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .replace(/^\d{6,}\s*/, '')
+            .replace(/NOTPROVIDED/g, '')
+            .trim();
+          
+          if (description.length >= 3) {
+            const descLower = description.toLowerCase();
+            const isCreditKeyword = /\b(recu|recue|depot|espece|remise|vir sepa recu|vir inst recu|vir sct inst recu|cheque recu)\b/.test(descLower);
+            const isDebitKeyword = /\b(emis|emise|prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|commissions|frais|cotisation|cheque emis|vir sepa emis|vir inst emis|vir sct inst emis)\b/.test(descLower);
+            
+            let type;
+            if (isCreditKeyword && !isDebitKeyword) {
+              type = 'CREDIT';
+            } else if (isDebitKeyword && !isCreditKeyword) {
+              type = 'DEBIT';
+            } else {
+              type = amount >= 0 ? 'CREDIT' : 'DEBIT';
+            }
+            
+            transactions.push({
+              date: dateOpe,
+              description,
+              type,
+              amount: Math.abs(Math.round(amount * 100) / 100),
+              category: categorizeTransaction(description),
+              selected: true,
+            });
+            
+            console.log(`✅ Transaction multi-lignes ${i + 1}-${j + 1}: ${dateOpe} | ${description} | ${amount}€`);
+          }
+        }
+        
+        foundEnd = true;
+        i = j + 1; // Continuer après cette transaction
+        break;
+      }
+      
+      // Ligne intermédiaire de libellé
+      descriptionParts.push(...nextLine);
+      j++;
+    }
+    
+    if (!foundEnd) {
+      // Pas de fin trouvée, passer à la ligne suivante
+      i++;
+    }
   }
   
   console.log(`📊 Total transactions BNP: ${transactions.length}`);
@@ -398,8 +756,25 @@ export async function parseBankStatementPDF(pdfBuffer) {
     // Utiliser l'extracteur approprié selon la banque
     let transactions;
     if (bank === 'BNP Paribas') {
-      console.log('🏦 Utilisation de l\'extracteur tabulaire BNP Paribas');
-      transactions = extractBNPTableData(allItems);
+      console.log('🏦 Utilisation des extracteurs fusionnés BNP Paribas');
+      const bnpTextTransactions = parseBNPTransactionsFromText(fullText);
+      const bnpLooseTransactions = parseBNPTransactionsFromLooseText(fullText);
+      const bnpTableTransactions = extractBNPTableData(allItems);
+      const genericTransactions = parseTransactionsFromText(fullText);
+
+      console.log(`📊 BNP texte structuré: ${bnpTextTransactions.length}`);
+      console.log(`📊 BNP texte souple: ${bnpLooseTransactions.length}`);
+      console.log(`📊 BNP tabulaire: ${bnpTableTransactions.length}`);
+      console.log(`📊 Générique: ${genericTransactions.length}`);
+
+      transactions = deduplicateTransactions([
+        ...bnpTextTransactions,
+        ...bnpLooseTransactions,
+        ...bnpTableTransactions,
+        ...genericTransactions,
+      ]);
+
+      console.log(`📊 BNP fusionné dédupliqué: ${transactions.length}`);
     } else {
       transactions = parseTransactionsFromText(fullText);
     }
