@@ -167,8 +167,12 @@ function parseTransactionsFromText(rawText) {
         
         // Déterminer si c'est un DEBIT ou CREDIT basé sur le libellé
         const descLower = description.toLowerCase();
-        const isCreditKeyword = /\b(recu|virement|depot|espece|cheque recu|remise|vir sepa recu|vir inst recu)\b/.test(descLower);
-        const isDebitKeyword = /\b(prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|frais|cotisation|cheque emis)\b/.test(descLower);
+        
+        // CREDIT (entrée d'argent) : virements REÇUS, dépôts, remises
+        const isCreditKeyword = /\b(recu|recue|depot|espece|remise|vir sepa recu|vir inst recu|vir sct inst recu|cheque recu)\b/.test(descLower);
+        
+        // DEBIT (sortie d'argent) : virements EMIS, prélèvements, CB, frais, commissions
+        const isDebitKeyword = /\b(emis|emise|prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|commissions|frais|cotisation|cheque emis|vir sepa emis|vir inst emis|vir sct inst emis)\b/.test(descLower);
         
         if (isCreditKeyword && !isDebitKeyword) {
           type = 'CREDIT';
@@ -207,6 +211,122 @@ function parseTransactionsFromText(rawText) {
 }
 
 /**
+ * Extraction spécifique pour BNP Paribas (format tabulaire)
+ * Layout typique: Date Opé | Libellé | Date Valeur | Montant
+ */
+function extractBNPTableData(allItems) {
+  const transactions = [];
+  
+  console.log(`🔍 Extraction BNP - Total items: ${allItems.length}`);
+  
+  // Grouper les items par ligne (Y position)
+  const lineGroups = [];
+  let currentLineY = null;
+  let currentLineItems = [];
+  
+  for (const item of allItems) {
+    const y = item.transform[5];
+    
+    // Nouvelle ligne si Y diffère de plus de 5px
+    if (currentLineY !== null && Math.abs(y - currentLineY) > 5) {
+      if (currentLineItems.length > 0) {
+        lineGroups.push([...currentLineItems]);
+      }
+      currentLineItems = [];
+    }
+    
+    currentLineItems.push(item);
+    currentLineY = y;
+  }
+  
+  // Ajouter la dernière ligne
+  if (currentLineItems.length > 0) {
+    lineGroups.push(currentLineItems);
+  }
+  
+  console.log(`📋 Lignes groupées: ${lineGroups.length}`);
+  
+  // Parser chaque ligne comme une potentielle transaction
+  let lineIndex = 0;
+  for (const lineItems of lineGroups) {
+    lineIndex++;
+    
+    // Trier les items de la ligne par position X
+    const sortedItems = lineItems.sort((a, b) => a.transform[4] - b.transform[4]);
+    
+    // Extraire le texte de chaque item
+    const texts = sortedItems.map(item => item.str.trim()).filter(Boolean);
+    
+    // Debug: afficher les 20 premières lignes
+    if (lineIndex <= 20) {
+      console.log(`Ligne ${lineIndex}: [${texts.join(' | ')}]`);
+    }
+    
+    if (texts.length < 3) continue; // Ligne trop courte
+    
+    // Pattern BNP: première colonne = date (DD.MM.YY)
+    const firstText = texts[0];
+    const dateMatch = firstText.match(/^\d{2}\.\d{2}\.\d{2}$/);
+    if (!dateMatch) continue;
+    
+    const date = parseDate(firstText);
+    if (!date) continue;
+    
+    // Dernière colonne = montant
+    const lastText = texts[texts.length - 1];
+    const montantMatch = lastText.match(/^[+-]?\d[\d\s]*,\d{2}$/);
+    if (!montantMatch) continue;
+    
+    const amount = parseMontant(lastText);
+    if (!amount || Math.abs(amount) < 0.01) continue;
+    
+    // Colonnes du milieu = libellé (tout sauf première et dernière)
+    const descriptionParts = texts.slice(1, -1);
+    
+    // Enlever la date valeur si elle existe (format DD.MM.YY en fin de description)
+    const filtered = descriptionParts.filter(part => !/^\d{2}\.\d{2}\.\d{2}$/.test(part));
+    
+    let description = filtered.join(' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^\d{6,}\s*/, '') // Code opération
+      .replace(/NOTPROVIDED/g, '')
+      .trim();
+    
+    if (description.length < 3) continue;
+    
+    console.log(`✅ Transaction trouvée ligne ${lineIndex}: ${date} | ${description} | ${amount}€`);
+    
+    // Déterminer DEBIT/CREDIT
+    const descLower = description.toLowerCase();
+    const isCreditKeyword = /\b(recu|recue|depot|espece|remise|vir sepa recu|vir inst recu|vir sct inst recu|cheque recu)\b/.test(descLower);
+    const isDebitKeyword = /\b(emis|emise|prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|commissions|frais|cotisation|cheque emis|vir sepa emis|vir inst emis|vir sct inst emis)\b/.test(descLower);
+    
+    let type;
+    if (isCreditKeyword && !isDebitKeyword) {
+      type = 'CREDIT';
+    } else if (isDebitKeyword && !isCreditKeyword) {
+      type = 'DEBIT';
+    } else {
+      // Par défaut: positif = CREDIT, négatif = DEBIT
+      type = amount >= 0 ? 'CREDIT' : 'DEBIT';
+    }
+    
+    transactions.push({
+      date,
+      description,
+      type,
+      amount: Math.abs(Math.round(amount * 100) / 100),
+      category: categorizeTransaction(description),
+      selected: true,
+    });
+  }
+  
+  console.log(`📊 Total transactions BNP: ${transactions.length}`);
+  
+  return transactions;
+}
+
+/**
  * Point d'entrée principal.
  * @param {Buffer} pdfBuffer - Contenu binaire du PDF
  * @returns {{ bank, period, transactions, rawLineCount }}
@@ -224,11 +344,16 @@ export async function parseBankStatementPDF(pdfBuffer) {
     const pdfDocument = await loadingTask.promise;
     const numPages = pdfDocument.numPages;
     
-    // Extract text from all pages with better line preservation
+    // Collecter tous les items de toutes les pages
+    let allItems = [];
     let fullText = '';
+    
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       const page = await pdfDocument.getPage(pageNum);
       const textContent = await page.getTextContent();
+      
+      // Stocker les items avec leurs positions pour extraction tabulaire
+      allItems.push(...textContent.items);
       
       // Trier les items par position Y (pour préserver l'ordre des lignes)
       const items = textContent.items.sort((a, b) => {
@@ -269,7 +394,15 @@ export async function parseBankStatementPDF(pdfBuffer) {
 
     const bank = detectBankFormat(fullText);
     const period = extractPeriod(fullText);
-    const transactions = parseTransactionsFromText(fullText);
+    
+    // Utiliser l'extracteur approprié selon la banque
+    let transactions;
+    if (bank === 'BNP Paribas') {
+      console.log('🏦 Utilisation de l\'extracteur tabulaire BNP Paribas');
+      transactions = extractBNPTableData(allItems);
+    } else {
+      transactions = parseTransactionsFromText(fullText);
+    }
 
     console.log(`✅ Parsed: ${bank}, ${period}, ${transactions.length} transactions`);
 

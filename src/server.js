@@ -5234,6 +5234,146 @@ app.post('/finance/sync/memberships', requireAuth, (req, res) => {
   res.json({ synchronized: 0, ok: true });
 });
 
+// ============================================
+// ENDPOINTS LIAISON TRANSACTIONS-DOCUMENTS
+// ============================================
+
+// GET /api/finance/available-documents - Liste tous les documents disponibles pour liaison
+app.get(['/finance/available-documents', '/api/finance/available-documents'], requireAuth, async (req, res) => {
+  try {
+    console.log('📥 GET /api/finance/available-documents');
+    
+    // Récupérer tous les documents financiers (devis + factures)
+    const financialDocs = await prisma.financial_documents.findMany({
+      orderBy: { date: 'desc' }
+    });
+    
+    // Récupérer toutes les dettes
+    const debts = await prisma.debt.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    // Formater les documents financiers pour le frontend
+    const formattedFinancialDocs = financialDocs.map(doc => ({
+      id: doc.id,
+      type: doc.type, // "QUOTE" ou "INVOICE"
+      displayType: doc.type === 'QUOTE' ? 'DEVIS' : 'FACTURE',
+      number: doc.number,
+      title: doc.title,
+      description: doc.description,
+      amount: doc.amount,
+      date: doc.date,
+      status: doc.type === 'INVOICE' ? doc.invoiceStatus : doc.quoteStatus
+    }));
+    
+    // Formater les dettes pour le frontend
+    const formattedDebts = debts.map(debt => ({
+      id: debt.id,
+      type: debt.type, // "DETTE" ou "CRÉANCE"
+      displayType: debt.type,
+      number: debt.id.substring(0, 12), // ID court comme numéro
+      title: debt.description,
+      description: `${debt.debtorType}: ${debt.debtorName}`,
+      amount: debt.amount,
+      date: debt.createdAt,
+      status: debt.status,
+      dueDate: debt.dueDate
+    }));
+    
+    // Combiner tous les documents
+    const allDocuments = [
+      ...formattedFinancialDocs,
+      ...formattedDebts
+    ];
+    
+    console.log(`✅ ${allDocuments.length} documents disponibles (${financialDocs.length} factures/devis, ${debts.length} dettes)`);
+    res.json({ documents: allDocuments });
+  } catch (e) {
+    console.error('❌ GET /api/finance/available-documents error:', e.message);
+    res.status(500).json({ error: 'Erreur chargement documents disponibles', details: e.message });
+  }
+});
+
+// POST /api/finance/transactions/:id/link - Lier une transaction à un document
+app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'], requireAuth, async (req, res) => {
+  try {
+    const { linkedDocumentId, linkedDocumentType, linkedDocumentNumber } = req.body;
+    
+    if (!linkedDocumentId || !linkedDocumentType) {
+      return res.status(400).json({ error: 'linkedDocumentId et linkedDocumentType requis' });
+    }
+    
+    console.log(`🔗 Liaison transaction ${req.params.id} -> ${linkedDocumentType} ${linkedDocumentNumber}`);
+    
+    // Mettre à jour la transaction dans Prisma
+    const updated = await prisma.finance_transactions.update({
+      where: { id: req.params.id },
+      data: {
+        linkedDocumentId,
+        linkedDocumentType,
+        linkedDocumentNumber: linkedDocumentNumber || null
+      }
+    });
+    
+    // Mettre à jour la mémoire
+    state.transactions = state.transactions.map(t => 
+      t.id === req.params.id 
+        ? { ...t, linkedDocumentId, linkedDocumentType, linkedDocumentNumber }
+        : t
+    );
+    debouncedSave();
+    
+    console.log(`✅ Transaction ${req.params.id} liée au document ${linkedDocumentId}`);
+    res.json({ 
+      transaction: {
+        ...updated,
+        date: updated.date.toISOString(),
+        createdAt: updated.createdAt.toISOString()
+      }
+    });
+  } catch (e) {
+    console.error('❌ POST /api/finance/transactions/:id/link error:', e.message);
+    res.status(500).json({ error: 'Erreur liaison transaction-document', details: e.message });
+  }
+});
+
+// DELETE /api/finance/transactions/:id/link - Délier une transaction d'un document
+app.delete(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'], requireAuth, async (req, res) => {
+  try {
+    console.log(`🔓 Déliaison transaction ${req.params.id}`);
+    
+    // Mettre à jour la transaction dans Prisma
+    const updated = await prisma.finance_transactions.update({
+      where: { id: req.params.id },
+      data: {
+        linkedDocumentId: null,
+        linkedDocumentType: null,
+        linkedDocumentNumber: null
+      }
+    });
+    
+    // Mettre à jour la mémoire
+    state.transactions = state.transactions.map(t => 
+      t.id === req.params.id 
+        ? { ...t, linkedDocumentId: null, linkedDocumentType: null, linkedDocumentNumber: null }
+        : t
+    );
+    debouncedSave();
+    
+    console.log(`✅ Transaction ${req.params.id} déliée`);
+    res.json({ 
+      transaction: {
+        ...updated,
+        date: updated.date.toISOString(),
+        createdAt: updated.createdAt.toISOString()
+      }
+    });
+  } catch (e) {
+    console.error('❌ DELETE /api/finance/transactions/:id/link error:', e.message);
+    res.status(500).json({ error: 'Erreur déliaison transaction-document', details: e.message });
+  }
+});
+
 app.get(['/finance/categories', '/api/finance/categories'], requireAuth, async (req, res) => {
   try {
     // Charger depuis Prisma (source de vérité)
