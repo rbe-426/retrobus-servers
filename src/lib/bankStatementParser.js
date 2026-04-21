@@ -205,20 +205,54 @@ export async function parseBankStatementPDF(pdfBuffer) {
     const pdfDocument = await loadingTask.promise;
     const numPages = pdfDocument.numPages;
     
-    // Extract text from all pages
+    // Extract text from all pages with better line preservation
     let fullText = '';
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       const page = await pdfDocument.getPage(pageNum);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map(item => item.str)
-        .join(' ');
-      fullText += pageText + '\n';
+      
+      // Trier les items par position Y (pour préserver l'ordre des lignes)
+      const items = textContent.items.sort((a, b) => {
+        const yDiff = b.transform[5] - a.transform[5]; // Transform[5] = Y position
+        if (Math.abs(yDiff) > 5) return yDiff > 0 ? 1 : -1; // Nouvelle ligne si Y diffère de > 5px
+        return a.transform[4] - b.transform[4]; // Sinon trier par X
+      });
+      
+      // Reconstruire le texte ligne par ligne
+      let currentY = null;
+      let currentLine = '';
+      
+      for (const item of items) {
+        const y = item.transform[5];
+        
+        // Nouvelle ligne si Y diffère significativement
+        if (currentY !== null && Math.abs(y - currentY) > 5) {
+          if (currentLine.trim()) {
+            fullText += currentLine.trim() + '\n';
+          }
+          currentLine = '';
+        }
+        
+        currentLine += item.str + ' ';
+        currentY = y;
+      }
+      
+      // Ajouter la dernière ligne de la page
+      if (currentLine.trim()) {
+        fullText += currentLine.trim() + '\n';
+      }
     }
+
+    // Debug: Log first 2000 chars of extracted text
+    console.log('📄 PDF Text Extract (first 2000 chars):');
+    console.log(fullText.substring(0, 2000));
+    console.log('...');
 
     const bank = detectBankFormat(fullText);
     const period = extractPeriod(fullText);
     const transactions = parseTransactionsFromText(fullText);
+
+    console.log(`✅ Parsed: ${bank}, ${period}, ${transactions.length} transactions`);
 
     return {
       bank,
