@@ -168,15 +168,30 @@ function parseTransactionsFromText(rawText) {
           continue;
         }
       } else {
-        // Montant unique
+        // Montant unique - détecter le type par heuristiques sur le libellé
         const val = parseMontant(col3);
         if (val === null) continue;
-        if (val >= 0) {
+        
+        // Déterminer si c'est un DEBIT ou CREDIT basé sur le libellé
+        const descLower = description.toLowerCase();
+        const isCreditKeyword = /\b(recu|virement|depot|espece|cheque recu|remise|vir sepa recu|vir inst recu)\b/.test(descLower);
+        const isDebitKeyword = /\b(prlv|prelevement|retrait|cb|carte|paiement|remboursement|commission|frais|cotisation|cheque emis)\b/.test(descLower);
+        
+        if (isCreditKeyword && !isDebitKeyword) {
           type = 'CREDIT';
-          amount = val;
-        } else {
+          amount = Math.abs(val);
+        } else if (isDebitKeyword && !isCreditKeyword) {
           type = 'DEBIT';
           amount = Math.abs(val);
+        } else {
+          // Par défaut: positif = CREDIT, négatif = DEBIT
+          if (val >= 0) {
+            type = 'CREDIT';
+            amount = val;
+          } else {
+            type = 'DEBIT';
+            amount = Math.abs(val);
+          }
         }
       }
 
