@@ -5509,6 +5509,83 @@ app.delete(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'],
   res.json({ ok: true });
 });
 
+// ============================================
+// DETTES ET CRÉANCES
+// ============================================
+app.get(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) => {
+  try {
+    const debts = await prisma.debt.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ debts });
+  } catch (e) {
+    console.error('❌ GET /api/finance/debts error:', e.message);
+    res.status(500).json({ error: 'Erreur chargement dettes' });
+  }
+});
+
+app.post(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) => {
+  try {
+    const { type, amount, description, debtorType, debtorName, debtorId, dueDate, status } = req.body;
+    
+    if (!type || !amount || !description || !debtorName) {
+      return res.status(400).json({ error: 'Champs requis manquants' });
+    }
+
+    const debt = await prisma.debt.create({
+      data: {
+        id: `debt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        amount: parseFloat(amount),
+        description,
+        debtorType,
+        debtorName,
+        debtorId: debtorId || null,
+        dueDate: dueDate ? new Date(dueDate) : null,
+        status: status || 'EN_COURS',
+        createdBy: req.userId || null,
+        updatedAt: new Date()
+      }
+    });
+
+    res.json({ debt });
+  } catch (e) {
+    console.error('❌ POST /api/finance/debts error:', e.message);
+    res.status(500).json({ error: 'Erreur création dette' });
+  }
+});
+
+app.patch(['/finance/debts/:id', '/api/finance/debts/:id'], requireAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    
+    const debt = await prisma.debt.update({
+      where: { id: req.params.id },
+      data: {
+        status,
+        updatedAt: new Date()
+      }
+    });
+
+    res.json({ debt });
+  } catch (e) {
+    console.error('❌ PATCH /api/finance/debts/:id error:', e.message);
+    res.status(500).json({ error: 'Erreur mise à jour dette' });
+  }
+});
+
+app.delete(['/finance/debts/:id', '/api/finance/debts/:id'], requireAuth, async (req, res) => {
+  try {
+    await prisma.debt.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/finance/debts/:id error:', e.message);
+    res.status(500).json({ error: 'Erreur suppression dette' });
+  }
+});
+
 // EXPORT placeholder
 app.get(['/finance/export', '/api/finance/export'], requireAuth, (req, res) => {
   res.header('Content-Type','text/csv');
@@ -7631,6 +7708,7 @@ app.get('/api/diagnostic/finance', requireAuth, (req, res) => {
     },
     endpoints: {
       '/api/finance/expense-reports': 'GET/POST',
+      '/api/finance/debts': 'GET/POST/PATCH/DELETE',
       '/api/finance/transactions': 'GET/POST',
       '/api/finance/scheduled-expenses': 'GET/POST',
       '/api/finance/balance': 'GET',
