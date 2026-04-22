@@ -38,8 +38,8 @@ async function recalculateDebts() {
       
       for (const tx of linkedTx) {
         const txAmount = Math.abs(tx.amount || 0);
-        const isDebit = tx.amount < 0;
-        const txType = isDebit ? 'DEBIT' : 'CREDIT';
+        const isDebit = tx.type === 'DEBIT'; // Utiliser le champ type au lieu du signe
+        const txType = tx.type; // CREDIT ou DEBIT
         
         if ((isDette && isDebit) || (!isDette && !isDebit)) {
           // Transaction crée/augmente la dette/créance

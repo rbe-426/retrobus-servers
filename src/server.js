@@ -5181,7 +5181,7 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
     // Mettre à jour la dette liée si besoin
     if (linkedDebt) {
       const txAmount = Math.abs(txData.amount || 0);
-      const isDebit = txData.amount < 0;
+      const isDebit = txData.type === 'DEBIT'; // Utiliser le champ type
       const isDette = linkedDebt.type === 'DETTE';
       
       // Logique intelligente selon le type de dette et de transaction :
@@ -5209,7 +5209,7 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
         where: { id: linkedDebt.id },
         data: updateData
       });
-      console.log(`💰 Dette ${linkedDebt.id} mise à jour: ${updateData.amount ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (tx: ${txAmount} ${isDebit ? 'DEBIT' : 'CREDIT'}), status=${updateData.status}`);
+      console.log(`💰 Dette ${linkedDebt.id} mise à jour: ${updateData.amount ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (tx: ${txAmount} ${txData.type}), status=${updateData.status}`);
     }
 
     // Also update memory
@@ -5335,7 +5335,7 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
         const debt = await prisma.debt.findUnique({ where: { id: tx.linkedDocumentId } });
         if (debt) {
           const txAmount = Math.abs(Number(tx.amount || 0));
-          const isDebit = tx.amount < 0;
+          const isDebit = tx.type === 'DEBIT';
           const isDette = debt.type === 'DETTE';
           
           const updateData = { updatedAt: new Date() };
@@ -5484,7 +5484,7 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
         const oldDebt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
         if (oldDebt) {
           const txAmount = Math.abs(Number(currentTx.amount || 0));
-          const isDebit = currentTx.amount < 0;
+          const isDebit = currentTx.type === 'DEBIT';
           const isDette = oldDebt.type === 'DETTE';
           
           const updateData = { updatedAt: new Date() };
@@ -5525,7 +5525,7 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
         const newDebt = await prisma.debt.findUnique({ where: { id: linkedDocumentId } });
         if (newDebt) {
           const txAmount = Math.abs(Number(updated.amount || 0));
-          const isDebit = updated.amount < 0;
+          const isDebit = updated.type === 'DEBIT';
           const isDette = newDebt.type === 'DETTE';
           
           const updateData = { updatedAt: new Date() };
@@ -5546,7 +5546,7 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
             where: { id: newDebt.id },
             data: updateData
           });
-          console.log(`💰 Dette ${newDebt.id} mise à jour via liaison: ${updateData.amount ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (tx: ${txAmount} ${isDebit ? 'DEBIT' : 'CREDIT'})`);
+          console.log(`💰 Dette ${newDebt.id} mise à jour via liaison: ${updateData.amount ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (tx: ${txAmount} ${updated.type})`);
         }
       } catch (_) {}
     }
@@ -5585,7 +5585,7 @@ app.delete(['/finance/transactions/:id/link', '/api/finance/transactions/:id/lin
         const debt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
         if (debt) {
           const txAmount = Math.abs(Number(currentTx.amount || 0));
-          const isDebit = currentTx.amount < 0;
+          const isDebit = currentTx.type === 'DEBIT';
           const isDette = debt.type === 'DETTE';
           
           const updateData = { updatedAt: new Date() };
