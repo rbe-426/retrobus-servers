@@ -5865,7 +5865,8 @@ app.post(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res)
   try {
     const { type, amount, description, debtorType, debtorName, debtorId, dueDate, status, notes } = req.body;
     
-    if (!type || !amount || !description || !debtorName) {
+    // Validation: amount peut être 0 (pour constituer progressivement), mais doit être défini
+    if (!type || amount === undefined || amount === null || !description || !debtorName) {
       return res.status(400).json({ error: 'Champs requis manquants' });
     }
 

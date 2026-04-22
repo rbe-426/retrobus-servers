@@ -106,9 +106,9 @@ export const verifyCSRFToken = (token) => {
       return false;
     }
 
-    // Token valide - le supprimer du store (one-time use)
-    csrfTokenStore.delete(token);
-    console.log(`✅ CSRF token verified and consumed. Store size: ${csrfTokenStore.size}`);
+    // Token valide - NE PAS le supprimer, permettre la réutilisation pendant 24h
+    // C'est toujours sécurisé : signature HMAC + expiration + origine validée
+    console.log(`✅ CSRF token verified (reusable). Store size: ${csrfTokenStore.size}`);
 
     return true;
   } catch (error) {
@@ -163,8 +163,8 @@ export const csrfProtection = (req, res, next) => {
     });
   }
 
-  // Token valide - générer un nouveau pour la prochaine requête
-  req.newCSRFToken = generateCSRFToken();
+  // Token valide et réutilisable - pas besoin de générer un nouveau token à chaque fois
+  // Le token reste valide pendant 24h
 
   next();
 };
