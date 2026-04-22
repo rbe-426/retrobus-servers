@@ -5181,15 +5181,35 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
     // Mettre à jour la dette liée si besoin
     if (linkedDebt) {
       const txAmount = Math.abs(txData.amount || 0);
-      const newPaid = linkedDebt.amount > 0
-        ? Math.min(linkedDebt.paidAmount + txAmount, linkedDebt.amount)
-        : linkedDebt.paidAmount + txAmount;
-      const newStatus = linkedDebt.amount > 0 && newPaid >= linkedDebt.amount ? 'PAYÉE' : linkedDebt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
+      const isDebit = txData.amount < 0;
+      const isDette = linkedDebt.type === 'DETTE';
+      
+      // Logique intelligente selon le type de dette et de transaction :
+      // DETTE + DEBIT (-) → augmente amount (dépense qui CRÉE la dette)
+      // DETTE + CREDIT (+) → augmente paidAmount (remboursement de la dette)
+      // CRÉANCE + CREDIT (+) → augmente amount (vente qui CRÉE la créance)
+      // CRÉANCE + DEBIT (-) → augmente paidAmount (on récupère l'argent)
+      
+      const updateData = { updatedAt: new Date() };
+      
+      if ((isDette && isDebit) || (!isDette && !isDebit)) {
+        // Transaction crée/augmente la dette/créance
+        updateData.amount = linkedDebt.amount + txAmount;
+      } else {
+        // Transaction rembourse la dette/créance
+        updateData.paidAmount = linkedDebt.paidAmount + txAmount;
+      }
+      
+      // Recalculer le statut
+      const newAmount = updateData.amount !== undefined ? updateData.amount : linkedDebt.amount;
+      const newPaid = updateData.paidAmount !== undefined ? updateData.paidAmount : linkedDebt.paidAmount;
+      updateData.status = newAmount > 0 && newPaid >= newAmount ? 'PAYÉE' : linkedDebt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
+      
       await prisma.debt.update({
         where: { id: linkedDebt.id },
-        data: { paidAmount: newPaid, status: newStatus, updatedAt: new Date() }
+        data: updateData
       });
-      console.log(`💰 Dette ${linkedDebt.id} mise à jour: paidAmount=${newPaid} (tx: ${txAmount}), status=${newStatus}`);
+      console.log(`💰 Dette ${linkedDebt.id} mise à jour: ${updateData.amount ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (tx: ${txAmount} ${isDebit ? 'DEBIT' : 'CREDIT'}), status=${updateData.status}`);
     }
 
     // Also update memory
@@ -5315,13 +5335,28 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
         const debt = await prisma.debt.findUnique({ where: { id: tx.linkedDocumentId } });
         if (debt) {
           const txAmount = Math.abs(Number(tx.amount || 0));
-          const newPaid = Math.max(0, debt.paidAmount - txAmount);
-          const newStatus = debt.status === 'ANNULÉE' ? 'ANNULÉE' : (debt.amount > 0 && newPaid < debt.amount ? 'EN_COURS' : 'PAYÉE');
+          const isDebit = tx.amount < 0;
+          const isDette = debt.type === 'DETTE';
+          
+          const updateData = { updatedAt: new Date() };
+          
+          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+            // Transaction avait augmenté amount → on reverse
+            updateData.amount = Math.max(0, debt.amount - txAmount);
+          } else {
+            // Transaction avait augmenté paidAmount → on reverse
+            updateData.paidAmount = Math.max(0, debt.paidAmount - txAmount);
+          }
+          
+          const newAmount = updateData.amount !== undefined ? updateData.amount : debt.amount;
+          const newPaid = updateData.paidAmount !== undefined ? updateData.paidAmount : debt.paidAmount;
+          updateData.status = debt.status === 'ANNULÉE' ? 'ANNULÉE' : (newAmount > 0 && newPaid >= newAmount ? 'PAYÉE' : 'EN_COURS');
+          
           await prisma.debt.update({
             where: { id: debt.id },
-            data: { paidAmount: newPaid, status: newStatus, updatedAt: new Date() }
+            data: updateData
           });
-          console.log(`↩️ Dette ${debt.id} réajustée après suppression tx: paidAmount=${newPaid} (reversed ${txAmount})`);
+          console.log(`↩️ Dette ${debt.id} réajustée après suppression tx: ${updateData.amount !== undefined ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (reversed ${txAmount})`);
         }
       } catch (debtErr) {
         console.error('⚠️ Impossible de réajuster la dette:', debtErr.message);
@@ -5449,11 +5484,26 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
         const oldDebt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
         if (oldDebt) {
           const txAmount = Math.abs(Number(currentTx.amount || 0));
-          const revertedPaid = Math.max(0, oldDebt.paidAmount - txAmount);
-          const newStatus = oldDebt.status === 'ANNULÉE' ? 'ANNULÉE' : (oldDebt.amount > 0 && revertedPaid < oldDebt.amount ? 'EN_COURS' : 'PAYÉE');
+          const isDebit = currentTx.amount < 0;
+          const isDette = oldDebt.type === 'DETTE';
+          
+          const updateData = { updatedAt: new Date() };
+          
+          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+            // Transaction avait augmenté amount → on reverse
+            updateData.amount = Math.max(0, oldDebt.amount - txAmount);
+          } else {
+            // Transaction avait augmenté paidAmount → on reverse
+            updateData.paidAmount = Math.max(0, oldDebt.paidAmount - txAmount);
+          }
+          
+          const newAmount = updateData.amount !== undefined ? updateData.amount : oldDebt.amount;
+          const newPaid = updateData.paidAmount !== undefined ? updateData.paidAmount : oldDebt.paidAmount;
+          updateData.status = oldDebt.status === 'ANNULÉE' ? 'ANNULÉE' : (newAmount > 0 && newPaid >= newAmount ? 'PAYÉE' : 'EN_COURS');
+          
           await prisma.debt.update({
             where: { id: oldDebt.id },
-            data: { paidAmount: revertedPaid, status: newStatus, updatedAt: new Date() }
+            data: updateData
           });
         }
       } catch (_) {}
@@ -5469,22 +5519,34 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
       }
     });
 
-    // Si la nouvelle liaison est une dette, mettre à jour son paidAmount
+    // Si la nouvelle liaison est une dette, mettre à jour intelligemment
     if (linkedDocumentType === 'DETTE' || linkedDocumentType === 'CRÉANCE') {
       try {
         const newDebt = await prisma.debt.findUnique({ where: { id: linkedDocumentId } });
         if (newDebt) {
-          // Utiliser la valeur absolue car DEBIT/CREDIT ont des signes différents
           const txAmount = Math.abs(Number(updated.amount || 0));
-          const newPaid = newDebt.amount > 0 
-            ? Math.min(newDebt.paidAmount + txAmount, newDebt.amount)
-            : newDebt.paidAmount + txAmount; // Pas de limite si amount=0
-          const newStatus = newDebt.amount > 0 && newPaid >= newDebt.amount ? 'PAYÉE' : newDebt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
+          const isDebit = updated.amount < 0;
+          const isDette = newDebt.type === 'DETTE';
+          
+          const updateData = { updatedAt: new Date() };
+          
+          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+            // Transaction crée/augmente la dette/créance
+            updateData.amount = newDebt.amount + txAmount;
+          } else {
+            // Transaction rembourse la dette/créance
+            updateData.paidAmount = newDebt.paidAmount + txAmount;
+          }
+          
+          const newAmount = updateData.amount !== undefined ? updateData.amount : newDebt.amount;
+          const newPaid = updateData.paidAmount !== undefined ? updateData.paidAmount : newDebt.paidAmount;
+          updateData.status = newAmount > 0 && newPaid >= newAmount ? 'PAYÉE' : newDebt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
+          
           await prisma.debt.update({
             where: { id: newDebt.id },
-            data: { paidAmount: newPaid, status: newStatus, updatedAt: new Date() }
+            data: updateData
           });
-          console.log(`💰 Dette ${newDebt.id} mise à jour via liaison: paidAmount=${newPaid} (tx: ${txAmount})`);
+          console.log(`💰 Dette ${newDebt.id} mise à jour via liaison: ${updateData.amount ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (tx: ${txAmount} ${isDebit ? 'DEBIT' : 'CREDIT'})`);
         }
       } catch (_) {}
     }
@@ -5523,13 +5585,28 @@ app.delete(['/finance/transactions/:id/link', '/api/finance/transactions/:id/lin
         const debt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
         if (debt) {
           const txAmount = Math.abs(Number(currentTx.amount || 0));
-          const revertedPaid = Math.max(0, debt.paidAmount - txAmount);
-          const newStatus = debt.status === 'ANNULÉE' ? 'ANNULÉE' : (debt.amount > 0 && revertedPaid < debt.amount ? 'EN_COURS' : 'PAYÉE');
+          const isDebit = currentTx.amount < 0;
+          const isDette = debt.type === 'DETTE';
+          
+          const updateData = { updatedAt: new Date() };
+          
+          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+            // Transaction avait augmenté amount → on reverse
+            updateData.amount = Math.max(0, debt.amount - txAmount);
+          } else {
+            // Transaction avait augmenté paidAmount → on reverse
+            updateData.paidAmount = Math.max(0, debt.paidAmount - txAmount);
+          }
+          
+          const newAmount = updateData.amount !== undefined ? updateData.amount : debt.amount;
+          const newPaid = updateData.paidAmount !== undefined ? updateData.paidAmount : debt.paidAmount;
+          updateData.status = debt.status === 'ANNULÉE' ? 'ANNULÉE' : (newAmount > 0 && newPaid >= newAmount ? 'PAYÉE' : 'EN_COURS');
+          
           await prisma.debt.update({
             where: { id: debt.id },
-            data: { paidAmount: revertedPaid, status: newStatus, updatedAt: new Date() }
+            data: updateData
           });
-          console.log(`↩️ Dette ${debt.id} réajustée après déliaison: paidAmount=${revertedPaid} (reversed ${txAmount})`);
+          console.log(`↩️ Dette ${debt.id} réajustée après déliaison: ${updateData.amount !== undefined ? `amount=${updateData.amount}` : `paidAmount=${updateData.paidAmount}`} (reversed ${txAmount})`);
         }
       } catch (_) {}
     }
