@@ -5154,6 +5154,7 @@ app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, asy
 app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
   try {
     const txId = uid();
+    const linkedDebtId = req.body.linkedDebtId || null;
     const txData = {
       id: txId,
       type: req.body.type || 'DEBIT',
@@ -5162,16 +5163,39 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
       category: req.body.category || '',
       date: req.body.date ? new Date(req.body.date) : new Date()
     };
+
+    // Si lié à une dette, enrichir les champs de liaison
+    let linkedDebt = null;
+    if (linkedDebtId) {
+      linkedDebt = await prisma.debt.findUnique({ where: { id: linkedDebtId } });
+      if (linkedDebt) {
+        txData.linkedDocumentId = linkedDebt.id;
+        txData.linkedDocumentType = linkedDebt.type; // "DETTE" ou "CRÉANCE"
+        txData.linkedDocumentNumber = linkedDebt.id.substring(0, 12);
+      }
+    }
     
     // Save to Prisma
     const saved = await prisma.finance_transactions.create({ data: txData });
     
+    // Mettre à jour la dette liée si besoin
+    if (linkedDebt) {
+      const newPaid = Math.min(linkedDebt.paidAmount + txData.amount, linkedDebt.amount);
+      const newStatus = newPaid >= linkedDebt.amount ? 'PAYÉE' : linkedDebt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
+      await prisma.debt.update({
+        where: { id: linkedDebt.id },
+        data: { paidAmount: newPaid, status: newStatus, updatedAt: new Date() }
+      });
+      console.log(`💰 Dette ${linkedDebt.id} mise à jour: paidAmount=${newPaid}, status=${newStatus}`);
+    }
+
     // Also update memory
     const tx = {
       id: saved.id,
       date: saved.date.toISOString(),
       updatedAt: new Date().toISOString(),
-      ...txData
+      ...txData,
+      date: saved.date.toISOString()
     };
     state.transactions.unshift(tx);
     
@@ -5281,7 +5305,25 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
     await prisma.finance_transactions.delete({
       where: { id: req.params.id }
     });
-    
+
+    // Reverser l'impact sur la dette liée si applicable
+    if (tx.linkedDocumentId && (tx.linkedDocumentType === 'DETTE' || tx.linkedDocumentType === 'CRÉANCE')) {
+      try {
+        const debt = await prisma.debt.findUnique({ where: { id: tx.linkedDocumentId } });
+        if (debt) {
+          const newPaid = Math.max(0, debt.paidAmount - Number(tx.amount || 0));
+          const newStatus = debt.status === 'ANNULÉE' ? 'ANNULÉE' : (newPaid < debt.amount ? 'EN_COURS' : 'PAYÉE');
+          await prisma.debt.update({
+            where: { id: debt.id },
+            data: { paidAmount: newPaid, status: newStatus, updatedAt: new Date() }
+          });
+          console.log(`↩️ Dette ${debt.id} réajustée après suppression tx: paidAmount=${newPaid}`);
+        }
+      } catch (debtErr) {
+        console.error('⚠️ Impossible de réajuster la dette:', debtErr.message);
+      }
+    }
+
     // Delete from memory
     state.transactions = state.transactions.filter(t => t.id !== req.params.id);
     
@@ -5362,6 +5404,9 @@ app.get(['/finance/available-documents', '/api/finance/available-documents'], re
       title: debt.description,
       description: `${debt.debtorType}: ${debt.debtorName}`,
       amount: debt.amount,
+      paidAmount: debt.paidAmount || 0,
+      remainingAmount: Math.max(0, debt.amount - (debt.paidAmount || 0)),
+      progressPercent: debt.amount > 0 ? Math.min(100, Math.round(((debt.paidAmount || 0) / debt.amount) * 100)) : 0,
       date: debt.createdAt,
       status: debt.status,
       dueDate: debt.dueDate
@@ -5391,6 +5436,22 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
     }
     
     console.log(`🔗 Liaison transaction ${req.params.id} -> ${linkedDocumentType} ${linkedDocumentNumber}`);
+
+    // Récupérer la transaction actuelle pour savoir si elle était déjà liée à une dette
+    const currentTx = await prisma.finance_transactions.findUnique({ where: { id: req.params.id } });
+    if (currentTx && currentTx.linkedDocumentId && (currentTx.linkedDocumentType === 'DETTE' || currentTx.linkedDocumentType === 'CRÉANCE')) {
+      // Annuler l'impact de l'ancienne liaison sur la dette précédente
+      try {
+        const oldDebt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
+        if (oldDebt) {
+          const revertedPaid = Math.max(0, oldDebt.paidAmount - Number(currentTx.amount || 0));
+          await prisma.debt.update({
+            where: { id: oldDebt.id },
+            data: { paidAmount: revertedPaid, status: revertedPaid < oldDebt.amount ? 'EN_COURS' : 'PAYÉE', updatedAt: new Date() }
+          });
+        }
+      } catch (_) {}
+    }
     
     // Mettre à jour la transaction dans Prisma
     const updated = await prisma.finance_transactions.update({
@@ -5401,6 +5462,22 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
         linkedDocumentNumber: linkedDocumentNumber || null
       }
     });
+
+    // Si la nouvelle liaison est une dette, mettre à jour son paidAmount
+    if (linkedDocumentType === 'DETTE' || linkedDocumentType === 'CRÉANCE') {
+      try {
+        const newDebt = await prisma.debt.findUnique({ where: { id: linkedDocumentId } });
+        if (newDebt) {
+          const newPaid = Math.min(newDebt.paidAmount + Number(updated.amount || 0), newDebt.amount);
+          const newStatus = newPaid >= newDebt.amount ? 'PAYÉE' : newDebt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
+          await prisma.debt.update({
+            where: { id: newDebt.id },
+            data: { paidAmount: newPaid, status: newStatus, updatedAt: new Date() }
+          });
+          console.log(`💰 Dette ${newDebt.id} mise à jour via liaison: paidAmount=${newPaid}`);
+        }
+      } catch (_) {}
+    }
     
     // Mettre à jour la mémoire
     state.transactions = state.transactions.map(t => 
@@ -5428,6 +5505,23 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
 app.delete(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'], requireAuth, async (req, res) => {
   try {
     console.log(`🔓 Déliaison transaction ${req.params.id}`);
+
+    // Récupérer la transaction avant de délier pour réajuster la dette
+    const currentTx = await prisma.finance_transactions.findUnique({ where: { id: req.params.id } });
+    if (currentTx && currentTx.linkedDocumentId && (currentTx.linkedDocumentType === 'DETTE' || currentTx.linkedDocumentType === 'CRÉANCE')) {
+      try {
+        const debt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
+        if (debt) {
+          const revertedPaid = Math.max(0, debt.paidAmount - Number(currentTx.amount || 0));
+          const newStatus = debt.status === 'ANNULÉE' ? 'ANNULÉE' : (revertedPaid < debt.amount ? 'EN_COURS' : 'PAYÉE');
+          await prisma.debt.update({
+            where: { id: debt.id },
+            data: { paidAmount: revertedPaid, status: newStatus, updatedAt: new Date() }
+          });
+          console.log(`↩️ Dette ${debt.id} réajustée après déliaison: paidAmount=${revertedPaid}`);
+        }
+      } catch (_) {}
+    }
     
     // Mettre à jour la transaction dans Prisma
     const updated = await prisma.finance_transactions.update({
@@ -5744,7 +5838,23 @@ app.get(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) 
     const debts = await prisma.debt.findMany({
       orderBy: { createdAt: 'desc' }
     });
-    res.json({ debts });
+    // Calculer le montant restant et enrichir la réponse
+    const enrichedDebts = await Promise.all(debts.map(async (debt) => {
+      // Récupérer les transactions liées pour afficher le détail des paiements
+      const linkedTx = await prisma.finance_transactions.findMany({
+        where: { linkedDocumentId: debt.id },
+        orderBy: { date: 'desc' },
+        select: { id: true, amount: true, date: true, description: true, type: true }
+      });
+      return {
+        ...debt,
+        paidAmount: debt.paidAmount || 0,
+        remainingAmount: Math.max(0, debt.amount - (debt.paidAmount || 0)),
+        progressPercent: debt.amount > 0 ? Math.min(100, Math.round(((debt.paidAmount || 0) / debt.amount) * 100)) : 0,
+        linkedTransactions: linkedTx
+      };
+    }));
+    res.json({ debts: enrichedDebts });
   } catch (e) {
     console.error('❌ GET /api/finance/debts error:', e.message);
     res.status(500).json({ error: 'Erreur chargement dettes' });
@@ -5753,7 +5863,7 @@ app.get(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) 
 
 app.post(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) => {
   try {
-    const { type, amount, description, debtorType, debtorName, debtorId, dueDate, status } = req.body;
+    const { type, amount, description, debtorType, debtorName, debtorId, dueDate, status, notes } = req.body;
     
     if (!type || !amount || !description || !debtorName) {
       return res.status(400).json({ error: 'Champs requis manquants' });
@@ -5764,18 +5874,20 @@ app.post(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res)
         id: `debt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type,
         amount: parseFloat(amount),
+        paidAmount: 0,
         description,
-        debtorType,
+        debtorType: debtorType || 'OTHER',
         debtorName,
         debtorId: debtorId || null,
         dueDate: dueDate ? new Date(dueDate) : null,
         status: status || 'EN_COURS',
+        notes: notes || null,
         createdBy: req.userId || null,
         updatedAt: new Date()
       }
     });
 
-    res.json({ debt });
+    res.json({ debt: { ...debt, remainingAmount: debt.amount, progressPercent: 0, linkedTransactions: [] } });
   } catch (e) {
     console.error('❌ POST /api/finance/debts error:', e.message);
     res.status(500).json({ error: 'Erreur création dette' });
@@ -5784,17 +5896,31 @@ app.post(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res)
 
 app.patch(['/finance/debts/:id', '/api/finance/debts/:id'], requireAuth, async (req, res) => {
   try {
-    const { status } = req.body;
-    
+    const allowedFields = ['status', 'description', 'amount', 'debtorName', 'debtorType', 'debtorId', 'dueDate', 'notes', 'type'];
+    const updateData = { updatedAt: new Date() };
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        if (field === 'amount') updateData[field] = parseFloat(req.body[field]);
+        else if (field === 'dueDate') updateData[field] = req.body[field] ? new Date(req.body[field]) : null;
+        else updateData[field] = req.body[field];
+      }
+    }
+
     const debt = await prisma.debt.update({
       where: { id: req.params.id },
-      data: {
-        status,
-        updatedAt: new Date()
-      }
+      data: updateData
     });
 
-    res.json({ debt });
+    // Si le montant total a changé, vérifier si la dette est maintenant entièrement réglée
+    if (updateData.amount !== undefined) {
+      const newStatus = debt.paidAmount >= debt.amount ? 'PAYÉE' : (debt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS');
+      if (newStatus !== debt.status) {
+        await prisma.debt.update({ where: { id: debt.id }, data: { status: newStatus, updatedAt: new Date() } });
+        debt.status = newStatus;
+      }
+    }
+
+    res.json({ debt: { ...debt, remainingAmount: Math.max(0, debt.amount - (debt.paidAmount || 0)), progressPercent: debt.amount > 0 ? Math.min(100, Math.round(((debt.paidAmount || 0) / debt.amount) * 100)) : 0 } });
   } catch (e) {
     console.error('❌ PATCH /api/finance/debts/:id error:', e.message);
     res.status(500).json({ error: 'Erreur mise à jour dette' });
