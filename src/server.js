@@ -5949,6 +5949,66 @@ app.get(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) 
   }
 });
 
+// POST /api/finance/debts/recalculate - Recalculer toutes les dettes basées sur leurs transactions liées
+app.post(['/finance/debts/recalculate', '/api/finance/debts/recalculate'], requireAuth, async (req, res) => {
+  try {
+    console.log('🔄 Recalcul de toutes les dettes...');
+    
+    const debts = await prisma.debt.findMany();
+    let updated = 0;
+    
+    for (const debt of debts) {
+      // Récupérer toutes les transactions liées
+      const linkedTx = await prisma.finance_transactions.findMany({
+        where: { linkedDocumentId: debt.id }
+      });
+      
+      if (linkedTx.length === 0) continue;
+      
+      // Recalculer amount et paidAmount selon la logique intelligente
+      let newAmount = 0;
+      let newPaidAmount = 0;
+      const isDette = debt.type === 'DETTE';
+      
+      for (const tx of linkedTx) {
+        const txAmount = Math.abs(tx.amount || 0);
+        const isDebit = tx.amount < 0;
+        
+        if ((isDette && isDebit) || (!isDette && !isDebit)) {
+          // Transaction crée/augmente la dette/créance
+          newAmount += txAmount;
+        } else {
+          // Transaction rembourse la dette/créance
+          newPaidAmount += txAmount;
+        }
+      }
+      
+      // Calculer le statut
+      const newStatus = newAmount > 0 && newPaidAmount >= newAmount ? 'PAYÉE' : debt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
+      
+      // Mettre à jour la dette
+      await prisma.debt.update({
+        where: { id: debt.id },
+        data: {
+          amount: newAmount,
+          paidAmount: newPaidAmount,
+          status: newStatus,
+          updatedAt: new Date()
+        }
+      });
+      
+      console.log(`✅ Dette ${debt.id} recalculée: amount=${newAmount}, paidAmount=${newPaidAmount}, status=${newStatus}`);
+      updated++;
+    }
+    
+    console.log(`🎉 ${updated} dettes recalculées`);
+    res.json({ ok: true, updated, message: `${updated} dettes recalculées avec succès` });
+  } catch (e) {
+    console.error('❌ Erreur recalcul dettes:', e.message);
+    res.status(500).json({ error: 'Erreur recalcul dettes', details: e.message });
+  }
+});
+
 app.post(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) => {
   try {
     const { type, amount, description, debtorType, debtorName, debtorId, dueDate, status, notes } = req.body;
