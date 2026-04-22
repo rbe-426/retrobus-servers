@@ -88,14 +88,21 @@ function deduplicateTransactions(transactions) {
   const uniqueTransactions = [];
 
   for (const transaction of transactions) {
+    // Clé de déduplication plus agressive pour éviter les faux doublons
+    // - Date exacte
+    // - Montant arrondi à 2 décimales
+    // - Type (DEBIT/CREDIT)
+    // - Premiers 40 caractères de la description normalisée (pour ignorer variations de fin)
+    const normalizedDesc = normalizeTransactionDescription(transaction.description);
     const key = [
       transaction.date,
       Number(transaction.amount).toFixed(2),
       transaction.type,
-      normalizeTransactionDescription(transaction.description)
+      normalizedDesc.substring(0, 40) // Limiter à 40 caractères pour tolérer variations
     ].join('|');
 
     if (seen.has(key)) {
+      // console.log(`🔄 Doublon ignoré: ${transaction.description.substring(0, 50)}`);
       continue;
     }
 
@@ -767,14 +774,31 @@ export async function parseBankStatementPDF(pdfBuffer) {
       console.log(`📊 BNP tabulaire: ${bnpTableTransactions.length}`);
       console.log(`📊 Générique: ${genericTransactions.length}`);
 
-      transactions = deduplicateTransactions([
-        ...bnpTextTransactions,
-        ...bnpLooseTransactions,
-        ...bnpTableTransactions,
-        ...genericTransactions,
-      ]);
+      // Stratégie intelligente : prioriser l'extracteur qui donne le plus de résultats
+      // et ne fusionner que si nécessaire pour compléter
+      const extractors = [
+        { name: 'texte structuré', transactions: bnpTextTransactions },
+        { name: 'tabulaire', transactions: bnpTableTransactions },
+        { name: 'texte souple', transactions: bnpLooseTransactions },
+        { name: 'générique', transactions: genericTransactions }
+      ].sort((a, b) => b.transactions.length - a.transactions.length);
 
-      console.log(`📊 BNP fusionné dédupliqué: ${transactions.length}`);
+      const primaryExtractor = extractors[0];
+      console.log(`🎯 Extracteur principal: ${primaryExtractor.name} (${primaryExtractor.transactions.length} tx)`);
+
+      // Si l'extracteur principal a trouvé au moins 5 transactions, l'utiliser seul
+      // Sinon fusionner les 2 meilleurs extracteurs pour compléter
+      if (primaryExtractor.transactions.length >= 5) {
+        transactions = deduplicateTransactions(primaryExtractor.transactions);
+      } else {
+        console.log('⚠️ Peu de transactions trouvées, fusion des 2 meilleurs extracteurs');
+        transactions = deduplicateTransactions([
+          ...extractors[0].transactions,
+          ...extractors[1].transactions
+        ]);
+      }
+
+      console.log(`📊 BNP final après déduplication: ${transactions.length}`);
     } else {
       transactions = parseTransactionsFromText(fullText);
     }
