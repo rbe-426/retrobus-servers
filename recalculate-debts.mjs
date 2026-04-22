@@ -35,13 +35,23 @@ async function recalculateDebts() {
       let newAmount = 0;
       let newPaidAmount = 0;
       const isDette = debt.type === 'DETTE';
+      const isTropPercu = debt.debtNature === 'TROP_PERCU';
       
       for (const tx of linkedTx) {
         const txAmount = Math.abs(tx.amount || 0);
         const isDebit = tx.type === 'DEBIT'; // Utiliser le champ type au lieu du signe
         const txType = tx.type; // CREDIT ou DEBIT
         
-        if ((isDette && isDebit) || (!isDette && !isDebit)) {
+        let shouldIncreaseAmount;
+        if (isTropPercu) {
+          // Logique inversée pour trop-perçu (ex: argent reçu en trop = dette)
+          shouldIncreaseAmount = (isDette && !isDebit) || (!isDette && isDebit);
+        } else {
+          // Logique normale
+          shouldIncreaseAmount = (isDette && isDebit) || (!isDette && !isDebit);
+        }
+        
+        if (shouldIncreaseAmount) {
           // Transaction crée/augmente la dette/créance
           newAmount += txAmount;
           console.log(`      ${txType} ${tx.amount}€ → augmente amount de ${txAmount}€`);

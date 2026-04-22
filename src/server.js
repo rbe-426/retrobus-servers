@@ -5183,16 +5183,24 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
       const txAmount = Math.abs(txData.amount || 0);
       const isDebit = txData.type === 'DEBIT'; // Utiliser le champ type
       const isDette = linkedDebt.type === 'DETTE';
+      const isTropPercu = linkedDebt.debtNature === 'TROP_PERCU';
       
       // Logique intelligente selon le type de dette et de transaction :
-      // DETTE + DEBIT (-) → augmente amount (dépense qui CRÉE la dette)
-      // DETTE + CREDIT (+) → augmente paidAmount (remboursement de la dette)
-      // CRÉANCE + CREDIT (+) → augmente amount (vente qui CRÉE la créance)
-      // CRÉANCE + DEBIT (-) → augmente paidAmount (on récupère l'argent)
+      // DETTE_NORMALE: DETTE + DEBIT → amount++, DETTE + CREDIT → paidAmount++
+      // TROP_PERCU: DETTE + CREDIT → amount++ (on a reçu trop), DETTE + DEBIT → paidAmount++ (on rembourse)
       
       const updateData = { updatedAt: new Date() };
+      let shouldIncreaseAmount;
       
-      if ((isDette && isDebit) || (!isDette && !isDebit)) {
+      if (isTropPercu) {
+        // Logique inversée pour trop-perçu
+        shouldIncreaseAmount = (isDette && !isDebit) || (!isDette && isDebit);
+      } else {
+        // Logique normale
+        shouldIncreaseAmount = (isDette && isDebit) || (!isDette && !isDebit);
+      }
+      
+      if (shouldIncreaseAmount) {
         // Transaction crée/augmente la dette/créance
         updateData.amount = linkedDebt.amount + txAmount;
       } else {
@@ -5337,10 +5345,18 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
           const txAmount = Math.abs(Number(tx.amount || 0));
           const isDebit = tx.type === 'DEBIT';
           const isDette = debt.type === 'DETTE';
+          const isTropPercu = debt.debtNature === 'TROP_PERCU';
           
           const updateData = { updatedAt: new Date() };
+          let hadIncreasedAmount;
           
-          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+          if (isTropPercu) {
+            hadIncreasedAmount = (isDette && !isDebit) || (!isDette && isDebit);
+          } else {
+            hadIncreasedAmount = (isDette && isDebit) || (!isDette && !isDebit);
+          }
+          
+          if (hadIncreasedAmount) {
             // Transaction avait augmenté amount → on reverse
             updateData.amount = Math.max(0, debt.amount - txAmount);
           } else {
@@ -5486,10 +5502,18 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
           const txAmount = Math.abs(Number(currentTx.amount || 0));
           const isDebit = currentTx.type === 'DEBIT';
           const isDette = oldDebt.type === 'DETTE';
+          const isTropPercu = oldDebt.debtNature === 'TROP_PERCU';
           
           const updateData = { updatedAt: new Date() };
+          let hadIncreasedAmount;
           
-          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+          if (isTropPercu) {
+            hadIncreasedAmount = (isDette && !isDebit) || (!isDette && isDebit);
+          } else {
+            hadIncreasedAmount = (isDette && isDebit) || (!isDette && !isDebit);
+          }
+          
+          if (hadIncreasedAmount) {
             // Transaction avait augmenté amount → on reverse
             updateData.amount = Math.max(0, oldDebt.amount - txAmount);
           } else {
@@ -5527,10 +5551,18 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
           const txAmount = Math.abs(Number(updated.amount || 0));
           const isDebit = updated.type === 'DEBIT';
           const isDette = newDebt.type === 'DETTE';
+          const isTropPercu = newDebt.debtNature === 'TROP_PERCU';
           
           const updateData = { updatedAt: new Date() };
+          let shouldIncreaseAmount;
           
-          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+          if (isTropPercu) {
+            shouldIncreaseAmount = (isDette && !isDebit) || (!isDette && isDebit);
+          } else {
+            shouldIncreaseAmount = (isDette && isDebit) || (!isDette && !isDebit);
+          }
+          
+          if (shouldIncreaseAmount) {
             // Transaction crée/augmente la dette/créance
             updateData.amount = newDebt.amount + txAmount;
           } else {
@@ -5587,10 +5619,18 @@ app.delete(['/finance/transactions/:id/link', '/api/finance/transactions/:id/lin
           const txAmount = Math.abs(Number(currentTx.amount || 0));
           const isDebit = currentTx.type === 'DEBIT';
           const isDette = debt.type === 'DETTE';
+          const isTropPercu = debt.debtNature === 'TROP_PERCU';
           
           const updateData = { updatedAt: new Date() };
+          let hadIncreasedAmount;
           
-          if ((isDette && isDebit) || (!isDette && !isDebit)) {
+          if (isTropPercu) {
+            hadIncreasedAmount = (isDette && !isDebit) || (!isDette && isDebit);
+          } else {
+            hadIncreasedAmount = (isDette && isDebit) || (!isDette && !isDebit);
+          }
+          
+          if (hadIncreasedAmount) {
             // Transaction avait augmenté amount → on reverse
             updateData.amount = Math.max(0, debt.amount - txAmount);
           } else {
@@ -5969,12 +6009,20 @@ app.post(['/finance/debts/recalculate', '/api/finance/debts/recalculate'], requi
       let newAmount = 0;
       let newPaidAmount = 0;
       const isDette = debt.type === 'DETTE';
+      const isTropPercu = debt.debtNature === 'TROP_PERCU';
       
       for (const tx of linkedTx) {
         const txAmount = Math.abs(tx.amount || 0);
-        const isDebit = tx.amount < 0;
+        const isDebit = tx.type === 'DEBIT';
         
-        if ((isDette && isDebit) || (!isDette && !isDebit)) {
+        let shouldIncreaseAmount;
+        if (isTropPercu) {
+          shouldIncreaseAmount = (isDette && !isDebit) || (!isDette && isDebit);
+        } else {
+          shouldIncreaseAmount = (isDette && isDebit) || (!isDette && !isDebit);
+        }
+        
+        if (shouldIncreaseAmount) {
           // Transaction crée/augmente la dette/créance
           newAmount += txAmount;
         } else {

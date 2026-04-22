@@ -769,6 +769,7 @@ model Transaction {
 model Debt {
   id          String   @id
   type        String   // "DETTE" or "CRÉANCE"
+  debtNature  String   @default("DETTE_NORMALE") // "DETTE_NORMALE" (on doit payer) ou "TROP_PERCU" (on a reçu trop)
   amount      Float
   paidAmount  Float    @default(0) // Montant déjà remboursé via transactions liées
   description String
