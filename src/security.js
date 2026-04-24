@@ -225,6 +225,8 @@ const SENSITIVE_PATTERNS = {
   apiKey: /(api[_-]?key['":\s=]+)([a-zA-Z0-9._\-]+)/gi,
   authorizationHeader: /(Authorization['":\s=]+[Bb]earer\s+)([a-zA-Z0-9._\-]+)/gi,
   jwtToken: /eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*/g,
+  // Tous les champs de mot de passe (old, new, current, confirm, etc.)
+  allPasswordFields: /(["\'](?:old|new|current|confirm)?[Pp]assword["\']:\s*["\'])([^"\']*)["\'']/gi,
 };
 
 /**
@@ -235,9 +237,9 @@ export const maskSensitiveData = (data) => {
   // Si c'est un objet ou array, le convertir en string d'abord
   let masked = typeof data === 'string' ? data : JSON.stringify(data);
   
-  // Masque les mots de passe (même formats de config)
+  // Masque tous les champs de mots de passe (password, oldPassword, newPassword, etc.)
   masked = masked.replace(SENSITIVE_PATTERNS.password, 'password":"***REDACTED***');
-  masked = masked.replace(/(["\']password["\']:\s*["\'])([^"\']*)["\'']/gi, '$1***REDACTED***"');
+  masked = masked.replace(SENSITIVE_PATTERNS.allPasswordFields, '$1***REDACTED***"');
   
   // Masque les tokens JWT complets
   masked = masked.replace(SENSITIVE_PATTERNS.jwtToken, '***JWT_REDACTED***');

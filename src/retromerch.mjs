@@ -371,5 +371,112 @@ export default function createRetroMerchRouter(prismaInstance) {
     }
   });
 
+  // ============================================================================
+  // CONFIGURATION DU SITE (Type Wix - Modulaire)
+  // ============================================================================
+
+  /**
+   * GET /api/retromerch/site-config - Récupérer toute la configuration du site
+   */
+  router.get('/site-config', async (req, res) => {
+    try {
+      const configs = await prisma.retromerch_site_config.findMany({
+        where: { isActive: true },
+        orderBy: { key: 'asc' }
+      });
+      
+      // Convertir en objet clé-valeur avec parsing JSON automatique
+      const configObject = {};
+      for (const config of configs) {
+        try {
+          configObject[config.key] = JSON.parse(config.value);
+        } catch {
+          configObject[config.key] = config.value; // Si pas JSON, garder comme string
+        }
+      }
+      
+      res.json(configObject);
+    } catch (error) {
+      console.error('❌ GET site-config error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * GET /api/retromerch/site-config/:key - Récupérer une config spécifique
+   */
+  router.get('/site-config/:key', async (req, res) => {
+    try {
+      const config = await prisma.retromerch_site_config.findUnique({
+        where: { key: req.params.key }
+      });
+      
+      if (!config) {
+        return res.status(404).json({ error: 'Configuration not found' });
+      }
+      
+      try {
+        const value = JSON.parse(config.value);
+        res.json({ key: config.key, value, updatedAt: config.updatedAt });
+      } catch {
+        res.json({ key: config.key, value: config.value, updatedAt: config.updatedAt });
+      }
+    } catch (error) {
+      console.error('❌ GET site-config/:key error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * PUT /api/retromerch/site-config/:key - Créer ou mettre à jour une config
+   */
+  router.put('/site-config/:key', requireAuth, async (req, res) => {
+    try {
+      const { value, isActive = true } = req.body;
+      const userEmail = req.user?.email || 'unknown';
+      
+      // Convertir l'objet en JSON string si nécessaire
+      const valueString = typeof value === 'string' ? value : JSON.stringify(value);
+      
+      const config = await prisma.retromerch_site_config.upsert({
+        where: { key: req.params.key },
+        create: {
+          key: req.params.key,
+          value: valueString,
+          isActive,
+          updatedBy: userEmail
+        },
+        update: {
+          value: valueString,
+          isActive,
+          updatedBy: userEmail
+        }
+      });
+      
+      console.log(`✅ Updated site config: ${req.params.key} by ${userEmail}`);
+      res.json(config);
+    } catch (error) {
+      console.error('❌ PUT site-config error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * DELETE /api/retromerch/site-config/:key - Supprimer une config
+   */
+  router.delete('/site-config/:key', requireAuth, async (req, res) => {
+    try {
+      await prisma.retromerch_site_config.delete({
+        where: { key: req.params.key }
+      });
+      
+      console.log(`✅ Deleted site config: ${req.params.key}`);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('❌ DELETE site-config error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return router;
 }

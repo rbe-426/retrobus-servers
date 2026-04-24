@@ -181,9 +181,11 @@ model Report {
 model RetroNews {
   id             String    @id
   title          String
-  content        String
+  content        String    @db.Text
   excerpt        String?
   imageUrl       String?
+  media          String?   @db.Text // JSON: [{type: 'image'|'video', url: string, caption: string}]
+  polls          String?   @db.Text // JSON: [{id, question, options: [{text, votes}]}]
   author         String?
   published      Boolean   @default(false)
   featured       Boolean   @default(false)
@@ -191,10 +193,26 @@ model RetroNews {
   createdBy      String?
   publishedAt    DateTime?
   createdAt      DateTime  @default(now())
-  updatedAt      DateTime
+  updatedAt      DateTime  @updatedAt
 
   @@index([featured])
   @@index([published])
+  @@index([createdAt])
+}
+
+model RetroNewsPollVotes {
+  id        String   @id @default(cuid())
+  newsId    String   // ID de la RetroNews
+  pollId    String   // ID du sondage dans le JSON
+  optionId  String   // ID de l'option choisie
+  userId    String?  // Email/ID de l'utilisateur (optionnel pour anonymes)
+  userIp    String?  // IP pour éviter double vote
+  createdAt DateTime @default(now())
+
+  @@index([newsId, pollId])
+  @@index([userId])
+  @@index([userIp])
+  @@unique([newsId, pollId, userId]) // Un utilisateur = 1 vote par sondage
 }
 
 model Stock {
@@ -1274,6 +1292,19 @@ model retromerch_order_items {
 
   @@index([orderId])
   @@index([productId])
+}
+
+model retromerch_site_config {
+  id          String   @id @default(cuid())
+  key         String   @unique @db.VarChar(100)  // ex: "hero_section", "about_section", "theme"
+  value       String   @db.Text                   // JSON stringifié pour flexibilité
+  isActive    Boolean  @default(true)
+  updatedBy   String?  @db.VarChar(255)           // user qui a modifié
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+  @@index([isActive])
 }
 
 model UserAvailability {

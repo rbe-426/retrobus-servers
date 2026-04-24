@@ -3280,7 +3280,11 @@ const formatRetroNewsForFrontend = (prismaNews) => ({
 app.get('/api/retro-news', async (req, res) => {
   try {
     const news = await prisma.retroNews.findMany({
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        { featured: 'desc' },      // Featured first (true > false)
+        { publishedAt: 'desc' },   // Then by publication date
+        { createdAt: 'desc' }      // Fallback to creation date
+      ],
       take: 100 // Limit results
     });
     console.log(`✅ Loaded ${news.length} retro news from Prisma`);
@@ -3367,6 +3371,193 @@ app.delete(['/api/retro-news/:id'], requireAuth, async (req, res) => {
     }
     console.error('❌ DELETE /api/retro-news error:', e.message);
     res.status(500).json({ error: 'Failed to delete news: ' + e.message });
+  }
+});
+
+// ============================================
+// RETRO NEWS - MEDIA UPLOAD
+// ============================================
+
+const retroNewsMediaStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(process.cwd(), '../uploads/retroactus');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const retroNewsMediaUpload = multer({
+  storage: retroNewsMediaStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Type de fichier non supporté. Utilisez JPG, PNG, GIF, WEBP, MP4 ou WEBM.'));
+    }
+  }
+});
+
+// POST /api/retro-news/media/upload - Upload media (photos/videos)
+app.post('/api/retro-news/media/upload', requireAuth, uploadLimiter, retroNewsMediaUpload.single('media'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Aucun fichier uploadé' });
+    }
+
+    const mediaUrl = `/uploads/retroactus/${req.file.filename}`;
+    const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+    const caption = req.body.caption || '';
+
+    console.log(`✅ Media uploaded: ${mediaUrl} (${mediaType})`);
+    
+    res.json({
+      success: true,
+      media: {
+        type: mediaType,
+        url: mediaUrl,
+        caption: caption,
+        filename: req.file.filename,
+        size: req.file.size
+      }
+    });
+  } catch (e) {
+    console.error('❌ Upload error:', e.message);
+    res.status(500).json({ error: 'Échec de l\'upload: ' + e.message });
+  }
+});
+
+// ============================================
+// RETRO NEWS - POLLS & VOTING
+// ============================================
+
+// POST /api/retro-news/:id/poll/vote - Vote on a poll
+app.post('/api/retro-news/:id/poll/vote', async (req, res) => {
+  try {
+    const { id: newsId } = req.params;
+    const { pollId, optionId } = req.body;
+    const userId = req.user?.email || req.user?.id || null;
+    const userIp = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+
+    if (!pollId || !optionId) {
+      return res.status(400).json({ error: 'pollId et optionId sont requis' });
+    }
+
+    // Check if user already voted (if userId exists)
+    if (userId) {
+      const existingVote = await prisma.retroNewsPollVotes.findUnique({
+        where: {
+          newsId_pollId_userId: {
+            newsId,
+            pollId,
+            userId
+          }
+        }
+      });
+
+      if (existingVote) {
+        return res.status(400).json({ error: 'Vous avez déjà voté sur ce sondage' });
+      }
+    }
+
+    // Check IP-based vote limit (for anonymous users)
+    if (!userId) {
+      const recentVotes = await prisma.retroNewsPollVotes.count({
+        where: {
+          newsId,
+          pollId,
+          userIp,
+          createdAt: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+          }
+        }
+      });
+
+      if (recentVotes > 0) {
+        return res.status(400).json({ error: 'Vous avez déjà voté sur ce sondage (IP)' });
+      }
+    }
+
+    // Record the vote
+    const vote = await prisma.retroNewsPollVotes.create({
+      data: {
+        newsId,
+        pollId,
+        optionId,
+        userId: userId || userIp, // Use IP as fallback
+        userIp
+      }
+    });
+
+    // Get updated vote counts
+    const votes = await prisma.retroNewsPollVotes.groupBy({
+      by: ['optionId'],
+      where: {
+        newsId,
+        pollId
+      },
+      _count: {
+        optionId: true
+      }
+    });
+
+    const voteCounts = {};
+    votes.forEach(v => {
+      voteCounts[v.optionId] = v._count.optionId;
+    });
+
+    console.log(`✅ Vote recorded: ${newsId} / ${pollId} / ${optionId}`);
+    
+    res.json({
+      success: true,
+      vote,
+      voteCounts
+    });
+  } catch (e) {
+    console.error('❌ Vote error:', e.message);
+    res.status(500).json({ error: 'Échec du vote: ' + e.message });
+  }
+});
+
+// GET /api/retro-news/:id/polls/:pollId/results - Get poll results
+app.get('/api/retro-news/:id/polls/:pollId/results', async (req, res) => {
+  try {
+    const { id: newsId, pollId } = req.params;
+
+    const votes = await prisma.retroNewsPollVotes.groupBy({
+      by: ['optionId'],
+      where: {
+        newsId,
+        pollId
+      },
+      _count: {
+        optionId: true
+      }
+    });
+
+    const voteCounts = {};
+    let totalVotes = 0;
+    
+    votes.forEach(v => {
+      voteCounts[v.optionId] = v._count.optionId;
+      totalVotes += v._count.optionId;
+    });
+
+    console.log(`✅ Poll results: ${newsId} / ${pollId} - ${totalVotes} votes`);
+    
+    res.json({
+      pollId,
+      voteCounts,
+      totalVotes
+    });
+  } catch (e) {
+    console.error('❌ Poll results error:', e.message);
+    res.status(500).json({ error: 'Échec de récupération des résultats: ' + e.message });
   }
 });
 
