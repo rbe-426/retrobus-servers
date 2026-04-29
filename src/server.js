@@ -26,7 +26,16 @@ import {
 import authRoutes from './routes/auth.routes.js';
 import systemRoutes from './routes/system.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
-// 🔐 Import modules de sécurité
+// � Import module de calcul des KPI historiques
+import { 
+  calculateMonthlyKPIs, 
+  calculateYearlyKPIs, 
+  comparePeriodsKPIs, 
+  getRecentMonthsKPIs,
+  getDataRange,
+  getAllPeriodsKPIs
+} from './kpi-calculator.mjs';
+// �🔐 Import modules de sécurité
 import {
   helmetConfig,
   generalLimiter,
@@ -3260,6 +3269,8 @@ const formatRetroNewsForFrontend = (prismaNews) => ({
   content: prismaNews.content,
   excerpt: prismaNews.excerpt,
   imageUrl: prismaNews.imageUrl,
+  media: prismaNews.media, // Include media JSON
+  polls: prismaNews.polls, // Include polls JSON
   author: prismaNews.author,
   status: prismaNews.published ? 'published' : 'draft', // Map published boolean to status string
   published: prismaNews.published,
@@ -4991,6 +5002,98 @@ app.get(['/finance/stats', '/api/finance/stats'], requireAuth, (req, res) => {
   const expenses = state.transactions.filter(t => t.type === 'depense').reduce((s,t)=>s+t.amount,0);
   res.json({ data: { monthlyRevenue: revenue, monthlyExpenses: expenses, currentBalance: state.bankBalance, membershipRevenue: 0, activeMembers: state.members.length, revenueGrowth: 0 } });
 });
+
+// ✅ GET /api/finance/kpi/monthly - KPI d'un mois spécifique
+app.get('/api/finance/kpi/monthly', requireAuth, async (req, res) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+
+    if (month < 1 || month > 12) {
+      return res.status(400).json({ error: 'Mois invalide (1-12)' });
+    }
+
+    const kpis = await calculateMonthlyKPIs(year, month);
+    res.json(kpis);
+  } catch (error) {
+    console.error('❌ Erreur calcul KPI mensuel:', error);
+    res.status(500).json({ error: 'Erreur lors du calcul des KPI' });
+  }
+});
+
+// ✅ GET /api/finance/kpi/yearly - KPI d'une année complète
+app.get('/api/finance/kpi/yearly', requireAuth, async (req, res) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const kpis = await calculateYearlyKPIs(year);
+    res.json(kpis);
+  } catch (error) {
+    console.error('❌ Erreur calcul KPI annuel:', error);
+    res.status(500).json({ error: 'Erreur lors du calcul des KPI' });
+  }
+});
+
+// ✅ GET /api/finance/kpi/recent - KPI des derniers mois
+app.get('/api/finance/kpi/recent', requireAuth, async (req, res) => {
+  try {
+    const monthsCount = parseInt(req.query.months) || 6;
+    const kpis = await getRecentMonthsKPIs(monthsCount);
+    res.json(kpis);
+  } catch (error) {
+    console.error('❌ Erreur calcul KPI récents:', error);
+    res.status(500).json({ error: 'Erreur lors du calcul des KPI' });
+  }
+});
+
+// ✅ GET /api/finance/kpi/compare - Comparer deux périodes
+app.get('/api/finance/kpi/compare', requireAuth, async (req, res) => {
+  try {
+    const year1 = parseInt(req.query.year1);
+    const month1 = parseInt(req.query.month1);
+    const year2 = parseInt(req.query.year2);
+    const month2 = parseInt(req.query.month2);
+
+    if (!year1 || !month1 || !year2 || !month2) {
+      return res.status(400).json({ error: 'Paramètres manquants: year1, month1, year2, month2' });
+    }
+
+    if (month1 < 1 || month1 > 12 || month2 < 1 || month2 > 12) {
+      return res.status(400).json({ error: 'Mois invalides (1-12)' });
+    }
+
+    const comparison = await comparePeriodsKPIs(year1, month1, year2, month2);
+    res.json(comparison);
+  } catch (error) {
+    console.error('❌ Erreur comparaison KPI:', error);
+    res.status(500).json({ error: 'Erreur lors de la comparaison des KPI' });
+  }
+});
+
+// ✅ GET /api/finance/kpi/range - Obtenir la plage de dates des données
+app.get('/api/finance/kpi/range', requireAuth, async (req, res) => {
+  try {
+    const range = await getDataRange();
+    if (!range) {
+      return res.json({ hasData: false });
+    }
+    res.json({ hasData: true, ...range });
+  } catch (error) {
+    console.error('❌ Erreur récupération plage KPI:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération de la plage' });
+  }
+});
+
+// ✅ GET /api/finance/kpi/all - KPI de tous les mois avec des données
+app.get('/api/finance/kpi/all', requireAuth, async (req, res) => {
+  try {
+    const kpis = await getAllPeriodsKPIs();
+    res.json(kpis);
+  } catch (error) {
+    console.error('❌ Erreur récupération tous les KPI:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération des KPI' });
+  }
+});
+
 app.get(['/finance/bank-balance', '/api/finance/bank-balance'], requireAuth, async (req, res) => {
   try {
     // Load from Prisma
