@@ -1392,6 +1392,66 @@ app.get('/public/events/:id', async (req, res) => {
   }
 });
 
+// GET /public/events/active/jep - Vérifier si un événement JEP est actif
+app.get('/public/events/active/jep', async (req, res) => {
+  try {
+    const now = new Date();
+    const event = await prisma.event.findFirst({
+      where: {
+        status: 'PUBLISHED',
+        title: {
+          contains: 'JEP',
+          mode: 'insensitive'
+        },
+        date: {
+          gte: now
+        }
+      },
+      orderBy: { date: 'asc' }
+    });
+    
+    if (!event) {
+      return res.json({ active: false });
+    }
+    
+    // Retourner la configuration du mode événement
+    res.json({
+      active: true,
+      eventConfig: {
+        enabled: true,
+        startDate: event.date,
+        endDate: event.date,
+        event: {
+          id: event.id,
+          name: event.title,
+          subtitle: event.description || 'Découvrez nos véhicules historiques',
+          type: 'EXPO',
+          location: event.location || 'Parking Crété, Corbeil-Essonnes',
+          color: '#d30c4c',
+          actualStartDate: event.date,
+          actualEndDate: event.date
+        },
+        registration: {
+          enabled: !!event.helloAssoUrl,
+          eventId: event.id
+        },
+        customContent: {
+          showCountdown: true,
+          highlights: [
+            { icon: '🚌', text: 'Exposition de véhicules' },
+            { icon: '📸', text: 'Séances photo' },
+            { icon: '🤝', text: 'Rencontre entre passionnés' },
+            { icon: '🎪', text: 'Bon moment à partager' }
+          ]
+        }
+      }
+    });
+  } catch (e) {
+    console.error('❌ GET /public/events/active/jep error:', e.message);
+    res.status(500).json({ error: 'Failed to check JEP event', details: e.message });
+  }
+});
+
 // ============================================
 // PUBLIC REGISTRATION ENDPOINTS
 // ============================================
