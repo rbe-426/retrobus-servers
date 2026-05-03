@@ -54,6 +54,10 @@ import {
   decryptSensitiveData,
   auditLog
 } from './security.js';
+// 🚗 Import service d'identification de véhicules
+import { identifyVehicle } from './services/vehicleIdentification.js';
+// 🖼️ Import service de génération de plaques d'immatriculation
+import { streamPlateSVG, detectPlateFormat } from './services/plateGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -872,6 +876,134 @@ app.use('/notifications', notificationsRoutes);
 // app.use('/api/vehicles', vehicleRoutes);
 // app.use('/api/finance', financeRoutes);
 // etc.
+
+// ============================================================
+// 🚗 ENDPOINT IDENTIFICATION DE VÉHICULES
+// ============================================================
+// Recherche d'un véhicule par plaque d'immatriculation
+app.get('/api/vehicles/search', async (req, res) => {
+  try {
+    const { plate } = req.query;
+    
+    if (!plate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le paramètre "plate" est requis'
+      });
+    }
+    
+    // Recherche du véhicule
+    const vehicleData = await identifyVehicle(plate);
+    
+    if (!vehicleData) {
+      return res.status(404).json({
+        success: false,
+        error: 'Véhicule non trouvé',
+        plate: plate
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: vehicleData
+    });
+  } catch (error) {
+    console.error('❌ Erreur recherche véhicule:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la recherche du véhicule'
+    });
+  }
+});
+
+// 🖼️ Génération d'images de plaques d'immatriculation
+
+// Route 1: avec query params uniquement: /public/plaque?immat=FG-920-RE&dept=34&region=Occ
+app.get('/public/plaque', (req, res) => {
+  // Vérifier si c'est bien un appel avec query params (pas de paramètre d'URL)
+  if (req.query.immat) {
+    try {
+      const immat = req.query.immat.toUpperCase();
+      const dept = req.query.dept || "91";
+      const region = req.query.region || "IDF";
+      
+      console.log(`🖼️ Génération plaque SVG (query): ${immat} (${dept} - ${region})`);
+      
+      streamPlateSVG(immat, dept, region, res);
+    } catch (error) {
+      console.error('❌ Erreur génération plaque:', error);
+      res.status(500).json({
+        error: 'Erreur lors de la génération de la plaque'
+      });
+    }
+  } else {
+    // Plaque par défaut si aucun paramètre
+    const immat = "FG-920-RE";
+    const dept = "91";
+    const region = "IDF";
+    streamPlateSVG(immat, dept, region, res);
+  }
+});
+
+// Route 2: avec paramètre d'URL: /public/plaque/FG-920-RE?dept=34&region=Occ
+app.get('/public/plaque/:immat', (req, res) => {
+  try {
+    const immat = req.params.immat.toUpperCase();
+    const dept = req.query.dept || "91";
+    const region = req.query.region || "IDF";
+    
+    console.log(`🖼️ Génération plaque SVG (param): ${immat} (${dept} - ${region})`);
+    
+    // Validation basique
+    if (!immat || immat.length < 2 || immat.length > 15) {
+      return res.status(400).json({
+        error: 'Format d\'immatriculation invalide'
+      });
+    }
+    
+    streamPlateSVG(immat, dept, region, res);
+  } catch (error) {
+    console.error('❌ Erreur génération plaque:', error);
+    res.status(500).json({
+      error: 'Erreur lors de la génération de la plaque'
+    });
+  }
+});
+
+// Endpoint public (sans authentification) pour les inscriptions
+app.get('/public/vehicles/search', async (req, res) => {
+  try {
+    const { plate } = req.query;
+    
+    if (!plate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le paramètre "plate" est requis'
+      });
+    }
+    
+    const vehicleData = await identifyVehicle(plate);
+    
+    if (!vehicleData) {
+      return res.status(404).json({
+        success: false,
+        error: 'Véhicule non trouvé',
+        plate: plate
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: vehicleData
+    });
+  } catch (error) {
+    console.error('❌ Erreur recherche véhicule:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la recherche du véhicule'
+    });
+  }
+});
 
 // ============================================================
 // ENDPOINTS LEGACY (à extraire progressivement)
