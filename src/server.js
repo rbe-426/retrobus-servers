@@ -26,6 +26,7 @@ import {
 import authRoutes from './routes/auth.routes.js';
 import systemRoutes from './routes/system.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
+import eventsRoutes from './routes/events.routes.js';
 // � Import module de calcul des KPI historiques
 import { 
   calculateMonthlyKPIs, 
@@ -871,6 +872,10 @@ app.use('/', systemRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/notifications', notificationsRoutes);
 
+// Routes événements (gestion des événements et participants)
+app.use('/api/events', eventsRoutes);
+app.use('/events', eventsRoutes);
+
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
 // app.use('/api/vehicles', vehicleRoutes);
@@ -1602,7 +1607,10 @@ app.post('/registrations', async (req, res) => {
       vehicleYear,
       vehicleName,
       isClubMember = false,
-      clubName
+      clubName,
+      // Nouveaux champs pour multi-véhicules et données custom
+      vehicles,
+      customAnswers
     } = req.body;
 
     // Validation
@@ -1657,6 +1665,21 @@ app.post('/registrations', async (req, res) => {
     // Générer un code de validation unique
     const validationCode = `RBE-${Date.now()}-${Math.random().toString(36).slice(2, 9).toUpperCase()}`;
 
+    // Préparer les notes avec toutes les données additionnelles
+    const notesData = {};
+    
+    // Stocker les véhicules multiples si fournis
+    if (Array.isArray(vehicles) && vehicles.length > 0) {
+      notesData.vehicles = vehicles;
+    }
+    
+    // Stocker les réponses personnalisées
+    if (customAnswers) {
+      notesData.customAnswers = customAnswers;
+    }
+    
+    const notesString = Object.keys(notesData).length > 0 ? JSON.stringify(notesData) : null;
+
     // Créer l'enregistrement d'inscription
     const registration = await prisma.registration.create({
       data: {
@@ -1668,11 +1691,12 @@ app.post('/registrations', async (req, res) => {
         paymentMethod: actualPaymentMethod,
         registrationStatus: 'pending',
         validationCode,
-        vehicleModel,
-        vehicleYear,
-        vehicleName,
+        vehicleModel: vehicleModel || (Array.isArray(vehicles) && vehicles[0]?.vehicleModel) || null,
+        vehicleYear: vehicleYear || (Array.isArray(vehicles) && vehicles[0]?.vehicleYear) || null,
+        vehicleName: vehicleName || (Array.isArray(vehicles) && vehicles[0]?.vehicleName) || null,
         isClubMember,
-        clubName
+        clubName,
+        notes: notesString
       }
     });
 
