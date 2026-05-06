@@ -1598,26 +1598,12 @@ app.post('/registrations', async (req, res) => {
       adultTickets = 1,
       childTickets = 0,
       paymentMethod = 'internal',
-      // Ancien format (rétrocompatibilité)
       vehicleModel,
       vehicleYear,
       vehicleName,
       isClubMember = false,
-      clubName,
-      // Nouveau format pour événements statiques multi-véhicules
-      vehicles = [],
-      customAnswers = {}
+      clubName
     } = req.body;
-
-    console.log('📝 Inscription reçue:', {
-      eventId,
-      participantName,
-      participantEmail,
-      adultTickets,
-      childTickets,
-      vehiclesCount: vehicles.length,
-      hasCustomAnswers: Object.keys(customAnswers).length > 0
-    });
 
     // Validation
     if (!eventId || !participantName || !participantEmail) {
@@ -1671,30 +1657,6 @@ app.post('/registrations', async (req, res) => {
     // Générer un code de validation unique
     const validationCode = `RBE-${Date.now()}-${Math.random().toString(36).slice(2, 9).toUpperCase()}`;
 
-    // Préparer les données de notes (JSON) pour les infos avancées
-    const notesData = {
-      registrationType: eventExtras.registrationType || 'standard',
-      timestamp: new Date().toISOString()
-    };
-
-    // Si on a plusieurs véhicules (nouveau format)
-    if (vehicles && vehicles.length > 0) {
-      notesData.vehicles = vehicles;
-      console.log(`🚗 ${vehicles.length} véhicule(s) enregistré(s)`);
-    }
-
-    // Si on a des customAnswers (options page 3)
-    if (customAnswers && Object.keys(customAnswers).length > 0) {
-      notesData.customAnswers = customAnswers;
-      console.log('📋 Options personnalisées enregistrées');
-    }
-
-    // Rétrocompatibilité : utiliser le premier véhicule pour les champs legacy
-    const primaryVehicle = vehicles && vehicles.length > 0 ? vehicles[0] : null;
-    const legacyVehicleModel = primaryVehicle?.vehicleModel || vehicleModel || null;
-    const legacyVehicleYear = primaryVehicle?.vehicleYear || vehicleYear || null;
-    const legacyVehicleName = primaryVehicle?.vehicleName || vehicleName || null;
-
     // Créer l'enregistrement d'inscription
     const registration = await prisma.registration.create({
       data: {
@@ -1706,14 +1668,11 @@ app.post('/registrations', async (req, res) => {
         paymentMethod: actualPaymentMethod,
         registrationStatus: 'pending',
         validationCode,
-        // Champs véhicule legacy (premier véhicule)
-        vehicleModel: legacyVehicleModel,
-        vehicleYear: legacyVehicleYear,
-        vehicleName: legacyVehicleName,
+        vehicleModel,
+        vehicleYear,
+        vehicleName,
         isClubMember,
-        clubName,
-        // Stocker les données avancées en JSON
-        notes: Object.keys(notesData).length > 2 ? JSON.stringify(notesData) : null
+        clubName
       }
     });
 
@@ -1724,12 +1683,6 @@ app.post('/registrations', async (req, res) => {
     });
 
     console.log('✅ Registration created:', registration.id);
-    if (notesData.vehicles) {
-      console.log(`   → ${notesData.vehicles.length} véhicule(s)`);
-    }
-    if (notesData.customAnswers) {
-      console.log(`   → Options: placement=${notesData.customAnswers.staticGathering?.wantsGroupedPlacement || false}`);
-    }
 
     // Réponse basée sur la méthode de paiement
     const response = {
