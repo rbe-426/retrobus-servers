@@ -20,6 +20,15 @@
  * POST   /api/ticketing/discounts          - Créer une réduction
  * PUT    /api/ticketing/discounts/:id      - Mettre à jour une réduction
  * DELETE /api/ticketing/discounts/:id      - Supprimer une réduction
+ * POST   /api/ticketing/promo-codes/validate - Valider un code promo
+ * GET    /api/ticketing/promo-codes        - Liste des codes promo
+ * POST   /api/ticketing/promo-codes        - Créer un code promo
+ * PUT    /api/ticketing/promo-codes/:id    - Mettre à jour un code promo
+ * DELETE /api/ticketing/promo-codes/:id    - Supprimer un code promo
+ * GET    /api/ticketing/internal-codes     - Liste des codes internes
+ * POST   /api/ticketing/internal-codes     - Créer un code interne
+ * PUT    /api/ticketing/internal-codes/:id - Mettre à jour un code interne
+ * DELETE /api/ticketing/internal-codes/:id - Supprimer un code interne
  */
 
 import express from 'express';
@@ -56,5 +65,18 @@ router.get('/discounts/:id', ticketingController.getDiscount);
 router.post('/discounts', ticketingController.createDiscount);
 router.put('/discounts/:id', ticketingController.updateDiscount);
 router.delete('/discounts/:id', ticketingController.deleteDiscount);
+
+// Codes promotionnels
+router.post('/promo-codes/validate', ticketingController.validatePromoCode);
+router.get('/promo-codes', ticketingController.getPromoCodes);
+router.post('/promo-codes', ticketingController.createPromoCode);
+router.put('/promo-codes/:id', ticketingController.updatePromoCode);
+router.delete('/promo-codes/:id', ticketingController.deletePromoCode);
+
+// Codes internes
+router.get('/internal-codes', ticketingController.getInternalCodes);
+router.post('/internal-codes', ticketingController.createInternalCode);
+router.put('/internal-codes/:id', ticketingController.updateInternalCode);
+router.delete('/internal-codes/:id', ticketingController.deleteInternalCode);
 
 export default router;

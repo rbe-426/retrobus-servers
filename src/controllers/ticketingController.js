@@ -4,12 +4,12 @@
 
 // Données mock pour le développement (à remplacer par Prisma plus tard)
 let ticketTypes = [
-  { id: 'plein', name: 'Tarif Plein', label: 'Tarif Plein', price: 12, description: 'Adulte sans réduction', active: true, sold: 3842, revenue: 46104 },
-  { id: 'reduit', name: 'Tarif Réduit', label: 'Tarif Réduit', price: 8, description: 'Étudiants, seniors, demandeurs d\'emploi', active: true, sold: 2156, revenue: 17248 },
-  { id: 'enfant', name: 'Tarif Enfant', label: 'Tarif Enfant', price: 5, description: 'Enfants de 6 à 12 ans', active: true, sold: 1842, revenue: 9210 },
-  { id: 'groupe', name: 'Tarif Groupe', label: 'Tarif Groupe', price: 10, description: 'À partir de 10 personnes', active: true, sold: 1518, revenue: 15180 },
+  { id: 'plein', name: 'Adulte', label: 'Adulte', price: 25, description: 'Adulte sans réduction', active: true, sold: 3842, revenue: 96050 },
+  { id: 'reduit', name: 'Jeunesse / Étudiant', label: 'Jeunesse / Étudiant', price: 15, description: 'Étudiants, demandeurs d\'emploi de moins de 26 ans (14-26)', active: true, sold: 2156, revenue: 32340 },
+  { id: 'enfant', name: 'Enfant -14 ans', label: 'Enfant -14 ans', price: 5, description: 'Enfants de 0 à 13 ans', active: true, sold: 1842, revenue: 9210 },
+  { id: 'groupe', name: 'Tarif Groupe', label: 'Tarif Groupe', price: 10, description: 'À partir de 10 personnes', active: false, sold: 1518, revenue: 15180 },
   { id: 'famille', name: 'Pass Famille', label: 'Pass Famille', price: 28, description: '2 adultes + 2 enfants', active: false, sold: 445, revenue: 12460 },
-  { id: 'annuel', name: 'Abonnement Annuel', label: 'Abonnement Annuel', price: 80, description: 'Accès illimité pendant 1 an', active: true, sold: 127, revenue: 10160 }
+  { id: 'annuel', name: 'Abonnement Annuel', label: 'Abonnement Annuel', price: 80, description: 'Accès illimité pendant 1 an', active: false, sold: 127, revenue: 10160 }
 ];
 
 let discounts = [
@@ -62,6 +62,48 @@ let discounts = [
     active: true,
     onlineAvailable: false,
     appliedTo: ['plein', 'enfant']
+  }
+];
+
+// Codes promotionnels généraux
+let promoCodes = [
+  {
+    id: 'SUMMER2026',
+    code: 'SUMMER2026',
+    name: 'Promo été 2026',
+    type: 'percentage',
+    value: 20,
+    description: 'Réduction été 2026',
+    active: true,
+    validFrom: '2026-06-01',
+    validUntil: '2026-08-31',
+    maxUses: 1000,
+    usedCount: 127,
+    conditions: 'Valable du 1er juin au 31 août 2026',
+    createdAt: new Date().toISOString(),
+    createdBy: 'admin'
+  }
+];
+
+// Codes internes (gestes commerciaux)
+let internalCodes = [
+  {
+    id: 'MRBE26',
+    code: 'MRBE26',
+    name: 'Code Président 2026',
+    type: 'percentage',
+    value: 100,
+    description: 'Geste commercial président',
+    active: true,
+    validFrom: '2026-01-01',
+    validUntil: '2026-12-31',
+    maxUses: 50,
+    usedCount: 3,
+    restrictedTo: ['Waiyl BELAIDI'], // Seul le président peut l'utiliser
+    conditions: 'Usage réservé au président Waiyl BELAIDI',
+    createdAt: new Date().toISOString(),
+    createdBy: 'Waiyl BELAIDI',
+    isInternal: true
   }
 ];
 
@@ -531,6 +573,357 @@ export const deleteDiscount = async (req, res) => {
     console.error('❌ Erreur deleteDiscount:', error);
     res.status(500).json({ 
       error: 'Erreur lors de la suppression de la réduction',
+      details: error.message 
+    });
+  }
+};
+
+// ============================================
+// CODES PROMOTIONNELS
+// ============================================
+
+/**
+ * POST /api/ticketing/promo-codes/validate - Valider un code promo ou interne
+ */
+export const validatePromoCode = async (req, res) => {
+  try {
+    const { code, userName } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ error: 'Code requis' });
+    }
+
+    const codeUpper = code.toUpperCase();
+
+    // Chercher dans les codes promo généraux
+    let promoCode = promoCodes.find(p => p.code === codeUpper && p.active);
+
+    // Si pas trouvé, chercher dans les codes internes
+    let isInternal = false;
+    if (!promoCode) {
+      promoCode = internalCodes.find(c => c.code === codeUpper && c.active);
+      isInternal = true;
+    }
+
+    // Code non trouvé
+    if (!promoCode) {
+      console.log('❌ Code invalide:', codeUpper);
+      return res.status(404).json({ 
+        error: 'Code invalide ou expiré',
+        valid: false 
+      });
+    }
+
+    // Vérifier si le code interne est restreint à certains utilisateurs
+    if (isInternal && promoCode.restrictedTo && promoCode.restrictedTo.length > 0) {
+      if (!userName) {
+        console.log('❌ Code interne: userName manquant');
+        return res.status(403).json({ 
+          error: 'Code réservé à usage interne',
+          valid: false,
+          message: 'Ce code est réservé à des utilisateurs spécifiques'
+        });
+      }
+      
+      // Vérification insensible à la casse
+      const userNameLower = userName.toLowerCase().trim();
+      const isAuthorized = promoCode.restrictedTo.some(authorizedUser => 
+        authorizedUser.toLowerCase().trim() === userNameLower
+      );
+      
+      if (!isAuthorized) {
+        console.log('❌ Code interne non autorisé pour:', userName);
+        console.log('   Utilisateurs autorisés:', promoCode.restrictedTo);
+        return res.status(403).json({ 
+          error: 'Code réservé à usage interne',
+          valid: false,
+          message: 'Ce code est réservé à des utilisateurs spécifiques'
+        });
+      }
+      
+      console.log('✅ Code interne autorisé pour:', userName);
+    }
+
+    // Vérifier les dates de validité
+    const now = new Date();
+    const validFrom = new Date(promoCode.validFrom);
+    const validUntil = new Date(promoCode.validUntil);
+
+    if (now < validFrom || now > validUntil) {
+      console.log('❌ Code expiré:', codeUpper);
+      return res.status(400).json({ 
+        error: 'Code expiré',
+        valid: false,
+        validFrom: promoCode.validFrom,
+        validUntil: promoCode.validUntil
+      });
+    }
+
+    // Vérifier le nombre d'utilisations
+    if (promoCode.maxUses && promoCode.usedCount >= promoCode.maxUses) {
+      console.log('❌ Code épuisé:', codeUpper);
+      return res.status(400).json({ 
+        error: 'Code épuisé',
+        valid: false,
+        message: 'Ce code a atteint sa limite d\'utilisation'
+      });
+    }
+
+    console.log('✅ Code valide:', codeUpper, isInternal ? '(interne)' : '(promo)');
+    res.json({
+      valid: true,
+      code: promoCode,
+      isInternal: isInternal,
+      reduction: {
+        type: promoCode.type,
+        value: promoCode.value,
+        name: promoCode.name,
+        description: promoCode.description
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erreur validatePromoCode:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la validation du code',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * GET /api/ticketing/promo-codes - Liste des codes promo
+ */
+export const getPromoCodes = async (req, res) => {
+  try {
+    console.log('📋 Codes promo récupérés:', promoCodes.length);
+    res.json(promoCodes);
+  } catch (error) {
+    console.error('❌ Erreur getPromoCodes:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la récupération des codes promo',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * GET /api/ticketing/internal-codes - Liste des codes internes
+ */
+export const getInternalCodes = async (req, res) => {
+  try {
+    console.log('📋 Codes internes récupérés:', internalCodes.length);
+    res.json(internalCodes);
+  } catch (error) {
+    console.error('❌ Erreur getInternalCodes:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la récupération des codes internes',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * POST /api/ticketing/promo-codes - Créer un code promo
+ */
+export const createPromoCode = async (req, res) => {
+  try {
+    const codeData = req.body;
+    
+    // Vérifier si le code existe déjà
+    const exists = promoCodes.some(p => p.code === codeData.code.toUpperCase()) ||
+                   internalCodes.some(c => c.code === codeData.code.toUpperCase());
+    
+    if (exists) {
+      return res.status(400).json({ error: 'Ce code existe déjà' });
+    }
+
+    const newCode = {
+      id: codeData.code.toUpperCase(),
+      code: codeData.code.toUpperCase(),
+      name: codeData.name,
+      type: codeData.type || 'percentage',
+      value: codeData.value,
+      description: codeData.description || '',
+      active: codeData.active !== undefined ? codeData.active : true,
+      validFrom: codeData.validFrom,
+      validUntil: codeData.validUntil,
+      maxUses: codeData.maxUses || null,
+      usedCount: 0,
+      conditions: codeData.conditions || '',
+      createdAt: new Date().toISOString(),
+      createdBy: codeData.createdBy || 'admin'
+    };
+
+    promoCodes.push(newCode);
+
+    console.log('✅ Code promo créé:', newCode.code);
+    res.status(201).json(newCode);
+  } catch (error) {
+    console.error('❌ Erreur createPromoCode:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la création du code promo',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * POST /api/ticketing/internal-codes - Créer un code interne
+ */
+export const createInternalCode = async (req, res) => {
+  try {
+    const codeData = req.body;
+    
+    // Vérifier si le code existe déjà
+    const exists = promoCodes.some(p => p.code === codeData.code.toUpperCase()) ||
+                   internalCodes.some(c => c.code === codeData.code.toUpperCase());
+    
+    if (exists) {
+      return res.status(400).json({ error: 'Ce code existe déjà' });
+    }
+
+    const newCode = {
+      id: codeData.code.toUpperCase(),
+      code: codeData.code.toUpperCase(),
+      name: codeData.name,
+      type: codeData.type || 'percentage',
+      value: codeData.value,
+      description: codeData.description || '',
+      active: codeData.active !== undefined ? codeData.active : true,
+      validFrom: codeData.validFrom,
+      validUntil: codeData.validUntil,
+      maxUses: codeData.maxUses || null,
+      usedCount: 0,
+      restrictedTo: codeData.restrictedTo || [],
+      conditions: codeData.conditions || '',
+      createdAt: new Date().toISOString(),
+      createdBy: codeData.createdBy || 'admin',
+      isInternal: true
+    };
+
+    internalCodes.push(newCode);
+
+    console.log('✅ Code interne créé:', newCode.code);
+    res.status(201).json(newCode);
+  } catch (error) {
+    console.error('❌ Erreur createInternalCode:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la création du code interne',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * PUT /api/ticketing/promo-codes/:id - Mettre à jour un code promo
+ */
+export const updatePromoCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    const index = promoCodes.findIndex(p => p.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Code promo non trouvé' });
+    }
+
+    promoCodes[index] = {
+      ...promoCodes[index],
+      ...updates,
+      id: promoCodes[index].id,
+      code: promoCodes[index].code,
+      updatedAt: new Date().toISOString()
+    };
+
+    console.log('✅ Code promo mis à jour:', id);
+    res.json(promoCodes[index]);
+  } catch (error) {
+    console.error('❌ Erreur updatePromoCode:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la mise à jour du code promo',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * PUT /api/ticketing/internal-codes/:id - Mettre à jour un code interne
+ */
+export const updateInternalCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    const index = internalCodes.findIndex(c => c.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Code interne non trouvé' });
+    }
+
+    internalCodes[index] = {
+      ...internalCodes[index],
+      ...updates,
+      id: internalCodes[index].id,
+      code: internalCodes[index].code,
+      isInternal: true,
+      updatedAt: new Date().toISOString()
+    };
+
+    console.log('✅ Code interne mis à jour:', id);
+    res.json(internalCodes[index]);
+  } catch (error) {
+    console.error('❌ Erreur updateInternalCode:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la mise à jour du code interne',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * DELETE /api/ticketing/promo-codes/:id - Supprimer un code promo
+ */
+export const deletePromoCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const index = promoCodes.findIndex(p => p.id === id);
+
+    if (index === -1) {
+      return res.status(404).json({ error: 'Code promo non trouvé' });
+    }
+
+    promoCodes.splice(index, 1);
+
+    console.log('✅ Code promo supprimé:', id);
+    res.json({ success: true, message: 'Code promo supprimé' });
+  } catch (error) {
+    console.error('❌ Erreur deletePromoCode:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la suppression du code promo',
+      details: error.message 
+    });
+  }
+};
+
+/**
+ * DELETE /api/ticketing/internal-codes/:id - Supprimer un code interne
+ */
+export const deleteInternalCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const index = internalCodes.findIndex(c => c.id === id);
+
+    if (index === -1) {
+      return res.status(404).json({ error: 'Code interne non trouvé' });
+    }
+
+    internalCodes.splice(index, 1);
+
+    console.log('✅ Code interne supprimé:', id);
+    res.json({ success: true, message: 'Code interne supprimé' });
+  } catch (error) {
+    console.error('❌ Erreur deleteInternalCode:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la suppression du code interne',
       details: error.message 
     });
   }
