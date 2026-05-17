@@ -27,6 +27,8 @@ import authRoutes from './routes/auth.routes.js';
 import systemRoutes from './routes/system.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import eventsRoutes from './routes/events.routes.js';
+import ticketingRoutes from './routes/ticketing.routes.js';
+import museumRoutes from './routes/museum.routes.js';
 // � Import module de calcul des KPI historiques
 import { 
   calculateMonthlyKPIs, 
@@ -875,6 +877,14 @@ app.use('/notifications', notificationsRoutes);
 // Routes événements (gestion des événements et participants)
 app.use('/api/events', eventsRoutes);
 app.use('/events', eventsRoutes);
+
+// Routes billetterie musée (gestion des tarifs et ventes)
+app.use('/api/ticketing', ticketingRoutes);
+app.use('/ticketing', ticketingRoutes);
+
+// Routes musée (gestion des collections et modules)
+app.use('/api/museum', museumRoutes);
+app.use('/museum', museumRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
