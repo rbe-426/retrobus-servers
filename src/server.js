@@ -2644,25 +2644,61 @@ app.post(['/vehicles/:parc/gallery','/api/vehicles/:parc/gallery'], requireAuth,
 
     console.log(`📸 [DEBUG] Total gallery after update: ${nextGallery.length} items`);
 
-    const updated = await prisma.vehicle.update({
-      where: { id: existing.id },
-      data: {
-        gallery: JSON.stringify(nextGallery),
-        updatedAt: new Date()
+    // Stringify and check size
+    let galleryJson;
+    try {
+      galleryJson = JSON.stringify(nextGallery);
+      console.log(`📸 [DEBUG] Gallery JSON size: ${(galleryJson.length / 1024 / 1024).toFixed(2)} MB`);
+      
+      // Warning if too large (PostgreSQL TEXT limit is ~1GB but performance degrades)
+      if (galleryJson.length > 10 * 1024 * 1024) { // 10MB
+        console.warn(`⚠️ [DEBUG] Gallery JSON is very large: ${(galleryJson.length / 1024 / 1024).toFixed(2)} MB`);
       }
-    });
+    } catch (stringifyError) {
+      console.error(`❌ [DEBUG] Failed to stringify gallery:`, stringifyError);
+      return res.status(500).json({ 
+        error: 'Failed to serialize gallery data', 
+        details: stringifyError.message 
+      });
+    }
+
+    // Update in database
+    let updated;
+    try {
+      updated = await prisma.vehicle.update({
+        where: { id: existing.id },
+        data: {
+          gallery: galleryJson,
+          updatedAt: new Date()
+        }
+      });
+      console.log(`✅ [DEBUG] Prisma update successful for vehicle ${existing.id}`);
+    } catch (prismaError) {
+      console.error(`❌ [DEBUG] Prisma update failed:`, prismaError);
+      return res.status(500).json({ 
+        error: 'Database update failed', 
+        details: prismaError.message 
+      });
+    }
 
     // Keep in-memory mirror in sync
-    const stateIdx = state.vehicles.findIndex(v => v.id === existing.id);
-    if (stateIdx !== -1) {
-      state.vehicles[stateIdx] = { ...state.vehicles[stateIdx], gallery: JSON.stringify(nextGallery), updatedAt: new Date() };
-      debouncedSave();
+    try {
+      const stateIdx = state.vehicles.findIndex(v => v.id === existing.id);
+      if (stateIdx !== -1) {
+        state.vehicles[stateIdx] = { ...state.vehicles[stateIdx], gallery: galleryJson, updatedAt: new Date() };
+        debouncedSave();
+      }
+      console.log(`✅ [DEBUG] In-memory state updated`);
+    } catch (stateError) {
+      console.warn(`⚠️ [DEBUG] Failed to update in-memory state:`, stateError);
+      // Non-critical, continue
     }
 
     console.log(`✅ Gallery images added for ${parc}. Total: ${nextGallery.length}`);
     res.json({ gallery: nextGallery });
   } catch (e) {
-    console.error('❌ POST /vehicles/:parc/gallery error:', e.message);
+    console.error('❌ POST /vehicles/:parc/gallery error:', e);
+    console.error('❌ Error stack:', e.stack);
     res.status(500).json({ error: 'Failed to upload images', details: e.message });
   }
 });
@@ -9128,8 +9164,14 @@ if (prisma) {
 
 // Generic error handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled error', err);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error('❌ Unhandled error:', err);
+  console.error('❌ Error stack:', err.stack);
+  console.error('❌ Request:', {
+    method: req.method,
+    url: req.url,
+    body: req.body ? `${JSON.stringify(req.body).substring(0, 200)}...` : 'no body'
+  });
+  res.status(500).json({ error: 'Internal server error', details: err.message });
 });
 
 app.listen(PORT, async () => {
