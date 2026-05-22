@@ -781,8 +781,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware JSON - Accept large payloads for BASE64 images
-app.use(express.json({ limit: '50mb' }));
+// Middleware JSON - Accept large payloads for BASE64 images (increased for vehicle galleries)
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // 4. Secure logging - masque les données sensibles
 app.use(secureLogger);
