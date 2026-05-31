@@ -31,7 +31,7 @@ import ticketingRoutes from './routes/ticketing.routes.js';
 import museumRoutes from './routes/museum.routes.js';
 import mailRoutes from './routes/mail.routes.js';
 import emailTemplateRoutes from './routes/emailTemplate.routes.js';
-import { sendExpenseReportNotification } from './services/notificationService.js';
+import { sendExpenseReportNotification, sendTemplatedEmail } from './services/notificationService.js';
 // � Import module de calcul des KPI historiques
 import { 
   calculateMonthlyKPIs, 
@@ -2033,72 +2033,59 @@ app.post('/public/contact', async (req, res) => {
       });
     }
 
-    // Envoyer les emails
-    if (transporter) {
-      try {
-        // Envoyer les emails EN ARRIÈRE-PLAN (non-bloquant)
-        // Répondre immédiatement au client
-        
-        // Email à l'association
-        if (transporter) {
-          transporter.sendMail({
-            from: process.env.EMAIL_USER || 'association.rbe@gmail.com',
-            to: 'association.rbe@gmail.com',
-            subject: `[Contact Form] ${subject}`,
-            html: `
-              <h2>Nouveau message de contact</h2>
-              <p><strong>Nom:</strong> ${name}</p>
-              <p><strong>Email:</strong> ${email}</p>
-              <p><strong>Sujet:</strong> ${subject}</p>
-              <hr>
-              <p><strong>Message:</strong></p>
-              <p>${message.replace(/\n/g, '<br>')}</p>
-              <hr>
-              <p style="color: gray; font-size: 12px;">
-                IP: ${req.ip || req.connection.remoteAddress}<br>
-                Reçu le: ${new Date().toLocaleString('fr-FR')}
-              </p>
-            `,
-            replyTo: email
-          }).then(() => {
-            console.log('✅ Email envoyé à l\'association');
-          }).catch(err => {
-            console.warn('⚠️  Erreur envoi email association:', err.message);
-          });
-
-          // Email de confirmation à l'expéditeur
-          transporter.sendMail({
-            from: process.env.EMAIL_USER || 'association.rbe@gmail.com',
-            to: email,
-            subject: 'Confirmation de votre message - RétroBus Essonne',
-            html: `
-              <h2>Merci pour votre message</h2>
-              <p>Bonjour ${name},</p>
-              <p>Nous avons bien reçu votre message du <strong>${new Date().toLocaleString('fr-FR')}</strong>.</p>
-              <p>L'association RétroBus Essonne vous répondra dès que possible.</p>
-              <hr>
-              <p><strong>Récapitulatif de votre message:</strong></p>
-              <p><strong>Sujet:</strong> ${subject}</p>
-              <p>${message.replace(/\n/g, '<br>')}</p>
-              <hr>
-              <p>Cordialement,<br>L'équipe RétroBus Essonne<br>
-              <a href="https://association-rbe.fr">association-rbe.fr</a><br>
-              <a href="mailto:association.rbe@gmail.com">association.rbe@gmail.com</a></p>
-            `
-          }).then(() => {
-            console.log('✅ Email de confirmation envoyé à', email);
-          }).catch(err => {
-            console.warn('⚠️  Erreur envoi email confirmation:', err.message);
-          });
-        }
-      } catch (emailError) {
-        console.warn('⚠️  Erreur préparation emails:', emailError.message);
+    // Envoyer les emails depuis le compte noreply via les templates
+    // Préparer les données pour les templates
+    const messageDate = new Date().toLocaleString('fr-FR', {
+      day: '2-digit',
+      month: '2-digit', 
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    
+    const templateData = {
+      sender: {
+        name: name,
+        email: email,
+        ip: req.ip || req.connection.remoteAddress || 'N/A',
+        userAgent: req.get('user-agent') || 'N/A'
+      },
+      subject: subject,
+      message: {
+        content: message,
+        date: messageDate
       }
-    } else {
-      console.warn('⚠️  Transporter email non configuré - message enregistré mais email non envoyé');
+    };
+
+    // 1. Envoyer notification à l'association (depuis noreply)
+    try {
+      await sendTemplatedEmail(
+        'contact_form_notification',
+        'association.rbe@gmail.com',
+        templateData,
+        'RétroBus Essonne - Contact'
+      );
+      console.log('✅ Email de notification envoyé à l\'association');
+    } catch (emailError) {
+      console.error('❌ Erreur envoi email notification:', emailError.message);
+      // Continue even if notification fails
     }
 
-    console.log('✅ Message de contact enregistré avec succès');
+    // 2. Envoyer confirmation à l'expéditeur (depuis noreply)
+    try {
+      await sendTemplatedEmail(
+        'mailback_formulaire',
+        email,
+        templateData,
+        'RétroBus Essonne'
+      );
+      console.log('✅ Email de confirmation envoyé à', email);
+    } catch (emailError) {
+      console.error('❌ Erreur envoi email confirmation:', emailError.message);
+      // Continue even if confirmation fails
+    }
+
+    console.log('✅ Message de contact traité avec succès');
 
     res.status(200).json({ 
       success: true,

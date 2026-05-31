@@ -278,3 +278,87 @@ Cet email est envoyé automatiquement par le système.',
   NOW(),
   NOW()
 );
+
+-- 9. Contact Form Notification (to association)
+INSERT INTO "EmailTemplate" (id, name, subject, body, description, variables, category, active, "createdAt", "updatedAt")
+VALUES (
+  'clxxx-contact-notif-001',
+  'contact_form_notification',
+  '[Formulaire Contact] {{subject}}',
+  '# Nouveau message de contact
+
+Vous avez reçu un nouveau message via le formulaire de contact du site web.
+
+## Informations de l''expéditeur
+
+- **Nom** : {{sender.name}}
+- **Email** : {{sender.email}}
+- **Date** : {{message.date}}
+
+## Sujet
+
+{{subject}}
+
+## Message
+
+{{message.content}}
+
+---
+
+**Informations techniques**
+- IP : {{sender.ip}}
+- User Agent : {{sender.userAgent}}
+
+**Pour répondre** : Cliquez sur "Répondre" et votre réponse sera envoyée à {{sender.email}}',
+  'Notification interne envoyée à l''association lors de la réception d''un message de contact',
+  'sender.name, sender.email, subject, message.content, message.date, sender.ip, sender.userAgent',
+  'CUSTOM',
+  true,
+  NOW(),
+  NOW()
+);
+
+-- 10. Contact Form Confirmation (to sender - mailback)
+INSERT INTO "EmailTemplate" (id, name, subject, body, description, variables, category, active, "createdAt", "updatedAt")
+VALUES (
+  'clxxx-contact-confirm-001',
+  'mailback_formulaire',
+  'Confirmation de votre message - RétroBus Essonne',
+  '# Merci pour votre message !
+
+Bonjour {{sender.name}},
+
+Nous avons bien reçu votre message du **{{message.date}}**.
+
+L''association RétroBus Essonne vous répondra dans les plus brefs délais (généralement sous 48h).
+
+## Récapitulatif de votre message
+
+**Sujet** : {{subject}}
+
+{{message.content}}
+
+---
+
+## Nos coordonnées
+
+📧 Email : association.rbe@gmail.com
+🌐 Site web : https://association-rbe.fr
+📍 Adresse : [Adresse de l''association]
+
+**Suivez-nous !**
+- Facebook : [Lien Facebook]
+- Instagram : [Lien Instagram]
+
+---
+
+Cordialement,
+**L''équipe RétroBus Essonne**
+_Passionnés de véhicules de collection depuis [année]_',
+  'Email de confirmation automatique envoyé à l''expéditeur du formulaire de contact',
+  'sender.name, subject, message.content, message.date',
+  'CUSTOM',
+  true,
+  NOW(),
+  NOW()
+);
