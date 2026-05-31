@@ -153,10 +153,10 @@ export async function listEmails(userId, folder = 'INBOX', limit = 50) {
     const lock = await client.getMailboxLock(realFolder);
     
     try {
-      const mailbox = await client.mailboxOpen(folder);
+      const mailbox = await client.mailboxOpen(realFolder);
       const messageCount = mailbox.exists;
       
-      console.log(`📬 Dossier ${folder} : ${messageCount} message(s)`);
+      console.log(`📬 Dossier ${folder} (${realFolder}) : ${messageCount} message(s)`);
       
       // Si aucun message, retourner un tableau vide
       if (messageCount === 0) {
@@ -220,29 +220,57 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
 
   try {
     await client.connect();
-    const lock = await client.getMailboxLock(folder);
+    
+    // Trouver le vrai nom du dossier
+    const realFolder = await findFolderName(client, folder);
+    
+    const lock = await client.getMailboxLock(realFolder);
     
     try {
+      console.log(`📖 Lecture email UID ${emailId} dans ${realFolder}...`);
+      
       // Récupérer l'email complet
       const message = await client.fetchOne(emailId, {
         envelope: true,
         bodyStructure: true,
-        bodyParts: ['TEXT', 'HEADER'],
-        flags: true
-      });
+        source: true,  // Récupérer le source complet
+        flags: true,
+        uid: true
+      }, { uid: true });  // Spécifier que emailId est un UID
 
       if (!message) {
         throw new Error('Email non trouvé');
       }
 
-      // Extraire le corps du message
+      // Extraire le corps du message depuis le source brut
       let body = '';
-      if (message.bodyParts && message.bodyParts.get('TEXT')) {
-        body = message.bodyParts.get('TEXT').toString('utf-8');
+      
+      // Essayer d'extraire le texte depuis le source
+      if (message.source) {
+        const sourceText = message.source.toString('utf-8');
+        
+        // Chercher la partie texte après les headers (simplification)
+        const bodyStart = sourceText.indexOf('\r\n\r\n');
+        if (bodyStart !== -1) {
+          body = sourceText.substring(bodyStart + 4).trim();
+          
+          // Si le body est trop long, limiter à 50KB
+          if (body.length > 50000) {
+            body = body.substring(0, 50000) + '\n\n[... Message tronqué ...]';
+          }
+        } else {
+          body = '(Impossible d\'extraire le contenu)';
+        }
       }
 
       // Marquer comme lu
-      await client.messageFlagsAdd(emailId, ['\\Seen']);
+      try {
+        await client.messageFlagsAdd(emailId, ['\\Seen'], { uid: true });
+      } catch (e) {
+        console.warn('⚠️  Impossible de marquer comme lu:', e.message);
+      }
+
+      console.log(`✅ Email ${emailId} lu avec succès`);
 
       return {
         id: message.uid,
@@ -260,6 +288,7 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
     }
   } catch (error) {
     console.error('❌ Erreur lecture email:', error.message);
+    console.error('Stack:', error.stack);
     throw new Error(`Impossible de lire l'email: ${error.message}`);
   } finally {
     await client.logout();
@@ -321,7 +350,11 @@ export async function deleteEmail(userId, emailId, folder = 'INBOX') {
 
   try {
     await client.connect();
-    const lock = await client.getMailboxLock(folder);
+    
+    // Trouver le vrai nom du dossier
+    const realFolder = await findFolderName(client, folder);
+    
+    const lock = await client.getMailboxLock(realFolder);
     
     try {
       // Marquer pour suppression
@@ -360,11 +393,16 @@ export async function moveEmail(userId, emailId, fromFolder, toFolder) {
 
   try {
     await client.connect();
-    const lock = await client.getMailboxLock(fromFolder);
+    
+    // Trouver les vrais noms des dossiers
+    const realFromFolder = await findFolderName(client, fromFolder);
+    const realToFolder = await findFolderName(client, toFolder);
+    
+    const lock = await client.getMailboxLock(realFromFolder);
     
     try {
       // Déplacer l'email
-      await client.messageMove(emailId, toFolder);
+      await client.messageMove(emailId, realToFolder);
 
       console.log(`📁 Email ${emailId} déplacé de ${fromFolder} vers ${toFolder}`);
       return { success: true };
