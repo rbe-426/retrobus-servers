@@ -22,6 +22,40 @@ const SMTP_CONFIG = {
   requireTLS: true
 };
 
+// Mapping des noms de dossiers (tentatives multiples pour compatibilité)
+const FOLDER_MAPPING = {
+  'INBOX': ['INBOX'],
+  'SENT': ['Sent', 'INBOX.Sent', 'Sent Messages', 'Envoyés', 'INBOX.Envoyés'],
+  'TRASH': ['Trash', 'INBOX.Trash', 'Deleted', 'INBOX.Deleted', 'Corbeille', 'INBOX.Corbeille'],
+  'DRAFTS': ['Drafts', 'INBOX.Drafts', 'Brouillons', 'INBOX.Brouillons'],
+  'SPAM': ['Spam', 'INBOX.Spam', 'Junk', 'INBOX.Junk']
+};
+
+/**
+ * Trouver le vrai nom d'un dossier IMAP en essayant plusieurs variantes
+ * @param {ImapFlow} client - Client IMAP connecté
+ * @param {string} logicalFolder - Nom logique du dossier (INBOX, SENT, etc.)
+ */
+async function findFolderName(client, logicalFolder) {
+  const candidates = FOLDER_MAPPING[logicalFolder] || [logicalFolder];
+  
+  // Lister tous les dossiers disponibles
+  const mailboxes = await client.list();
+  const availableNames = mailboxes.map(m => m.path);
+  
+  // Essayer chaque candidat
+  for (const candidate of candidates) {
+    if (availableNames.includes(candidate)) {
+      console.log(`✅ Dossier ${logicalFolder} trouvé: ${candidate}`);
+      return candidate;
+    }
+  }
+  
+  // Aucun trouvé, utiliser le premier candidat par défaut
+  console.warn(`⚠️  Dossier ${logicalFolder} introuvable, utilisation de ${candidates[0]}`);
+  return candidates[0];
+}
+
 // Stockage temporaire des sessions (en prod, utiliser Redis ou DB)
 const activeSessions = new Map();
 
@@ -112,8 +146,11 @@ export async function listEmails(userId, folder = 'INBOX', limit = 50) {
   try {
     await client.connect();
     
+    // Trouver le vrai nom du dossier
+    const realFolder = await findFolderName(client, folder);
+    
     // Ouvrir le dossier
-    const lock = await client.getMailboxLock(folder);
+    const lock = await client.getMailboxLock(realFolder);
     
     try {
       const mailbox = await client.mailboxOpen(folder);
