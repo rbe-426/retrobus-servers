@@ -29,6 +29,7 @@ import notificationsRoutes from './routes/notifications.routes.js';
 import eventsRoutes from './routes/events.routes.js';
 import ticketingRoutes from './routes/ticketing.routes.js';
 import museumRoutes from './routes/museum.routes.js';
+import mailRoutes from './routes/mail.routes.js';
 // � Import module de calcul des KPI historiques
 import { 
   calculateMonthlyKPIs, 
@@ -886,6 +887,10 @@ app.use('/ticketing', ticketingRoutes);
 // Routes musée (gestion des collections et modules)
 app.use('/api/museum', museumRoutes);
 app.use('/museum', museumRoutes);
+
+// Routes RétroMail (gestion des emails Infomaniak)
+app.use('/api/mail', mailRoutes);
+app.use('/mail', mailRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
