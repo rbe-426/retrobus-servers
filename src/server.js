@@ -31,6 +31,7 @@ import ticketingRoutes from './routes/ticketing.routes.js';
 import museumRoutes from './routes/museum.routes.js';
 import mailRoutes from './routes/mail.routes.js';
 import emailTemplateRoutes from './routes/emailTemplate.routes.js';
+import { sendExpenseReportNotification } from './services/notificationService.js';
 // � Import module de calcul des KPI historiques
 import { 
   calculateMonthlyKPIs, 
@@ -6348,6 +6349,34 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
       console.log('🔔 Notification création note de frais:', notificationMsg);
     } catch (notifErr) {
       console.warn('⚠️ Erreur notification:', notifErr.message);
+    }
+    
+    // 📧 ENVOYER EMAIL AUTOMATIQUE si compte noreply connecté
+    try {
+      // Récupérer les infos du membre
+      const member = await prisma.members.findUnique({
+        where: { id: userId }
+      });
+      
+      if (member && member.email) {
+        await sendExpenseReportNotification(
+          {
+            id: reportId,
+            montant: Number(amount || 0),
+            description: description || 'Note de frais',
+            date: date || new Date().toISOString(),
+            statut: status || 'EN_ATTENTE'
+          },
+          {
+            prenom: member.prenom || member.firstname,
+            nom: member.nom || member.lastname,
+            email: member.email
+          }
+        );
+        console.log(`✅ Email de confirmation envoyé à ${member.email}`);
+      }
+    } catch (emailErr) {
+      console.warn('⚠️ Erreur envoi email:', emailErr.message);
     }
     
     console.log('✅ Note de frais créée dans Prisma:', reportId);
