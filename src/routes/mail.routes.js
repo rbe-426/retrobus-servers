@@ -14,6 +14,7 @@ import {
   deleteEmail,
   moveEmail
 } from '../services/mailService.js';
+import { setNoreplyUserId } from '../services/notificationService.js';
 
 const router = express.Router();
 
@@ -75,6 +76,12 @@ router.post('/connect', requireAuth, async (req, res) => {
 
     // Créer la session
     const result = await createMailSession(userId, email, password);
+
+    // Si c'est le compte noreply, configurer le service de notifications
+    if (email === 'noreply@association-rbe.fr') {
+      setNoreplyUserId(userId);
+      console.log('✅ Compte NoReply configuré pour les notifications automatiques');
+    }
 
     res.json({
       success: true,

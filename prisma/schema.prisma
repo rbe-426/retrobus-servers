@@ -1335,3 +1335,20 @@ model EventInvitation {
   @@index([userId])
   @@index([status])
 }
+
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  name        String   @unique @db.VarChar(255)
+  subject     String   @db.VarChar(500)
+  body        String   @db.Text
+  description String?  @db.Text
+  variables   String?  @db.Text
+  category    String   @default("CUSTOM") @db.VarChar(50)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+  @@index([active])
+  @@index([name])
+}

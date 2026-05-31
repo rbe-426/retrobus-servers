@@ -30,6 +30,7 @@ import eventsRoutes from './routes/events.routes.js';
 import ticketingRoutes from './routes/ticketing.routes.js';
 import museumRoutes from './routes/museum.routes.js';
 import mailRoutes from './routes/mail.routes.js';
+import emailTemplateRoutes from './routes/emailTemplate.routes.js';
 // � Import module de calcul des KPI historiques
 import { 
   calculateMonthlyKPIs, 
@@ -8271,24 +8272,8 @@ app.delete('/api/financial-documents/:docId', requireAuth, async (req, res) => {
   }
 });
 
-// Email templates endpoint
-app.get('/api/email-templates', requireAuth, (req, res) => {
-  res.json([]);
-});
-app.get('/api/email-templates/:id', requireAuth, (req, res) => {
-  res.status(404).json({ error: 'Template not found' });
-});
-app.post('/api/email-templates', requireAuth, (req, res) => {
-  const template = { id: uid(), ...req.body, createdAt: new Date().toISOString() };
-  res.status(201).json(template);
-});
-app.put('/api/email-templates/:id', requireAuth, (req, res) => {
-  const template = { id: req.params.id, ...req.body, updatedAt: new Date().toISOString() };
-  res.json(template);
-});
-app.delete('/api/email-templates/:id', requireAuth, (req, res) => {
-  res.json({ ok: true });
-});
+// Email templates routes
+app.use('/api/email-templates', requireAuth, emailTemplateRoutes);
 
 // ===== ADMIN PROMOTION ENDPOINT =====
 // POST /api/admin/users/:id/permissions - Set user permissions
