@@ -5,6 +5,7 @@
 
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
+import { simpleParser } from 'mailparser';
 import { encryptSensitiveData, decryptSensitiveData } from '../security.js';
 
 // Configuration Infomaniak
@@ -242,24 +243,36 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
         throw new Error('Email non trouvé');
       }
 
-      // Extraire le corps du message depuis le source brut
+      // Parser l'email avec mailparser pour décoder MIME, quoted-printable, base64, etc.
       let body = '';
+      let textContent = '';
+      let htmlContent = '';
       
-      // Essayer d'extraire le texte depuis le source
       if (message.source) {
-        const sourceText = message.source.toString('utf-8');
-        
-        // Chercher la partie texte après les headers (simplification)
-        const bodyStart = sourceText.indexOf('\r\n\r\n');
-        if (bodyStart !== -1) {
-          body = sourceText.substring(bodyStart + 4).trim();
+        try {
+          const parsed = await simpleParser(message.source);
           
-          // Si le body est trop long, limiter à 50KB
+          // Préférer le texte brut, sinon HTML
+          if (parsed.text) {
+            textContent = parsed.text.trim();
+            body = textContent;
+          } else if (parsed.html) {
+            htmlContent = parsed.html;
+            // Extraire le texte du HTML (simple strip des tags)
+            body = htmlContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          } else if (parsed.textAsHtml) {
+            body = parsed.textAsHtml.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          }
+          
+          // Limiter à 50KB
           if (body.length > 50000) {
             body = body.substring(0, 50000) + '\n\n[... Message tronqué ...]';
           }
-        } else {
-          body = '(Impossible d\'extraire le contenu)';
+          
+          console.log(`📄 Email parsé: ${body.length} caractères`);
+        } catch (parseError) {
+          console.error('⚠️  Erreur parsing MIME:', parseError.message);
+          body = '(Erreur lors du décodage du message)';
         }
       }
 
@@ -298,7 +311,7 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
 /**
  * Envoyer un email
  * @param {string} userId - ID utilisateur
- * @param {object} mailOptions - Options de l'email { to, subject, body, html, attachments }
+ * @param {object} mailOptions - Options de l'email { to, subject, body, html, attachments, fromName }
  */
 export async function sendEmail(userId, mailOptions) {
   const session = getMailSession(userId);
@@ -316,9 +329,14 @@ export async function sendEmail(userId, mailOptions) {
     // Vérifier la connexion
     await transporter.verify();
 
+    // Construire le champ "from" avec le nom d'affichage si fourni
+    const fromAddress = mailOptions.fromName 
+      ? `"${mailOptions.fromName}" <${session.email}>`
+      : session.email;
+
     // Envoyer l'email
     const info = await transporter.sendMail({
-      from: session.email,
+      from: fromAddress,
       to: mailOptions.to,
       subject: mailOptions.subject,
       text: mailOptions.body,
