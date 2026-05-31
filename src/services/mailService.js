@@ -252,24 +252,32 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
         try {
           const parsed = await simpleParser(message.source);
           
-          // Préférer le texte brut, sinon HTML
+          // Récupérer le texte brut
           if (parsed.text) {
             textContent = parsed.text.trim();
             body = textContent;
-          } else if (parsed.html) {
+          }
+          
+          // Récupérer le HTML
+          if (parsed.html) {
             htmlContent = parsed.html;
-            // Extraire le texte du HTML (simple strip des tags)
-            body = htmlContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            // Si pas de texte, extraire du HTML
+            if (!body) {
+              body = htmlContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            }
           } else if (parsed.textAsHtml) {
-            body = parsed.textAsHtml.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            htmlContent = parsed.textAsHtml;
           }
           
           // Limiter à 50KB
           if (body.length > 50000) {
             body = body.substring(0, 50000) + '\n\n[... Message tronqué ...]';
           }
+          if (htmlContent.length > 100000) {
+            htmlContent = htmlContent.substring(0, 100000) + '\n\n<!-- Message tronqué -->';
+          }
           
-          console.log(`📄 Email parsé: ${body.length} caractères`);
+          console.log(`📄 Email parsé: ${body.length} caractères (text), ${htmlContent.length} caractères (html)`);
         } catch (parseError) {
           console.error('⚠️  Erreur parsing MIME:', parseError.message);
           body = '(Erreur lors du décodage du message)';
@@ -293,6 +301,7 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
         subject: message.envelope.subject || '(Sans objet)',
         date: message.envelope.date,
         body: body,
+        html: htmlContent || null,
         read: true,
         attachments: [] // TODO: extraire les pièces jointes si nécessaire
       };
