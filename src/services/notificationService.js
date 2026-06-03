@@ -71,15 +71,17 @@ export async function sendTemplatedEmail(templateName, recipientEmail, data = {}
     // Replace variables
     const subject = replaceVariables(template.subject, data);
     const body = replaceVariables(template.body, data);
-    
-    // Convert to HTML for better formatting
-    const html = convertTextToHtml(body, data);
+
+    // If the template body is already HTML, keep it as-is.
+    const htmlTemplate = isHtmlLike(body);
+    const html = htmlTemplate ? body : convertTextToHtml(body, data);
+    const textBody = htmlTemplate ? htmlToText(body) : body;
     
     // Send email
     await sendEmail(noreplyUserId, {
       to: recipientEmail,
       subject,
-      body,
+      body: textBody,
       html,
       fromName
     });
@@ -107,6 +109,28 @@ function replaceVariables(text, data) {
     
     return value !== undefined && value !== null ? String(value) : match;
   });
+}
+
+function isHtmlLike(content = '') {
+  const sample = String(content || '').trim();
+  return /<html|<body|<table|<div|<!doctype html/i.test(sample);
+}
+
+function htmlToText(html = '') {
+  return String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**

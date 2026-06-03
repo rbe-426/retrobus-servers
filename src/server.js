@@ -1611,6 +1611,143 @@ app.get('/public/events/active/jep', async (req, res) => {
 // PUBLIC REGISTRATION ENDPOINTS
 // ============================================
 
+const CONFIRM_EVENT_TEMPLATE_NAME = 'Confirm Event';
+const CONFIRM_EVENT_TEMPLATE_HTML = `<!DOCTYPE html>
+<html lang="fr-FR">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirmation inscription evenement</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: transparent; font-family: Montserrat, Arial, sans-serif; color: #101112;">
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" role="presentation" style="background:#ffffff;">
+    <tr>
+      <td>
+        <table width="900" align="center" border="0" cellspacing="0" cellpadding="0" role="presentation" style="max-width:900px;width:100%;">
+          <tr>
+            <td style="background:#000000;padding:18px 20px;text-align:center;">
+              <img src="https://media.beefree.cloud/pub/bfra/a8fimmr0/jcy/o0f/dn2/RBE%20RACCOURCI%20BLANC.png" alt="RBE" width="90" style="display:block;margin:0 auto 10px auto;border:0;">
+              <h2 style="margin:0;color:#ffffff;font-size:34px;line-height:1.4;">Votre inscription est bien arrivee !</h2>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:30px 20px 10px 20px;text-align:center;">
+              <p style="margin:0;font-size:34px;font-weight:700;line-height:1.2;">Cher(e) {{participant.name}}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px;">
+              <p style="margin:0 0 14px 0;font-size:22px;font-weight:700;line-height:1.35;">Vous venez de vous inscrire a {{event.title}} et nous serons super heureux de vous accueillir !</p>
+              <p style="margin:0 0 12px 0;font-size:18px;line-height:1.5;">Ce mail fait office de confirmation d'inscription :</p>
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" role="presentation" style="border:1px solid #ededed;border-radius:8px;">
+                <tr><td style="padding:14px 16px;font-size:16px;line-height:1.65;">
+                  <strong>Evenement :</strong> {{event.title}}<br>
+                  <strong>Date :</strong> {{event.date}}<br>
+                  <strong>Heure :</strong> {{event.time}}<br>
+                  <strong>Lieu :</strong> {{event.location}}<br>
+                  <strong>Email inscrit :</strong> {{participant.email}}<br>
+                  <strong>Code validation :</strong> {{registration.code}}<br>
+                  <strong>Billets adultes :</strong> {{registration.adultTickets}}<br>
+                  <strong>Billets enfants :</strong> {{registration.childTickets}}<br>
+                  <strong>Total billets :</strong> {{registration.totalTickets}}<br>
+                  <strong>Paiement :</strong> {{registration.paymentMethod}}<br>
+                  <strong>Statut :</strong> {{registration.status}}
+                </td></tr>
+              </table>
+              <p style="margin:14px 0 0 0;font-size:18px;line-height:1.5;">Nous vous rappelons les elementaires de notre evenement, afin que nous puissions tous passer un tres bon moment.<br><br>A tres vite !<br><br>La Team RBE</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 20px 10px 20px;text-align:center;">
+              <h3 style="margin:0;color:#d30c4c;font-size:27px;">Des questions ?</h3>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 20px 30px 20px;text-align:left;">
+              <p style="margin:0 0 10px 0;font-size:18px;font-weight:700;line-height:1.4;">Si vous avez renseigne un SMS, vous serez informe petit a petit des informations, mais vous pouvez nous joindre directement !</p>
+              <p style="margin:0;text-align:center;font-size:27px;font-weight:700;color:#d30c4c;">association-rbe.fr</p>
+              <p style="margin:28px 0 0 0;text-align:center;font-size:14px;line-height:1.6;">Ce mail provient d'une adresse automatique, y repondre ne servira a rien.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ededed;padding:24px 20px;">
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" role="presentation">
+                <tr>
+                  <td style="width:30%;vertical-align:top;padding-right:12px;">
+                    <img src="https://media.beefree.cloud/pub/bfra/a8fimmr0/1ar/3kw/aej/RBE%20CLASSIQUE.png" alt="RBE Classique" width="190" style="display:block;max-width:100%;height:auto;border:0;">
+                  </td>
+                  <td style="width:70%;vertical-align:top;font-size:15px;line-height:1.5;font-weight:700;">
+                    RNA : W912016571<br>
+                    SIRET : 942 506 607 00010<br>
+                    SIREN : 942 506 607<br>
+                    Siege social : Corbeil-Essonnes, Essonne, France.<br>
+                    Collection, preservation et restauration du patrimoine roulant.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+async function ensureConfirmEventTemplateExists() {
+  try {
+    return await prisma.emailTemplate.upsert({
+      where: { name: CONFIRM_EVENT_TEMPLATE_NAME },
+      update: {
+        category: 'EVENTS',
+        active: true,
+        description: 'Confirmation automatique d inscription a un evenement (participant + copie association).',
+        subject: 'Confirmation inscription - {{event.title}}',
+        body: CONFIRM_EVENT_TEMPLATE_HTML,
+        variables: JSON.stringify([
+          'participant.name',
+          'participant.email',
+          'event.title',
+          'event.date',
+          'event.time',
+          'event.location',
+          'registration.code',
+          'registration.adultTickets',
+          'registration.childTickets',
+          'registration.totalTickets',
+          'registration.paymentMethod',
+          'registration.status'
+        ])
+      },
+      data: {
+        name: CONFIRM_EVENT_TEMPLATE_NAME,
+        category: 'EVENTS',
+        active: true,
+        description: 'Confirmation automatique d inscription a un evenement (participant + copie association).',
+        subject: 'Confirmation inscription - {{event.title}}',
+        body: CONFIRM_EVENT_TEMPLATE_HTML,
+        variables: JSON.stringify([
+          'participant.name',
+          'participant.email',
+          'event.title',
+          'event.date',
+          'event.time',
+          'event.location',
+          'registration.code',
+          'registration.adultTickets',
+          'registration.childTickets',
+          'registration.totalTickets',
+          'registration.paymentMethod',
+          'registration.status'
+        ])
+      }
+    });
+  } catch (e) {
+    console.error('❌ Error ensuring Confirm Event template:', e.message);
+    return null;
+  }
+}
+
 // POST /registrations - Créer une inscription publique
 app.post('/registrations', async (req, res) => {
   try {
@@ -1725,6 +1862,53 @@ app.post('/registrations', async (req, res) => {
     });
 
     console.log('✅ Registration created:', registration.id);
+
+    // Envoi des confirmations email (inscrit + copie association)
+    try {
+      await ensureConfirmEventTemplateExists();
+
+      const templateData = {
+        participant: {
+          name: participantName,
+          email: String(participantEmail || '').trim().toLowerCase()
+        },
+        event: {
+          title: event.title || 'Evenement RBE',
+          date: event.date ? new Date(event.date).toLocaleDateString('fr-FR') : 'A definir',
+          time: event.time || 'A definir',
+          location: event.location || 'A definir'
+        },
+        registration: {
+          code: validationCode,
+          adultTickets: Math.max(0, adultTickets),
+          childTickets: Math.max(0, childTickets),
+          totalTickets,
+          paymentMethod: actualPaymentMethod,
+          status: 'pending'
+        }
+      };
+
+      const recipientEmail = String(participantEmail || '').trim().toLowerCase();
+
+      if (recipientEmail) {
+        await sendTemplatedEmail(
+          CONFIRM_EVENT_TEMPLATE_NAME,
+          recipientEmail,
+          templateData,
+          'RétroBus Essonne - Evenements'
+        );
+      }
+
+      await sendTemplatedEmail(
+        CONFIRM_EVENT_TEMPLATE_NAME,
+        'association.rbe@gmail.com',
+        templateData,
+        'RétroBus Essonne - Evenements'
+      );
+    } catch (mailError) {
+      console.error('❌ Event registration email error:', mailError.message);
+      // Ne pas bloquer l'inscription si l'email échoue
+    }
 
     // Réponse basée sur la méthode de paiement
     const response = {
@@ -1970,6 +2154,51 @@ app.post(['/public/events/:id/join-helloasso', '/api/public/events/:id/join-hell
     });
 
     console.log(`✅ Participant inscrit via HelloAsso: ${participant.email} pour l'événement ${eventId}`);
+
+    // Envoi des confirmations email (inscrit + copie association)
+    try {
+      await ensureConfirmEventTemplateExists();
+
+      const templateData = {
+        participant: {
+          name: participant.name,
+          email: participant.email || ''
+        },
+        event: {
+          title: event.title || 'Evenement RBE',
+          date: event.date ? new Date(event.date).toLocaleDateString('fr-FR') : 'A definir',
+          time: event.time || 'A definir',
+          location: event.location || 'A definir'
+        },
+        registration: {
+          code: `HELLOASSO-${participant.id}`,
+          adultTickets: 1,
+          childTickets: 0,
+          totalTickets: 1,
+          paymentMethod: 'helloasso',
+          status: 'confirmed'
+        }
+      };
+
+      if (participant.email) {
+        await sendTemplatedEmail(
+          CONFIRM_EVENT_TEMPLATE_NAME,
+          participant.email,
+          templateData,
+          'RétroBus Essonne - Evenements'
+        );
+      }
+
+      await sendTemplatedEmail(
+        CONFIRM_EVENT_TEMPLATE_NAME,
+        'association.rbe@gmail.com',
+        templateData,
+        'RétroBus Essonne - Evenements'
+      );
+    } catch (mailError) {
+      console.error('❌ HelloAsso confirmation email error:', mailError.message);
+      // Ne pas bloquer l'inscription si l'email échoue
+    }
 
     res.status(201).json({ 
       participant,
@@ -4014,6 +4243,208 @@ app.put(['/api/members/:id', '/members/:id'], requireAuth, async (req, res) => {
   } catch (e) {
     console.error('❌ Error updating member:', e.message);
     res.status(500).json({ error: 'Failed to update member', details: e.message });
+  }
+});
+
+// ============================================================
+// 📦 STOCK ENDPOINTS
+// ============================================================
+const normalizeStockStatus = (quantity = 0, minQuantity = 0, fallbackStatus = 'AVAILABLE') => {
+  if (fallbackStatus === 'DISCONTINUED' || fallbackStatus === 'RESERVED') return fallbackStatus;
+  if (Number(quantity) <= 0) return 'OUT_OF_STOCK';
+  if (Number(quantity) <= Number(minQuantity || 0)) return 'LOW_STOCK';
+  return 'AVAILABLE';
+};
+
+const toNumberOrZero = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+app.get('/api/stocks', requireAuth, (req, res) => {
+  try {
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const category = String(req.query.category || 'ALL');
+    const status = String(req.query.status || 'ALL');
+    const lowStock = String(req.query.lowStock || 'false') === 'true';
+
+    const source = Array.isArray(state.stock) ? state.stock : [];
+    const filtered = source.filter((item) => {
+      if (!item) return false;
+
+      const haystack = [item.reference, item.name, item.description, item.location, item.supplier]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      if (search && !haystack.includes(search)) return false;
+      if (category !== 'ALL' && item.category !== category) return false;
+      if (status !== 'ALL' && (item.status || 'AVAILABLE') !== status) return false;
+
+      if (lowStock) {
+        const qty = toNumberOrZero(item.quantity);
+        const minQty = toNumberOrZero(item.minQuantity);
+        if (!(qty > 0 && qty <= minQty)) return false;
+      }
+
+      return true;
+    });
+
+    res.json({ stocks: filtered });
+  } catch (e) {
+    console.error('❌ Error fetching stocks:', e.message);
+    res.status(500).json({ error: 'Failed to fetch stocks', details: e.message });
+  }
+});
+
+app.get('/api/stocks/stats', requireAuth, (req, res) => {
+  try {
+    const source = Array.isArray(state.stock) ? state.stock : [];
+    const totalItems = source.length;
+    const totalQuantity = source.reduce((sum, item) => sum + toNumberOrZero(item.quantity), 0);
+    const lowStockCount = source.filter((item) => {
+      const qty = toNumberOrZero(item.quantity);
+      const minQty = toNumberOrZero(item.minQuantity);
+      return qty > 0 && qty <= minQty;
+    }).length;
+    const outOfStockCount = source.filter((item) => toNumberOrZero(item.quantity) <= 0).length;
+
+    res.json({ totalItems, totalQuantity, lowStockCount, outOfStockCount });
+  } catch (e) {
+    console.error('❌ Error fetching stock stats:', e.message);
+    res.status(500).json({ error: 'Failed to fetch stock stats', details: e.message });
+  }
+});
+
+app.post('/api/stocks', requireAuth, (req, res) => {
+  try {
+    const payload = req.body || {};
+    if (!payload.name || !String(payload.name).trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const quantity = toNumberOrZero(payload.quantity);
+    const minQuantity = toNumberOrZero(payload.minQuantity);
+    const stock = {
+      id: uid(),
+      reference: payload.reference || '',
+      name: payload.name,
+      description: payload.description || '',
+      category: payload.category || 'GENERAL',
+      subcategory: payload.subcategory || '',
+      quantity,
+      minQuantity,
+      unit: payload.unit || 'PIECE',
+      location: payload.location || '',
+      supplier: payload.supplier || '',
+      purchasePrice: toNumberOrZero(payload.purchasePrice),
+      salePrice: toNumberOrZero(payload.salePrice),
+      notes: payload.notes || '',
+      status: normalizeStockStatus(quantity, minQuantity, payload.status),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      updatedBy: req.user?.email || 'system'
+    };
+
+    if (!Array.isArray(state.stock)) state.stock = [];
+    state.stock.unshift(stock);
+    debouncedSave();
+    res.status(201).json({ stock });
+  } catch (e) {
+    console.error('❌ Error creating stock:', e.message);
+    res.status(500).json({ error: 'Failed to create stock', details: e.message });
+  }
+});
+
+app.put('/api/stocks/:id', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const idx = Array.isArray(state.stock) ? state.stock.findIndex((s) => s.id === id) : -1;
+    if (idx === -1) return res.status(404).json({ error: 'Stock not found' });
+
+    const prev = state.stock[idx];
+    const payload = req.body || {};
+    const quantity = payload.quantity !== undefined ? toNumberOrZero(payload.quantity) : toNumberOrZero(prev.quantity);
+    const minQuantity = payload.minQuantity !== undefined ? toNumberOrZero(payload.minQuantity) : toNumberOrZero(prev.minQuantity);
+
+    const updated = {
+      ...prev,
+      ...payload,
+      quantity,
+      minQuantity,
+      purchasePrice: payload.purchasePrice !== undefined ? toNumberOrZero(payload.purchasePrice) : prev.purchasePrice,
+      salePrice: payload.salePrice !== undefined ? toNumberOrZero(payload.salePrice) : prev.salePrice,
+      status: normalizeStockStatus(quantity, minQuantity, payload.status || prev.status),
+      updatedAt: new Date().toISOString(),
+      updatedBy: req.user?.email || 'system'
+    };
+
+    state.stock[idx] = updated;
+    debouncedSave();
+    res.json({ stock: updated });
+  } catch (e) {
+    console.error('❌ Error updating stock:', e.message);
+    res.status(500).json({ error: 'Failed to update stock', details: e.message });
+  }
+});
+
+app.delete('/api/stocks/:id', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const before = Array.isArray(state.stock) ? state.stock.length : 0;
+    state.stock = (state.stock || []).filter((s) => s.id !== id);
+    state.stockMovements = (state.stockMovements || []).filter((m) => m.stockId !== id);
+    if (state.stock.length === before) return res.status(404).json({ error: 'Stock not found' });
+
+    debouncedSave();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ Error deleting stock:', e.message);
+    res.status(500).json({ error: 'Failed to delete stock', details: e.message });
+  }
+});
+
+app.post('/api/stocks/:id/movement', requireAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const stock = (state.stock || []).find((s) => s.id === id);
+    if (!stock) return res.status(404).json({ error: 'Stock not found' });
+
+    const payload = req.body || {};
+    const movementQty = toNumberOrZero(payload.quantity);
+    if (movementQty <= 0) return res.status(400).json({ error: 'quantity must be > 0' });
+
+    const type = payload.type === 'OUT' ? 'OUT' : 'IN';
+    const currentQty = toNumberOrZero(stock.quantity);
+    let nextQty = type === 'OUT' ? currentQty - movementQty : currentQty + movementQty;
+    if (nextQty < 0) {
+      return res.status(400).json({ error: 'Stock insuffisant pour ce mouvement' });
+    }
+
+    stock.quantity = nextQty;
+    stock.status = normalizeStockStatus(nextQty, stock.minQuantity, stock.status);
+    stock.updatedAt = new Date().toISOString();
+    stock.updatedBy = req.user?.email || 'system';
+
+    const movement = {
+      id: uid(),
+      stockId: id,
+      type,
+      quantity: movementQty,
+      reason: payload.reason || '',
+      notes: payload.notes || '',
+      createdAt: new Date().toISOString(),
+      createdBy: req.user?.email || 'system'
+    };
+
+    if (!Array.isArray(state.stockMovements)) state.stockMovements = [];
+    state.stockMovements.unshift(movement);
+
+    debouncedSave();
+    res.status(201).json({ movement, stock });
+  } catch (e) {
+    console.error('❌ Error creating stock movement:', e.message);
+    res.status(500).json({ error: 'Failed to create stock movement', details: e.message });
   }
 });
 
