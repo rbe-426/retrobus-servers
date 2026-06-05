@@ -189,7 +189,7 @@ router.get('/read/:id', requireAuth, async (req, res) => {
 router.post('/send', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { to, subject, body, html, attachments } = req.body;
+    const { to, subject, body, html, attachments, fromName } = req.body;
 
     if (!to || !subject || !body) {
       return res.status(400).json({ 
@@ -208,7 +208,8 @@ router.post('/send', requireAuth, async (req, res) => {
       subject,
       body,
       html,
-      attachments
+      attachments,
+      fromName
     });
 
     res.json({

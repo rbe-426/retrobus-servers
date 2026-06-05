@@ -358,6 +358,16 @@ export async function sendEmail(userId, mailOptions) {
       ? `"${mailOptions.fromName}" <${session.email}>`
       : session.email;
 
+    // Convertir les pièces jointes base64 en format nodemailer
+    const processedAttachments = (mailOptions.attachments || []).map(att => ({
+      filename: att.filename,
+      content: att.content, // Base64 string
+      encoding: 'base64',
+      contentType: att.contentType || 'application/octet-stream'
+    }));
+
+    console.log(`📧 Envoi email avec ${processedAttachments.length} pièce(s) jointe(s)`);
+
     // Envoyer l'email
     const info = await transporter.sendMail({
       from: fromAddress,
@@ -365,10 +375,10 @@ export async function sendEmail(userId, mailOptions) {
       subject: mailOptions.subject,
       text: mailOptions.body,
       html: mailOptions.html || mailOptions.body,
-      attachments: mailOptions.attachments || []
+      attachments: processedAttachments
     });
 
-    console.log(`📧 Email envoyé: ${info.messageId}`);
+    console.log(`✅ Email envoyé: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('❌ Erreur envoi email:', error.message);
