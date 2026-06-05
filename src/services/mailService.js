@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Service de gestion des emails Infomaniak
  * Gère IMAP (lecture) et SMTP (envoi) via Infomaniak
  */
@@ -247,6 +247,7 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
       let body = '';
       let textContent = '';
       let htmlContent = '';
+      let attachments = [];
       
       if (message.source) {
         try {
@@ -267,6 +268,20 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
             }
           } else if (parsed.textAsHtml) {
             htmlContent = parsed.textAsHtml;
+          }
+          
+          // Extraire les pièces jointes
+          if (parsed.attachments && parsed.attachments.length > 0) {
+            attachments = parsed.attachments.map((att) => ({
+              filename: att.filename || 'fichier_sans_nom',
+              contentType: att.contentType || 'application/octet-stream',
+              size: att.size || (att.content ? att.content.length : 0),
+              // Convertir en base64 pour transmission au frontend
+              content: att.content ? att.content.toString('base64') : null,
+              // L'ID pour référence
+              cid: att.cid || null
+            }));
+            console.log(`📎 ${attachments.length} pièce(s) jointe(s) extraite(s)`);
           }
           
           // Limiter à 50KB
@@ -303,7 +318,7 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
         body: body,
         html: htmlContent || null,
         read: true,
-        attachments: [] // TODO: extraire les pièces jointes si nécessaire
+        attachments: attachments
       };
     } finally {
       lock.release();
@@ -466,3 +481,10 @@ export function cleanupExpiredSessions(maxAge = 24 * 60 * 60 * 1000) {
 
 // Nettoyer les sessions toutes les heures
 setInterval(() => cleanupExpiredSessions(), 60 * 60 * 1000);
+
+
+
+
+
+
+
