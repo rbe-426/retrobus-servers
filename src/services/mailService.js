@@ -206,6 +206,44 @@ export async function listEmails(userId, folder = 'INBOX', limit = 50) {
 }
 
 /**
+ * Compter les emails non lus dans un dossier
+ * @param {string} userId - ID utilisateur
+ * @param {string} folder - Dossier IMAP
+ * @returns {Promise<number>} Nombre d'emails non lus
+ */
+export async function getUnreadCount(userId, folder = 'INBOX') {
+  const session = getMailSession(userId);
+  
+  const client = new ImapFlow({
+    ...IMAP_CONFIG,
+    auth: { user: session.email, pass: session.password }
+  });
+
+  try {
+    await client.connect();
+    
+    // Trouver le vrai nom du dossier
+    const realFolder = await findFolderName(client, folder);
+    
+    // Ouvrir le dossier en lecture seule
+    const lock = await client.getMailboxLock(realFolder, { readonly: true });
+    
+    try {
+      // Chercher les messages UNSEEN (non lus)
+      const messages = await client.search({ seen: false });
+      return messages.length;
+    } finally {
+      lock.release();
+    }
+  } catch (error) {
+    console.error('❌ Erreur comptage emails non lus:', error.message);
+    throw new Error(`Impossible de compter les emails non lus: ${error.message}`);
+  } finally {
+    await client.logout();
+  }
+}
+
+/**
  * Récupérer le contenu d'un email
  * @param {string} userId - ID utilisateur
  * @param {string} emailId - UID de l'email

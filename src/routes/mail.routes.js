@@ -12,7 +12,8 @@ import {
   getEmail,
   sendEmail,
   deleteEmail,
-  moveEmail
+  moveEmail,
+  getUnreadCount
 } from '../services/mailService.js';
 import { setNoreplyUserId } from '../services/notificationService.js';
 
@@ -112,6 +113,56 @@ router.post('/disconnect', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('Erreur déconnexion mail:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/mail/unread-count
+ * Compter les emails non lus dans INBOX
+ */
+router.get('/unread-count', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    if (!hasMailSession(userId)) {
+      return res.json({ count: 0 }); // Pas connecté = 0 non lus
+    }
+
+    const count = await getUnreadCount(userId, 'INBOX');
+
+    res.json({
+      success: true,
+      count
+    });
+  } catch (error) {
+    console.error('Erreur comptage emails non lus:', error);
+    // En cas d'erreur, renvoyer 0 au lieu de fail
+    res.json({ count: 0 });
+  }
+});
+
+/**
+ * GET /api/mail/unread-count
+ * Compter les emails non lus dans INBOX
+ */
+router.get('/unread-count', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    if (!hasMailSession(userId)) {
+      return res.json({ count: 0 }); // Pas connecté = 0 non lus
+    }
+
+    const count = await getUnreadCount(userId, 'INBOX');
+
+    res.json({
+      success: true,
+      count
+    });
+  } catch (error) {
+    console.error('Erreur comptage emails non lus:', error);
+    // En cas d'erreur, renvoyer 0 au lieu de fail
+    res.json({ count: 0 });
   }
 });
 
