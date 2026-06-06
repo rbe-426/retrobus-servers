@@ -4,6 +4,8 @@
  */
 
 import express from 'express';
+import { PrismaClient } from '@prisma/client';
+import { sendEmail } from '../services/mailService.js';
 import {
   generateSignatureToken,
   getTokenData,
@@ -11,13 +13,13 @@ import {
   saveSignature,
   generateSignatureLink,
   generateSMSMessage,
-  generateSignatureEmail,
   getSignatureStats,
   cleanupExpiredTokens
 } from '../services/bulletinFlowService.js';
 import { generateDocument } from '../services/templateService.js';
 
 const router = express.Router();
+const prisma = new PrismaClient();
 
 /**
  * POST /api/bulletin-flow/create - Crée un parcours de signature
@@ -48,15 +50,42 @@ router.post('/create', async (req, res) => {
 
     // Envoyer par email
     if (sendEmail && email) {
-      const emailData = generateSignatureEmail(token, memberData);
-      
-      // TODO: Intégrer avec le service email existant (mailService.js)
-      console.log(`📧 Email à envoyer à: ${email}`);
-      console.log(`   Sujet: ${emailData.subject}`);
-      // await sendEmail(email, emailData.subject, emailData.text, emailData.html);
-      
-      response.emailSent = true;
-      response.emailRecipient = email;
+      try {
+        // Récupérer le template "parcours bulletin"
+        const template = await prisma.emailTemplate.findUnique({
+          where: { name: 'parcours bulletin' }
+        });
+        
+        if (!template) {
+          console.error('❌ Template "parcours bulletin" non trouvé');
+        } else {
+          const fullLink = generateSignatureLink(token, process.env.APP_BASE_URL || 'http://localhost:5173');
+          
+          // Remplacer les variables dans le template
+          const htmlBody = template.body
+            .replace(/\{\{lien bulletin\}\}/g, fullLink)
+            .replace(/\{\{firstName\}\}/g, memberData.firstName || 'Adhérent');
+          
+          // Envoyer via le compte noreply
+          const noreplyUser = await prisma.site_users.findFirst({
+            where: { email: 'noreply@association-rbe.fr' }
+          });
+          
+          if (noreplyUser) {
+            await sendEmail(noreplyUser.id, {
+              to: [email],
+              subject: template.subject,
+              html: htmlBody,
+              text: `Bonjour ${memberData.firstName},\n\nSignez votre bulletin ici: ${fullLink}`
+            });
+            console.log('✅ Email envoyé à:', email);
+            response.emailSent = true;
+            response.emailRecipient = email;
+          }
+        }
+      } catch (emailError) {
+        console.error('❌ Erreur envoi email:', emailError.message);
+      }
     }
 
     // Envoyer par SMS
