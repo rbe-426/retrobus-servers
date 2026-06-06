@@ -372,6 +372,8 @@ export async function sendEmail(userId, mailOptions) {
     const info = await transporter.sendMail({
       from: fromAddress,
       to: mailOptions.to,
+      cc: mailOptions.cc || undefined,
+      bcc: mailOptions.bcc || undefined,
       subject: mailOptions.subject,
       text: mailOptions.body,
       html: mailOptions.html || mailOptions.body,
