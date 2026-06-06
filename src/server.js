@@ -30,6 +30,8 @@ import eventsRoutes from './routes/events.routes.js';
 import ticketingRoutes from './routes/ticketing.routes.js';
 import museumRoutes from './routes/museum.routes.js';
 import mailRoutes from './routes/mail.routes.js';
+import templatesRoutes from './routes/templates.routes.js';
+import bulletinFlowRoutes from './routes/bulletinFlow.routes.js';
 import emailTemplateRoutes from './routes/emailTemplate.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail } from './services/notificationService.js';
 // � Import module de calcul des KPI historiques
@@ -893,6 +895,14 @@ app.use('/museum', museumRoutes);
 // Routes RétroMail (gestion des emails Infomaniak)
 app.use('/api/mail', mailRoutes);
 app.use('/mail', mailRoutes);
+
+// Routes Templates (gestion des modèles de documents Word)
+app.use('/api/templates', templatesRoutes);
+app.use('/templates', templatesRoutes);
+
+// Routes Bulletin Flow (parcours numérique de signature)
+app.use('/api/bulletin-flow', bulletinFlowRoutes);
+app.use('/bulletin-flow', bulletinFlowRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
@@ -4058,6 +4068,78 @@ app.get('/api/retro-news/:id/polls/:pollId/results', async (req, res) => {
   }
 });
 
+// ============================================================
+// 👥 MEMBERS ENDPOINTS - Helper functions
+// ============================================================
+
+/**
+ * Convertit une date YYYY-MM-DD en DateTime ISO-8601
+ * @param {string} dateStr - Date au format YYYY-MM-DD ou ISO
+ * @returns {Date|null} DateTime ou null si invalide
+ */
+const toDateTime = (dateStr) => {
+  if (!dateStr || dateStr === '') return null;
+  try {
+    // Si déjà un DateTime ISO, retourner tel quel
+    if (dateStr.includes('T')) return new Date(dateStr);
+    // Sinon convertir YYYY-MM-DD en DateTime à minuit UTC
+    return new Date(`${dateStr}T00:00:00.000Z`);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Prépare les données d'un membre en convertissant les dates pour Prisma
+ * @param {object} body - Corps de la requête
+ * @param {boolean} isUpdate - True si c'est une mise à jour (ne pas générer id)
+ * @returns {object} Données formatées pour Prisma
+ */
+const prepareMemberData = (body, isUpdate = false) => {
+  const data = {};
+  
+  // Champs texte
+  if (body.firstName !== undefined) data.firstName = body.firstName || '';
+  if (body.lastName !== undefined) data.lastName = body.lastName || '';
+  if (body.email !== undefined) data.email = body.email;
+  if (body.phone !== undefined) data.phone = body.phone || null;
+  if (body.address !== undefined) data.address = body.address || null;
+  if (body.city !== undefined) data.city = body.city || null;
+  if (body.postalCode !== undefined) data.postalCode = body.postalCode || null;
+  if (body.matricule !== undefined) data.matricule = body.matricule || null;
+  if (body.memberNumber !== undefined) data.memberNumber = body.memberNumber || null;
+  
+  // Membership
+  if (body.membershipType !== undefined) data.membershipType = body.membershipType || 'STANDARD';
+  if (body.membershipStatus !== undefined) data.membershipStatus = body.membershipStatus || 'ACTIVE';
+  
+  // Paiement
+  if (body.paymentAmount !== undefined) data.paymentAmount = body.paymentAmount || null;
+  if (body.paymentMethod !== undefined) data.paymentMethod = body.paymentMethod || null;
+  
+  // Divers
+  if (body.notes !== undefined) data.notes = body.notes || null;
+  if (body.newsletter !== undefined) data.newsletter = body.newsletter ?? true;
+  if (body.status !== undefined) data.status = body.status || 'active';
+  
+  // Dates - conversion YYYY-MM-DD → DateTime ISO-8601
+  if (body.birthDate !== undefined) data.birthDate = toDateTime(body.birthDate);
+  if (body.membershipStartDate !== undefined) data.membershipStartDate = toDateTime(body.membershipStartDate);
+  if (body.membershipEndDate !== undefined) data.membershipEndDate = toDateTime(body.membershipEndDate);
+  
+  // Timestamps
+  if (!isUpdate) {
+    data.createdAt = new Date();
+  }
+  data.updatedAt = new Date();
+  
+  return data;
+};
+
+// ============================================================
+// 👥 MEMBERS ENDPOINTS
+// ============================================================
+
 // MEMBERS
 app.get(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
@@ -4077,22 +4159,52 @@ app.get(['/api/members/me'], requireAuth, (req, res) => {
   const m = state.members.find(mem => mem.email === req.user.email) || null;
   return res.json({ member: m });
 });
+
+app.put(['/api/members/me'], requireAuth, async (req, res) => {
+  try {
+    // Trouver le membre connecté par son email
+    const userEmail = req.user.email;
+    const currentMember = await prisma.members.findFirst({
+      where: { email: userEmail }
+    });
+
+    if (!currentMember) {
+      return res.status(404).json({ error: 'Member not found' });
+    }
+
+    // Préparer les données avec conversion des dates
+    const data = prepareMemberData(req.body, true);
+    
+    // Mettre à jour le membre
+    const updatedMember = await prisma.members.update({
+      where: { id: currentMember.id },
+      data
+    });
+
+    // Mise à jour du state
+    const stateIdx = state.members.findIndex(m => m.id === currentMember.id);
+    if (stateIdx !== -1) state.members[stateIdx] = updatedMember;
+    
+    debouncedSave();
+    console.log(`✅ Profil adhérent ${currentMember.id} mis à jour par lui-même`);
+    res.json({ member: updatedMember });
+  } catch (e) {
+    console.error('❌ Error updating own member profile:', e.message);
+    res.status(500).json({ error: 'Failed to update profile', details: e.message });
+  }
+});
+
 app.post(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
-    const member = await prisma.members.create({
-      data: {
-        id: uid(),
-        ...req.body,
-        status: req.body.status || 'active',
-        firstName: req.body.firstName || '',
-        lastName: req.body.lastName || '',
-        email: req.body.email,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }
-    });
+    const data = {
+      id: uid(),
+      ...prepareMemberData(req.body, false)
+    };
+    
+    const member = await prisma.members.create({ data });
     state.members.push(member);
     debouncedSave();
+    console.log(`✅ Adhérent créé: ${member.id} - ${member.firstName} ${member.lastName}`);
     res.status(201).json({ member });
   } catch (e) {
     console.error('❌ Error creating member:', e.message);
@@ -4102,9 +4214,11 @@ app.post(['/api/members','/members'], requireAuth, async (req, res) => {
 app.put(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
     const { id } = req.body;
+    const data = prepareMemberData(req.body, true);
+    
     const member = await prisma.members.update({
       where: { id },
-      data: { ...req.body, updatedAt: new Date() }
+      data
     });
     const stateIdx = state.members.findIndex(m => m.id === id);
     if (stateIdx !== -1) state.members[stateIdx] = member;
@@ -4119,9 +4233,11 @@ app.put(['/api/members','/members'], requireAuth, async (req, res) => {
 app.patch(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
     const { id } = req.body;
+    const data = prepareMemberData(req.body, true);
+    
     const member = await prisma.members.update({
       where: { id },
-      data: { ...req.body, updatedAt: new Date() }
+      data
     });
     const stateIdx = state.members.findIndex(m => m.id === id);
     if (stateIdx !== -1) state.members[stateIdx] = member;
@@ -4226,11 +4342,12 @@ app.get('/api/members/:id', requireAuth, async (req, res) => {
 app.put(['/api/members/:id', '/members/:id'], requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    const data = prepareMemberData(req.body, true);
     
     // Update in Prisma
     const updatedMember = await prisma.members.update({
       where: { id },
-      data: { ...req.body, updatedAt: new Date() }
+      data
     });
     
     // Also update in state

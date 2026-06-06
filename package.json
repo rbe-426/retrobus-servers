@@ -23,6 +23,7 @@
     "cors": "^2.8.5",
     "csurf": "^1.11.0",
     "csv-parse": "^5.3.8",
+    "docxtemplater": "^3.68.7",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.2",
@@ -36,6 +37,8 @@
     "pdfjs-dist": "^4.9.155",
     "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
+    "pizzip": "^3.2.0",
+    "react-signature-canvas": "^1.1.0-alpha.2",
     "sanitize-html": "^2.17.2",
     "validator": "^13.15.26"
   },
