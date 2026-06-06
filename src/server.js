@@ -4114,7 +4114,14 @@ const prepareMemberData = (body, isUpdate = false) => {
   if (body.membershipStatus !== undefined) data.membershipStatus = body.membershipStatus || 'ACTIVE';
   
   // Paiement
-  if (body.paymentAmount !== undefined) data.paymentAmount = body.paymentAmount || null;
+  if (body.paymentAmount !== undefined) {
+    if (body.paymentAmount === '' || body.paymentAmount === null) {
+      data.paymentAmount = null;
+    } else {
+      const amount = Number.parseFloat(body.paymentAmount);
+      data.paymentAmount = Number.isNaN(amount) ? null : amount;
+    }
+  }
   if (body.paymentMethod !== undefined) data.paymentMethod = body.paymentMethod || null;
   
   // Divers
@@ -4208,6 +4215,17 @@ app.post(['/api/members','/members'], requireAuth, async (req, res) => {
     res.status(201).json({ member });
   } catch (e) {
     console.error('❌ Error creating member:', e.message);
+    
+    // Gestion des erreurs Prisma spécifiques
+    if (e.code === 'P2002') {
+      const field = e.meta?.target?.[0] || 'champ';
+      return res.status(409).json({ 
+        error: 'Conflit de données', 
+        details: `Un adhérent avec cet ${field} existe déjà.`,
+        field 
+      });
+    }
+    
     res.status(500).json({ error: 'Failed to create member', details: e.message });
   }
 });
