@@ -33,7 +33,8 @@ import mailRoutes from './routes/mail.routes.js';
 import templatesRoutes from './routes/templates.routes.js';
 import bulletinFlowRoutes from './routes/bulletinFlow.routes.js';
 import emailTemplateRoutes from './routes/emailTemplate.routes.js';
-import { sendExpenseReportNotification, sendTemplatedEmail } from './services/notificationService.js';
+import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
+import { createMailSession } from './services/mailService.js';
 // � Import module de calcul des KPI historiques
 import { 
   calculateMonthlyKPIs, 
@@ -4964,6 +4965,95 @@ app.get('/api/documents/:documentId/download', requireAuth, async (req, res) => 
   }
 });
 
+// GET /api/helloasso/metadata - Extraction fiable des métadonnées HelloAsso (côté serveur)
+app.get(['/helloasso/metadata', '/api/helloasso/metadata'], requireAuth, async (req, res) => {
+  try {
+    const ticketUrl = (req.query.ticketUrl || '').toString().trim();
+    const integrationUrl = (req.query.integrationUrl || '').toString().trim();
+
+    if (!ticketUrl || !integrationUrl) {
+      return res.status(400).json({ error: 'ticketUrl and integrationUrl are required' });
+    }
+
+    const normalizedTicketUrl = ticketUrl
+      .replace('/widget-bouton', '')
+      .replace('/widget', '')
+      .replace(/\/+$/, '');
+
+    const safeUrl = normalizedTicketUrl.startsWith('http') ? normalizedTicketUrl : `https://${normalizedTicketUrl}`;
+    const jinaUrl = `https://r.jina.ai/http://${safeUrl.replace(/^https?:\/\//, '')}`;
+
+    const response = await fetch(jinaUrl, { method: 'GET' });
+    if (!response.ok) {
+      return res.status(502).json({ error: `Failed to fetch HelloAsso page (${response.status})` });
+    }
+
+    const text = await response.text();
+
+    let title = '';
+    let date = '';
+    let time = '';
+    let location = '';
+    let adultPrice = null;
+
+    const titleMatch = text.match(/#\s+([^\n]+)\n\s*##\s+par\s+/i);
+    if (titleMatch?.[1]) title = titleMatch[1].trim();
+
+    const dateTimeMatch = text.match(/Le\s+(\d{1,2})\s+(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+(\d{4}),\s+de\s+(\d{1,2})h(?:\s*(\d{2})?)?/i);
+    if (dateTimeMatch) {
+      const months = {
+        janvier: '01', février: '02', mars: '03', avril: '04', mai: '05', juin: '06',
+        juillet: '07', août: '08', septembre: '09', octobre: '10', novembre: '11', décembre: '12'
+      };
+      const day = dateTimeMatch[1].padStart(2, '0');
+      const month = months[dateTimeMatch[2].toLowerCase()];
+      const year = dateTimeMatch[3];
+      date = `${year}-${month}-${day}`;
+      time = `${String(dateTimeMatch[4]).padStart(2, '0')}:${dateTimeMatch[5] ? dateTimeMatch[5] : '00'}`;
+    }
+
+    const locationMatch = text.match(/\n\s*([^\n]{3,80})\n\s*France\b/i);
+    if (locationMatch?.[1]) {
+      const candidate = locationMatch[1].trim();
+      const blocked = ['helloasso', 'paiement sécurisé', 'pourquoi soutenir', 'contactez'];
+      if (!blocked.some((x) => candidate.toLowerCase().includes(x))) {
+        location = candidate;
+      }
+    }
+
+    const priceMatch = text.match(/(?:\n|\s)(\d+)(?:,\d+)?€(?:\n|\s)/);
+    if (priceMatch?.[1]) {
+      adultPrice = Number(priceMatch[1]);
+    }
+
+    // Fallback sur le slug si le titre n'est pas trouvé
+    if (!title) {
+      const slugMatch = safeUrl.match(/\/evenements\/([^\/?#]+)/i);
+      if (slugMatch?.[1]) {
+        title = slugMatch[1]
+          .split('-')
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(' ');
+      }
+    }
+
+    return res.json({
+      ok: true,
+      source: 'server-jina',
+      metadata: {
+        title,
+        date,
+        time,
+        location,
+        adultPrice,
+      },
+    });
+  } catch (e) {
+    console.error('❌ GET /api/helloasso/metadata error:', e.message);
+    return res.status(500).json({ error: 'Failed to extract HelloAsso metadata', details: e.message });
+  }
+});
+
 // EVENTS - PRISMA avec fallback optionnel
 app.get(['/events', '/api/events'], requireAuth, async (req, res) => {
   try {
@@ -9835,6 +9925,28 @@ app.listen(PORT, async () => {
     console.log(`✅ Loaded ${state.simulations.length} simulations from Prisma`);
   } catch (e) {
     console.warn('⚠️ Failed to load simulations from Prisma:', e.message);
+  }
+
+  // Auto-connexion du compte noreply si configuré
+  const noreplyEmail = process.env.NOREPLY_EMAIL;
+  const noreplyPassword = process.env.NOREPLY_PASSWORD;
+  
+  if (noreplyEmail && noreplyPassword) {
+    console.log('📧 Tentative de connexion automatique du compte NoReply...');
+    try {
+      // Créer un user ID fictif pour le noreply (système interne)
+      const noreplySystemUserId = 'system-noreply';
+      await createMailSession(noreplySystemUserId, noreplyEmail, noreplyPassword);
+      setNoreplyUserId(noreplySystemUserId);
+      console.log(`✅ Compte NoReply connecté automatiquement: ${noreplyEmail}`);
+    } catch (error) {
+      console.error('❌ Échec connexion auto NoReply:', error.message);
+      console.warn('⚠️  Les emails du formulaire de contact ne seront pas envoyés');
+      console.warn('💡 Connectez manuellement le compte via RétroMail ou vérifiez NOREPLY_EMAIL/NOREPLY_PASSWORD dans .env');
+    }
+  } else {
+    console.warn('⚠️  NOREPLY_EMAIL ou NOREPLY_PASSWORD non configurés');
+    console.warn('💡 Les emails automatiques nécessitent une connexion manuelle via RétroMail');
   }
 
   console.log('');

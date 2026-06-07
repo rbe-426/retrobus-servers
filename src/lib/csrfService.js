@@ -135,7 +135,8 @@ export const csrfProtection = (req, res, next) => {
     '/auth/member-login',
     '/api/health',
     '/health',
-    '/api/csrf-token'
+    '/api/csrf-token',
+    '/public/contact'
   ];
   
   if (publicRoutes.some(route => req.path === route)) {
