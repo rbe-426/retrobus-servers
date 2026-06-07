@@ -131,6 +131,24 @@ export function hasMailSession(userId) {
 }
 
 /**
+ * Trouver l'ID utilisateur ayant une session mail active pour un email donne
+ * @param {string} email - Adresse email a rechercher
+ * @returns {string|null} userId si trouve, sinon null
+ */
+export function getSessionUserIdByEmail(email) {
+  if (!email) return null;
+  const target = String(email).toLowerCase();
+
+  for (const [userId, session] of activeSessions.entries()) {
+    if ((session?.email || '').toLowerCase() === target) {
+      return userId;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Lister les emails d'un dossier
  * @param {string} userId - ID utilisateur
  * @param {string} folder - Dossier IMAP (INBOX, SENT, etc.)

@@ -5,11 +5,13 @@
 
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
-import { sendEmail } from '../services/mailService.js';
+import { sendEmail, hasMailSession, getSessionUserIdByEmail } from '../services/mailService.js';
+import { getNoreplyUserId } from '../services/notificationService.js';
 import {
   generateSignatureToken,
   getTokenData,
   updateStepStatus,
+  updateMemberData,
   saveSignature,
   generateSignatureLink,
   generateSMSMessage,
@@ -51,40 +53,67 @@ router.post('/create', async (req, res) => {
     // Envoyer par email
     if (sendEmail && email) {
       try {
+        const fullLink = generateSignatureLink(token, process.env.APP_BASE_URL || 'http://localhost:5173');
+
+        const basicSubject = 'Votre lien de completion du bulletin d\'adhesion';
+        const basicText = `Bonjour ${memberData.firstName || 'Adherent'},\n\nVeuillez completer votre bulletin via ce lien securise (valide 7 jours):\n${fullLink}\n\nAssociation RETROBUS ESSONNE`;
+        const basicHtml = `
+          <p>Bonjour <strong>${memberData.firstName || 'Adherent'}</strong>,</p>
+          <p>Veuillez completer votre bulletin d'adhesion via ce lien securise (valide 7 jours):</p>
+          <p><a href="${fullLink}">${fullLink}</a></p>
+          <p>Association RETROBUS ESSONNE</p>
+        `;
+
         // Récupérer le template "parcours bulletin"
         const template = await prisma.emailTemplate.findUnique({
           where: { name: 'parcours bulletin' }
         });
-        
-        if (!template) {
-          console.error('❌ Template "parcours bulletin" non trouvé');
-        } else {
-          const fullLink = generateSignatureLink(token, process.env.APP_BASE_URL || 'http://localhost:5173');
-          
-          // Remplacer les variables dans le template
-          const htmlBody = template.body
-            .replace(/\{\{lien bulletin\}\}/g, fullLink)
-            .replace(/\{\{firstName\}\}/g, memberData.firstName || 'Adhérent');
-          
-          // Envoyer via le compte noreply
+
+        const htmlBody = template?.body
+          ? template.body
+              .replace(/\{\{lien bulletin\}\}/g, fullLink)
+              .replace(/\{\{firstName\}\}/g, memberData.firstName || 'Adherent')
+          : basicHtml;
+
+        const subject = template?.subject || basicSubject;
+
+        // Priorite: userId de la session noreply connectee
+        let senderUserId = getNoreplyUserId();
+
+        // Fallback: retrouver une session active par email noreply
+        if (!senderUserId) {
+          senderUserId = getSessionUserIdByEmail('noreply@association-rbe.fr');
+        }
+
+        // Fallback final: ID DB noreply si session active sur cet ID
+        if (!senderUserId) {
           const noreplyUser = await prisma.site_users.findFirst({
             where: { email: 'noreply@association-rbe.fr' }
           });
-          
-          if (noreplyUser) {
-            await sendEmail(noreplyUser.id, {
-              to: [email],
-              subject: template.subject,
-              html: htmlBody,
-              text: `Bonjour ${memberData.firstName},\n\nSignez votre bulletin ici: ${fullLink}`
-            });
-            console.log('✅ Email envoyé à:', email);
-            response.emailSent = true;
-            response.emailRecipient = email;
+          if (noreplyUser && hasMailSession(noreplyUser.id)) {
+            senderUserId = noreplyUser.id;
           }
+        }
+
+        if (!senderUserId) {
+          console.error('❌ Aucun compte noreply connecté pour envoi email');
+          response.emailError = 'NO_NOREPLY_SESSION';
+        } else {
+          await sendEmail(senderUserId, {
+            to: [email],
+            subject,
+            html: htmlBody,
+            body: basicText,
+            fromName: 'RetroBus Essonne'
+          });
+
+          console.log('✅ Email envoyé à:', email);
+          response.emailSent = true;
+          response.emailRecipient = email;
         }
       } catch (emailError) {
         console.error('❌ Erreur envoi email:', emailError.message);
+        response.emailError = emailError.message;
       }
     }
 
@@ -186,13 +215,45 @@ router.post('/:token/step', (req, res) => {
 });
 
 /**
+ * PUT /api/bulletin-flow/:token/member-data - Met a jour les informations saisies par l'adherent
+ * Body: { memberData: { ... } }
+ */
+router.put('/:token/member-data', (req, res) => {
+  try {
+    const { token } = req.params;
+    const { memberData } = req.body;
+
+    if (!memberData || typeof memberData !== 'object') {
+      return res.status(400).json({ error: 'memberData object required' });
+    }
+
+    const updated = updateMemberData(token, memberData);
+
+    if (!updated) {
+      return res.status(404).json({
+        error: 'Token invalide ou expire',
+        code: 'INVALID_TOKEN'
+      });
+    }
+
+    res.json({
+      success: true,
+      memberData: updated
+    });
+  } catch (error) {
+    console.error('❌ Error updating member data:', error);
+    res.status(500).json({ error: 'Failed to update member data', details: error.message });
+  }
+});
+
+/**
  * POST /api/bulletin-flow/:token/signature - Enregistre la signature
  * Body: { signatureDataUrl: 'data:image/png;base64,...' }
  */
 router.post('/:token/signature', async (req, res) => {
   try {
     const { token } = req.params;
-    const { signatureDataUrl } = req.body;
+    const { signatureDataUrl, memberData: memberDataPatch } = req.body;
 
     if (!signatureDataUrl || !signatureDataUrl.startsWith('data:image')) {
       return res.status(400).json({ error: 'signatureDataUrl (base64) required' });
@@ -204,6 +265,10 @@ router.post('/:token/signature', async (req, res) => {
         error: 'Token invalide ou expiré',
         code: 'INVALID_TOKEN'
       });
+    }
+
+    if (memberDataPatch && typeof memberDataPatch === 'object') {
+      updateMemberData(token, memberDataPatch);
     }
 
     // Métadonnées de signature

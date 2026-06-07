@@ -89,6 +89,34 @@ export const updateStepStatus = (token, step, completed = true) => {
 };
 
 /**
+ * Met a jour les informations membre stockees dans le token
+ * @param {string} token - Token de signature
+ * @param {object} memberDataPatch - Donnees a fusionner
+ * @returns {object|false} Donnees mises a jour ou false
+ */
+export const updateMemberData = (token, memberDataPatch = {}) => {
+  const data = signatureTokens.get(token);
+
+  if (!data || data.status === 'expired') {
+    return false;
+  }
+
+  if (!memberDataPatch || typeof memberDataPatch !== 'object') {
+    return false;
+  }
+
+  data.memberData = {
+    ...data.memberData,
+    ...memberDataPatch
+  };
+
+  // Si l'adherent renseigne des infos, on marque l'etape comme complete.
+  data.steps.additional_info = true;
+
+  return data.memberData;
+};
+
+/**
  * Enregistre la signature de l'adhérent
  * @param {string} token - Token de signature
  * @param {string} signatureDataUrl - Signature en base64 (Canvas)
