@@ -33,6 +33,33 @@ const resolveBulletinPublicBaseUrl = () => {
   );
 };
 
+const resolveRequestApiBaseUrl = (req) => {
+  const explicitApiBase = process.env.BULLETIN_API_BASE_URL || process.env.PUBLIC_API_BASE_URL || process.env.API_PUBLIC_BASE_URL;
+  if (explicitApiBase) {
+    return explicitApiBase.replace(/\/+$/, '');
+  }
+
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  if (!host) return null;
+
+  const raw = `${proto}://${host}`;
+  try {
+    const parsed = new URL(raw);
+    const hn = parsed.hostname.toLowerCase();
+    const isLocalHost = hn === 'localhost' || hn === '127.0.0.1' || hn === '0.0.0.0';
+    const isPrivateIp = /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[0-1])\./.test(hn);
+
+    if (isLocalHost || isPrivateIp) {
+      return null;
+    }
+
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+};
+
 const applyBulletinTemplateVars = (template = '', vars = {}) => {
   if (!template || typeof template !== 'string') return '';
 
@@ -67,8 +94,13 @@ router.post('/create', async (req, res) => {
     }
 
     // Générer le token unique
-    const token = generateSignatureToken(memberData);
-    const link = generateSignatureLink(token);
+    const token = await generateSignatureToken(memberData);
+    const apiBaseUrl = resolveRequestApiBaseUrl(req);
+    const linkBase = resolveBulletinPublicBaseUrl() || generateSignatureLink(token).replace(/\/bulletin\/sign\/.+$/, '');
+    const rawLink = generateSignatureLink(token, linkBase);
+    const link = apiBaseUrl
+      ? `${rawLink}?api=${encodeURIComponent(apiBaseUrl)}`
+      : rawLink;
 
     const response = {
       success: true,
@@ -85,9 +117,11 @@ router.post('/create', async (req, res) => {
     if (sendEmailFlag && email) {
       try {
         const bulletinPublicBaseUrl = resolveBulletinPublicBaseUrl();
-        const fullLink = bulletinPublicBaseUrl
-          ? generateSignatureLink(token, bulletinPublicBaseUrl)
-          : generateSignatureLink(token);
+        const linkBaseForEmail = bulletinPublicBaseUrl || linkBase;
+        const rawFullLink = generateSignatureLink(token, linkBaseForEmail);
+        const fullLink = apiBaseUrl
+          ? `${rawFullLink}?api=${encodeURIComponent(apiBaseUrl)}`
+          : rawFullLink;
 
         const basicSubject = 'Votre lien de completion du bulletin d\'adhesion';
         const basicText = `Bonjour ${memberData.firstName || 'Adherent'},\n\nVeuillez completer votre bulletin via ce lien securise (valide 7 jours):\n${fullLink}\n\nAssociation RETROBUS ESSONNE`;
@@ -180,10 +214,10 @@ router.post('/create', async (req, res) => {
 /**
  * GET /api/bulletin-flow/:token - Récupère les données du parcours
  */
-router.get('/:token', (req, res) => {
+router.get('/:token', async (req, res) => {
   try {
     const { token } = req.params;
-    const data = getTokenData(token);
+    const data = await getTokenData(token);
 
     if (!data) {
       return res.status(404).json({ 
@@ -214,7 +248,7 @@ router.get('/:token', (req, res) => {
  * POST /api/bulletin-flow/:token/step - Met à jour le statut d'une étape
  * Body: { step: 'welcome' | 'verification' | 'additional_info' | 'signature' | 'confirmation' }
  */
-router.post('/:token/step', (req, res) => {
+router.post('/:token/step', async (req, res) => {
   try {
     const { token } = req.params;
     const { step, completed = true } = req.body;
@@ -223,7 +257,7 @@ router.post('/:token/step', (req, res) => {
       return res.status(400).json({ error: 'step required' });
     }
 
-    const data = getTokenData(token);
+    const data = await getTokenData(token);
     if (!data) {
       return res.status(404).json({ 
         error: 'Token invalide ou expiré',
@@ -231,22 +265,19 @@ router.post('/:token/step', (req, res) => {
       });
     }
 
-    const success = updateStepStatus(token, step, completed);
+    const success = await updateStepStatus(token, step, completed);
 
     if (!success) {
       return res.status(400).json({ error: 'Invalid step name' });
     }
 
-    // Mettre à jour le statut global
-    if (step === 'welcome' || step === 'verification') {
-      data.status = 'in_progress';
-    }
+    const refreshed = await getTokenData(token);
 
     res.json({
       success: true,
       step,
       completed,
-      allSteps: data.steps
+      allSteps: refreshed?.steps || data.steps
     });
   } catch (error) {
     console.error('❌ Error updating step:', error);
@@ -258,7 +289,7 @@ router.post('/:token/step', (req, res) => {
  * PUT /api/bulletin-flow/:token/member-data - Met a jour les informations saisies par l'adherent
  * Body: { memberData: { ... } }
  */
-router.put('/:token/member-data', (req, res) => {
+router.put('/:token/member-data', async (req, res) => {
   try {
     const { token } = req.params;
     const { memberData } = req.body;
@@ -267,7 +298,7 @@ router.put('/:token/member-data', (req, res) => {
       return res.status(400).json({ error: 'memberData object required' });
     }
 
-    const updated = updateMemberData(token, memberData);
+    const updated = await updateMemberData(token, memberData);
 
     if (!updated) {
       return res.status(404).json({
@@ -299,7 +330,7 @@ router.post('/:token/signature', async (req, res) => {
       return res.status(400).json({ error: 'signatureDataUrl (base64) required' });
     }
 
-    const data = getTokenData(token);
+    const data = await getTokenData(token);
     if (!data) {
       return res.status(404).json({ 
         error: 'Token invalide ou expiré',
@@ -308,7 +339,7 @@ router.post('/:token/signature', async (req, res) => {
     }
 
     if (memberDataPatch && typeof memberDataPatch === 'object') {
-      updateMemberData(token, memberDataPatch);
+      await updateMemberData(token, memberDataPatch);
     }
 
     // Métadonnées de signature
@@ -317,15 +348,17 @@ router.post('/:token/signature', async (req, res) => {
       userAgent: req.get('User-Agent')
     };
 
-    const success = saveSignature(token, signatureDataUrl, metadata);
+    const success = await saveSignature(token, signatureDataUrl, metadata);
 
     if (!success) {
       return res.status(500).json({ error: 'Failed to save signature' });
     }
 
+    const signedData = await getTokenData(token);
+
     // Générer le document final avec la signature
     const templateId = 'adhesion_standard'; // TODO: Rendre configurable
-    const memberData = data.memberData;
+    const memberData = signedData?.memberData || data.memberData;
     const timestamp = Date.now();
     const outputFilename = `bulletin_${memberData.lastName}_${timestamp}.docx`;
 
@@ -355,7 +388,7 @@ router.post('/:token/signature', async (req, res) => {
       success: true,
       message: 'Signature enregistrée avec succès',
       status: 'signed',
-      signedAt: data.signedAt,
+      signedAt: signedData?.signedAt || new Date().toISOString(),
       documentGenerated,
       documentUrl
     });
@@ -374,7 +407,7 @@ router.post('/:token/resend', async (req, res) => {
     const { token } = req.params;
     const { method = 'email', recipient } = req.body;
 
-    const data = getTokenData(token);
+    const data = await getTokenData(token);
     if (!data) {
       return res.status(404).json({ 
         error: 'Token invalide ou expiré',
@@ -416,9 +449,9 @@ router.post('/:token/resend', async (req, res) => {
 /**
  * GET /api/bulletin-flow/stats - Statistiques des parcours de signature
  */
-router.get('/stats/all', (req, res) => {
+router.get('/stats/all', async (req, res) => {
   try {
-    const stats = getSignatureStats();
+    const stats = await getSignatureStats();
     res.json({ success: true, stats });
   } catch (error) {
     console.error('❌ Error fetching stats:', error);
@@ -429,9 +462,9 @@ router.get('/stats/all', (req, res) => {
 /**
  * POST /api/bulletin-flow/cleanup - Nettoie les tokens expirés (admin)
  */
-router.post('/cleanup', (req, res) => {
+router.post('/cleanup', async (req, res) => {
   try {
-    const cleaned = cleanupExpiredTokens();
+    const cleaned = await cleanupExpiredTokens();
     res.json({ success: true, cleaned });
   } catch (error) {
     console.error('❌ Error cleaning up:', error);
@@ -441,7 +474,9 @@ router.post('/cleanup', (req, res) => {
 
 // Nettoyage automatique toutes les 6 heures
 setInterval(() => {
-  cleanupExpiredTokens();
+  cleanupExpiredTokens().catch((error) => {
+    console.error('❌ Error during scheduled bulletin-flow cleanup:', error);
+  });
 }, 6 * 60 * 60 * 1000);
 
 export default router;

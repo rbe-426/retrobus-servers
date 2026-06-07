@@ -1352,3 +1352,21 @@ model EmailTemplate {
   @@index([active])
   @@index([name])
 }
+
+model BulletinFlowToken {
+  token         String   @id @db.VarChar(128)
+  memberData    Json
+  steps         Json
+  status        String   @default("pending") @db.VarChar(50)
+  signatureData String?  @db.Text
+  signedAt      DateTime?
+  ipAddress     String?  @db.VarChar(255)
+  userAgent     String?  @db.Text
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+  @@index([expiresAt])
+  @@index([createdAt])
+}
