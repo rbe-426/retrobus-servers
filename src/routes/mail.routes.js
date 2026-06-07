@@ -65,21 +65,34 @@ router.post('/connect', requireAuth, async (req, res) => {
     const userId = req.user.id;
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    const normalizeMailLogin = (rawEmail) => {
+      const normalized = String(rawEmail || '').trim().toLowerCase();
+
+      // Corrige faute de frappe frequente observee en production
+      if (normalized.endsWith('@ssociation-rbe.fr')) {
+        return normalized.replace('@ssociation-rbe.fr', '@association-rbe.fr');
+      }
+
+      return normalized;
+    };
+
+    const safeEmail = normalizeMailLogin(email);
+
+    if (!safeEmail || !password) {
       return res.status(400).json({ error: 'Email et mot de passe requis' });
     }
 
     // Valider le format email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(safeEmail)) {
       return res.status(400).json({ error: 'Format email invalide' });
     }
 
     // Créer la session
-    const result = await createMailSession(userId, email, password);
+    const result = await createMailSession(userId, safeEmail, password);
 
     // Si c'est le compte noreply, configurer le service de notifications
-    if (email === 'noreply@association-rbe.fr') {
+    if (safeEmail === 'noreply@association-rbe.fr') {
       setNoreplyUserId(userId);
       console.log('✅ Compte NoReply configuré pour les notifications automatiques');
     }

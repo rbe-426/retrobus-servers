@@ -23,6 +23,25 @@ import { generateDocument } from '../services/templateService.js';
 const router = express.Router();
 const prisma = new PrismaClient();
 
+const applyBulletinTemplateVars = (template = '', vars = {}) => {
+  if (!template || typeof template !== 'string') return '';
+
+  const replacements = [
+    {
+      // Supporte: {{lien bulletin}}, {{lien_bulletin}}, {{bulletinLink}}, <lien bulletin>, &lt;lien bulletin&gt;
+      pattern: /\{\{\s*(lien\s*bulletin|lien_bulletin|bulletinLink)\s*\}\}|<\s*lien\s+bulletin\s*>|&lt;\s*lien\s+bulletin\s*&gt;|&#60;\s*lien\s+bulletin\s*&#62;/gi,
+      value: vars.link || ''
+    },
+    {
+      // Supporte: {{firstName}}, {{first_name}}, <firstName>
+      pattern: /\{\{\s*(firstName|first_name)\s*\}\}|<\s*firstName\s*>/gi,
+      value: vars.firstName || 'Adherent'
+    }
+  ];
+
+  return replacements.reduce((acc, { pattern, value }) => acc.replace(pattern, value), template);
+};
+
 /**
  * POST /api/bulletin-flow/create - Crée un parcours de signature
  * Body: { memberData, sendEmail, sendSMS, email, phone }
@@ -72,12 +91,18 @@ router.post('/create', async (req, res) => {
         });
 
         const htmlBody = template?.body
-          ? template.body
-              .replace(/\{\{lien bulletin\}\}/g, fullLink)
-              .replace(/\{\{firstName\}\}/g, memberData.firstName || 'Adherent')
+          ? applyBulletinTemplateVars(template.body, {
+              link: fullLink,
+              firstName: memberData.firstName
+            })
           : basicHtml;
 
-        const subject = template?.subject || basicSubject;
+        const subject = template?.subject
+          ? applyBulletinTemplateVars(template.subject, {
+              link: fullLink,
+              firstName: memberData.firstName
+            })
+          : basicSubject;
 
         // Priorite: userId de la session noreply connectee
         let senderUserId = getNoreplyUserId();
