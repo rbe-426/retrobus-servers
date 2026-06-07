@@ -148,7 +148,7 @@ export const saveSignature = (token, signatureDataUrl, metadata = {}) => {
  * @param {string} baseUrl - URL de base de l'application
  * @returns {string} Lien complet
  */
-export const generateSignatureLink = (token, baseUrl = 'https://app.retrobus-essonne.fr') => {
+export const generateSignatureLink = (token, baseUrl = 'https://association-rbe.fr') => {
   return `${baseUrl}/bulletin/sign/${token}`;
 };
 
@@ -159,7 +159,7 @@ export const generateSignatureLink = (token, baseUrl = 'https://app.retrobus-ess
  * @param {string} baseUrl - URL de base
  * @returns {string} Message SMS formaté
  */
-export const generateSMSMessage = (token, firstName, baseUrl = 'https://app.retrobus-essonne.fr') => {
+export const generateSMSMessage = (token, firstName, baseUrl = 'https://association-rbe.fr') => {
   const link = generateSignatureLink(token, baseUrl);
   return `Bonjour ${firstName},\n\nVotre bulletin d'adhésion RETROBUS ESSONNE est prêt.\nSignez-le en ligne ici (lien sécurisé valide 7 jours) :\n${link}\n\nMerci !`;
 };
@@ -171,7 +171,7 @@ export const generateSMSMessage = (token, firstName, baseUrl = 'https://app.retr
  * @param {string} baseUrl - URL de base
  * @returns {object} Email (subject, text, html)
  */
-export const generateSignatureEmail = (token, memberData, baseUrl = 'https://app.retrobus-essonne.fr') => {
+export const generateSignatureEmail = (token, memberData, baseUrl = 'https://association-rbe.fr') => {
   const link = generateSignatureLink(token, baseUrl);
   const firstName = memberData.firstName || 'Adhérent';
 
