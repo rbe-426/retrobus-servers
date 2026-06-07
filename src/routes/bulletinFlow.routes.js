@@ -23,6 +23,16 @@ import { generateDocument } from '../services/templateService.js';
 const router = express.Router();
 const prisma = new PrismaClient();
 
+const resolveBulletinPublicBaseUrl = () => {
+  // Priorite aux variables explicites de production
+  return (
+    process.env.BULLETIN_PUBLIC_BASE_URL ||
+    process.env.SIGNATURE_PUBLIC_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    null
+  );
+};
+
 const applyBulletinTemplateVars = (template = '', vars = {}) => {
   if (!template || typeof template !== 'string') return '';
 
@@ -74,7 +84,10 @@ router.post('/create', async (req, res) => {
     // Envoyer par email
     if (sendEmailFlag && email) {
       try {
-        const fullLink = generateSignatureLink(token, process.env.APP_BASE_URL || 'http://localhost:5173');
+        const bulletinPublicBaseUrl = resolveBulletinPublicBaseUrl();
+        const fullLink = bulletinPublicBaseUrl
+          ? generateSignatureLink(token, bulletinPublicBaseUrl)
+          : generateSignatureLink(token);
 
         const basicSubject = 'Votre lien de completion du bulletin d\'adhesion';
         const basicText = `Bonjour ${memberData.firstName || 'Adherent'},\n\nVeuillez completer votre bulletin via ce lien securise (valide 7 jours):\n${fullLink}\n\nAssociation RETROBUS ESSONNE`;
