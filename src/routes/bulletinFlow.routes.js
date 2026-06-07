@@ -29,7 +29,7 @@ const prisma = new PrismaClient();
  */
 router.post('/create', async (req, res) => {
   try {
-    const { memberData, sendEmail = true, sendSMS = false, email, phone } = req.body;
+    const { memberData, sendEmail: sendEmailFlag = true, sendSMS: sendSMSFlag = false, email, phone } = req.body;
 
     if (!memberData || !memberData.firstName || !memberData.lastName) {
       return res.status(400).json({ 
@@ -46,12 +46,14 @@ router.post('/create', async (req, res) => {
       token,
       link,
       expiresIn: '7 days',
+      emailRequested: !!(sendEmailFlag && email),
+      smsRequested: !!(sendSMSFlag && phone),
       emailSent: false,
       smsSent: false
     };
 
     // Envoyer par email
-    if (sendEmail && email) {
+    if (sendEmailFlag && email) {
       try {
         const fullLink = generateSignatureLink(token, process.env.APP_BASE_URL || 'http://localhost:5173');
 
@@ -118,7 +120,7 @@ router.post('/create', async (req, res) => {
     }
 
     // Envoyer par SMS
-    if (sendSMS && phone) {
+    if (sendSMSFlag && phone) {
       const smsMessage = generateSMSMessage(token, memberData.firstName);
       
       // TODO: Intégrer avec service SMS (Twilio, OVH, etc.)
