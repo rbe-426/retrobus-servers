@@ -108,7 +108,8 @@ const sendAdminBulletinViaSmtpFallback = async ({
   text,
   html,
   filename,
-  buffer
+  buffer,
+  attachments = []
 }) => {
   const smtpHost = process.env.SMTP_HOST || 'mail.infomaniak.com';
   const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
@@ -132,19 +133,25 @@ const sendAdminBulletinViaSmtpFallback = async ({
 
   await transporter.verify();
 
+  const smtpAttachments = attachments.length
+    ? attachments
+    : (filename && buffer
+      ? [
+          {
+            filename,
+            content: buffer,
+            contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          }
+        ]
+      : []);
+
   await transporter.sendMail({
     from: `"RetroBus Essonne" <${smtpUser}>`,
     to,
     subject,
     text,
     html,
-    attachments: [
-      {
-        filename,
-        content: buffer,
-        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      }
-    ]
+    attachments: smtpAttachments
   });
 };
 
@@ -152,6 +159,9 @@ const formatErrorDetails = (error) => {
   if (!error) return 'Unknown error';
 
   const nested = [];
+  if (error.code) nested.push(`code=${error.code}`);
+  if (error.response) nested.push(`response=${error.response}`);
+  if (error.command) nested.push(`command=${error.command}`);
 
   if (Array.isArray(error.errors)) {
     for (const item of error.errors) {
@@ -416,7 +426,7 @@ router.put('/:token/member-data', async (req, res) => {
 router.post('/:token/signature', async (req, res) => {
   try {
     const { token } = req.params;
-    const { signatureDataUrl, memberData: memberDataPatch } = req.body;
+    const { signatureDataUrl, memberData: memberDataPatch, signatureChannel } = req.body;
 
     if (!signatureDataUrl || !signatureDataUrl.startsWith('data:image')) {
       return res.status(400).json({ error: 'signatureDataUrl (base64) required' });
@@ -431,7 +441,14 @@ router.post('/:token/signature', async (req, res) => {
     }
 
     if (memberDataPatch && typeof memberDataPatch === 'object') {
-      await updateMemberData(token, memberDataPatch);
+      await updateMemberData(token, {
+        ...memberDataPatch,
+        signatureChannel: signatureChannel || memberDataPatch.signatureChannel || 'bulletin_dematerialise_web'
+      });
+    } else {
+      await updateMemberData(token, {
+        signatureChannel: signatureChannel || 'bulletin_dematerialise_web'
+      });
     }
 
     // Métadonnées de signature
@@ -641,6 +658,7 @@ router.post('/member/resend-signed', async (req, res) => {
     const lookupMemberId = String(memberId || '').trim();
     const lookupEmail = String(email || '').trim().toLowerCase();
     const destinationEmail = String(recipientEmail || email || '').trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!lookupEmail && !lookupMemberId) {
       return res.status(400).json({ error: 'email or memberId is required' });
@@ -648,6 +666,10 @@ router.post('/member/resend-signed', async (req, res) => {
 
     if (!destinationEmail) {
       return res.status(400).json({ error: 'recipientEmail is required' });
+    }
+
+    if (!emailRegex.test(destinationEmail)) {
+      return res.status(400).json({ error: 'recipientEmail is invalid' });
     }
 
     const signedFlows = await prisma.bulletinFlowToken.findMany({
@@ -678,41 +700,24 @@ router.post('/member/resend-signed', async (req, res) => {
     for (const flow of candidateFlows) {
       const md = flow.memberData || {};
       const existingFilename = String(md.generatedDocumentFilename || '').trim();
+      const generatedUrl = String(md.generatedDocumentUrl || '').trim();
+      const filenameFromUrl = generatedUrl ? path.basename(generatedUrl.split('?')[0]) : '';
+      const fileCandidates = [existingFilename, filenameFromUrl].filter(Boolean);
 
-      if (existingFilename) {
+      matchingFlow = flow;
+
+      for (const candidateName of fileCandidates) {
         try {
-          const generatedPath = path.join(process.cwd(), 'uploads', 'generated', existingFilename);
+          const generatedPath = path.join(process.cwd(), 'uploads', 'generated', candidateName);
           generatedBuffer = await fs.readFile(generatedPath);
-          filename = existingFilename;
-          matchingFlow = flow;
+          filename = candidateName;
           break;
         } catch {
-          // Fichier annoncé mais absent: essayer régénération
+          // En mode dematerialise, ce fichier est optionnel
         }
       }
 
-      if (flow.signatureData) {
-        const regeneratedFilename = `bulletin_${md.lastName || 'adherent'}_${Date.now()}_resend.docx`;
-        const dataWithSignature = {
-          ...md,
-          signature: flow.signatureData,
-          signedDate: flow.signedAt ? new Date(flow.signedAt).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-          signedDateTime: flow.signedAt ? new Date(flow.signedAt).toLocaleString('fr-FR') : new Date().toLocaleString('fr-FR')
-        };
-
-        await generateDocument('adhesion_standard', dataWithSignature, regeneratedFilename);
-        const regeneratedPath = path.join(process.cwd(), 'uploads', 'generated', regeneratedFilename);
-        generatedBuffer = await fs.readFile(regeneratedPath);
-        filename = regeneratedFilename;
-        matchingFlow = flow;
-
-        await updateMemberData(flow.token, {
-          generatedDocumentFilename: regeneratedFilename,
-          generatedDocumentUrl: `/api/templates/download/${regeneratedFilename}`,
-          generatedDocumentAt: new Date().toISOString()
-        });
-        break;
-      }
+      break;
     }
 
     if (!matchingFlow) {
@@ -720,38 +725,95 @@ router.post('/member/resend-signed', async (req, res) => {
     }
 
     const flowMemberData = matchingFlow.memberData || {};
+    const signedAtValue = matchingFlow.signedAt
+      ? new Date(matchingFlow.signedAt).toLocaleString('fr-FR')
+      : 'date non disponible';
 
-    const subject = `Bulletin signé - ${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}`.trim();
-    const text = `Bonjour,\n\nVeuillez trouver en pièce jointe le bulletin signé de ${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}.`;
-    const html = `<p>Bonjour,</p><p>Veuillez trouver en pièce jointe le bulletin signé de <strong>${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}</strong>.</p>`;
+    const subject = `Attestation de signature dématérialisée - ${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}`.trim();
+    const text = [
+      'Bonjour,',
+      '',
+      `La signature électronique a bien été enregistrée pour ${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}.`,
+      `Horodatage: ${signedAtValue}`,
+      `Référence de parcours: ${matchingFlow.token}`,
+      '',
+      generatedBuffer && filename
+        ? `Le document signé est joint: ${filename}`
+        : 'Aucun document DOCX joint (mode 100% dématérialisé, attestation ci-jointe).'
+    ].join('\n');
+    const html = `
+      <p>Bonjour,</p>
+      <p>La signature électronique a bien été enregistrée pour <strong>${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}</strong>.</p>
+      <p><strong>Horodatage:</strong> ${signedAtValue}</p>
+      <p><strong>Référence de parcours:</strong> ${matchingFlow.token}</p>
+      <p>${generatedBuffer && filename ? `Le document signé est joint: <strong>${filename}</strong>.` : 'Aucun document DOCX joint (mode 100% dématérialisé, attestation ci-jointe).'}</p>
+    `;
+
+    const digitalProofText = [
+      'ATTESTATION DE SIGNATURE DEMATERIALISEE',
+      `Nom: ${(flowMemberData.firstName || '').trim()} ${(flowMemberData.lastName || '').trim()}`.trim(),
+      `Email adherent: ${flowMemberData.email || 'non renseigne'}`,
+      `Date de signature: ${signedAtValue}`,
+      `Reference de parcours: ${matchingFlow.token}`,
+      `Date d'emission: ${new Date().toLocaleString('fr-FR')}`
+    ].join('\n');
+
+    const attachmentsForEmail = [
+      {
+        filename: `attestation_signature_${(flowMemberData.lastName || 'adherent').replace(/\s+/g, '_')}_${Date.now()}.txt`,
+        content: Buffer.from(digitalProofText, 'utf-8').toString('base64'),
+        contentType: 'text/plain; charset=utf-8'
+      }
+    ];
+
+    if (generatedBuffer && filename) {
+      attachmentsForEmail.unshift({
+        filename,
+        content: generatedBuffer.toString('base64'),
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      });
+    }
 
     const senderUserId = await resolveNoreplySenderUserId();
     let sentVia = 'smtp_fallback';
 
     if (senderUserId) {
-      await sendEmail(senderUserId, {
-        to: [destinationEmail],
-        subject,
-        body: text,
-        html,
-        fromName: 'RetroBus Essonne',
-        attachments: [
-          {
-            filename,
-            content: generatedBuffer.toString('base64'),
-            contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          }
-        ]
-      });
-      sentVia = 'noreply_session';
+      try {
+        await sendEmail(senderUserId, {
+          to: [destinationEmail],
+          subject,
+          body: text,
+          html,
+          fromName: 'RetroBus Essonne',
+          attachments: attachmentsForEmail
+        });
+        sentVia = 'noreply_session';
+      } catch (sessionSendError) {
+        await sendAdminBulletinViaSmtpFallback({
+          to: destinationEmail,
+          subject,
+          text,
+          html,
+          attachments: attachmentsForEmail.map((att) => ({
+            filename: att.filename,
+            content: Buffer.from(att.content, 'base64'),
+            contentType: att.contentType
+          }))
+        });
+        sentVia = 'smtp_fallback_after_session_failure';
+        console.warn('⚠️ resend-signed: noreply session send failed, fallback SMTP used:', formatErrorDetails(sessionSendError));
+      }
     } else {
       await sendAdminBulletinViaSmtpFallback({
         to: destinationEmail,
         subject,
         text,
         html,
-        filename,
-        buffer: generatedBuffer
+        attachments: attachmentsForEmail.map((att) => ({
+          filename: att.filename,
+          content: Buffer.from(att.content, 'base64'),
+          contentType: att.contentType
+        }))
       });
     }
 
@@ -759,7 +821,8 @@ router.post('/member/resend-signed', async (req, res) => {
       success: true,
       sentTo: destinationEmail,
       sentVia,
-      filename,
+      filename: filename || null,
+      mode: 'digital_first',
       signedAt: matchingFlow.signedAt
     });
   } catch (error) {

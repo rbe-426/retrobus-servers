@@ -4162,10 +4162,93 @@ app.get(['/api/members','/members'], requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch members', details: e.message });
   }
 });
-app.get(['/api/members/me'], requireAuth, (req, res) => {
-  // stub current member from token
-  const m = state.members.find(mem => mem.email === req.user.email) || null;
-  return res.json({ member: m });
+app.get(['/api/members/me'], requireAuth, async (req, res) => {
+  try {
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+    const username = String(req.user?.username || '').trim();
+
+    let member = await prisma.members.findFirst({
+      where: {
+        OR: [
+          ...(userEmail ? [{ email: userEmail }] : []),
+          ...(username ? [{ matricule: username }] : [])
+        ]
+      }
+    });
+
+    if (!member) {
+      // Fallback historique: données en mémoire locale
+      member = state.members.find((mem) => String(mem.email || '').toLowerCase() === userEmail) || null;
+    }
+
+    if (!member) {
+      return res.json({ member: null });
+    }
+
+    const memberId = String(member.id || '').trim();
+    const memberEmail = String(member.email || '').trim().toLowerCase();
+    const memberNumber = String(member.memberNumber || '').trim();
+
+    const signedFlows = await prisma.bulletinFlowToken.findMany({
+      where: { status: 'signed' },
+      orderBy: { signedAt: 'desc' },
+      take: 200,
+      select: {
+        token: true,
+        signedAt: true,
+        createdAt: true,
+        memberData: true,
+        ipAddress: true,
+        userAgent: true
+      }
+    });
+
+    const signatureHistory = signedFlows
+      .filter((flow) => {
+        const md = flow.memberData || {};
+        const flowMemberId = String(md.id || '').trim();
+        const flowEmail = String(md.email || '').trim().toLowerCase();
+        const flowMemberNumber = String(md.memberNumber || '').trim();
+
+        return (
+          (memberId && flowMemberId && flowMemberId === memberId) ||
+          (memberEmail && flowEmail && flowEmail === memberEmail) ||
+          (memberNumber && flowMemberNumber && flowMemberNumber === memberNumber)
+        );
+      })
+      .map((flow) => {
+        const md = flow.memberData || {};
+        const channel =
+          md.signatureChannel ||
+          md.signature_channel ||
+          md.signatureMethod ||
+          md.signatureSource ||
+          'bulletin_dematerialise_web';
+
+        return {
+          token: flow.token,
+          signedAt: flow.signedAt,
+          createdAt: flow.createdAt,
+          channel,
+          ipAddress: flow.ipAddress || null,
+          userAgent: flow.userAgent || null,
+          source: 'bulletin_flow'
+        };
+      });
+
+    const latestSignature = signatureHistory.length > 0 ? signatureHistory[0] : null;
+
+    return res.json({
+      member: {
+        ...member,
+        signatureHistory,
+        latestSignature
+      }
+    });
+  } catch (e) {
+    console.error('❌ Error fetching current member profile:', e.message);
+    return res.status(500).json({ error: 'Failed to fetch member profile', details: e.message });
+  }
 });
 
 app.put(['/api/members/me'], requireAuth, async (req, res) => {
