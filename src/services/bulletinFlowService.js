@@ -140,7 +140,8 @@ export const updateStepStatus = async (token, step, completed = true) => {
     [step]: completed
   };
 
-  const nextStatus = (step === 'welcome' || step === 'verification') && completed
+  const isFinalStep = step === 'confirmation';
+  const nextStatus = completed && !isFinalStep && data.status === 'pending'
     ? 'in_progress'
     : data.status;
 
@@ -185,7 +186,8 @@ export const updateMemberData = async (token, memberDataPatch = {}) => {
     where: { token },
     data: {
       memberData: mergedMemberData,
-      steps: updatedSteps
+      steps: updatedSteps,
+      status: data.status === 'pending' ? 'in_progress' : data.status
     }
   });
 

@@ -378,6 +378,12 @@ router.post('/:token/signature', async (req, res) => {
       documentUrl = `/api/templates/download/${outputFilename}`;
       documentGenerated = true;
 
+      await updateMemberData(token, {
+        generatedDocumentUrl: documentUrl,
+        generatedDocumentFilename: outputFilename,
+        generatedDocumentAt: new Date().toISOString()
+      });
+
       console.log(`✅ Document généré avec signature: ${outputFilename}`);
     } catch (docError) {
       console.error('⚠️ Failed to generate document:', docError);
