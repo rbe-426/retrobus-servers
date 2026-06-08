@@ -148,6 +148,29 @@ const sendAdminBulletinViaSmtpFallback = async ({
   });
 };
 
+const formatErrorDetails = (error) => {
+  if (!error) return 'Unknown error';
+
+  const nested = [];
+
+  if (Array.isArray(error.errors)) {
+    for (const item of error.errors) {
+      const msg = item?.message || String(item || '');
+      if (msg) nested.push(msg);
+    }
+  }
+
+  if (error.cause) {
+    const causeMsg = error.cause?.message || String(error.cause);
+    if (causeMsg) nested.push(causeMsg);
+  }
+
+  const base = error.message || String(error);
+  if (nested.length === 0) return base;
+
+  return `${base} | nested: ${nested.join(' | ')}`;
+};
+
 /**
  * POST /api/bulletin-flow/create - Crée un parcours de signature
  * Body: { memberData, sendEmail, sendSMS, email, phone }
@@ -740,10 +763,11 @@ router.post('/member/resend-signed', async (req, res) => {
       signedAt: matchingFlow.signedAt
     });
   } catch (error) {
-    console.error('❌ Error resending signed bulletin:', error.message);
+    const details = formatErrorDetails(error);
+    console.error('❌ Error resending signed bulletin:', details);
     res.status(500).json({
       error: error?.message || 'Failed to resend signed bulletin',
-      details: error?.message || 'Unknown resend error'
+      details
     });
   }
 });
