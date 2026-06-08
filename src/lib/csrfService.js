@@ -138,8 +138,12 @@ export const csrfProtection = (req, res, next) => {
     '/api/csrf-token',
     '/public/contact'
   ];
+
+  // Routes publiques du parcours bulletin (sécurisées par token d'URL)
+  // On n'exempte PAS /create ni /cleanup pour conserver la protection CSRF.
+  const isPublicBulletinTokenMutation = /^\/(api\/)?bulletin-flow\/[^/]+\/(step|member-data|signature|resend)$/.test(req.path);
   
-  if (publicRoutes.some(route => req.path === route)) {
+  if (publicRoutes.some(route => req.path === route) || isPublicBulletinTokenMutation) {
     console.log(`✅ Bypassing CSRF for public route: ${req.path}`);
     return next();
   }
