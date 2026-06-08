@@ -605,6 +605,150 @@ router.post('/:token/resend', async (req, res) => {
 });
 
 /**
+ * POST /api/bulletin-flow/member/resend-signed - Renvoie le dernier bulletin signé d'un adhérent
+ * Body: { memberId?, email, recipientEmail? }
+ */
+router.post('/member/resend-signed', async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { memberId, email, recipientEmail } = req.body || {};
+    const lookupMemberId = String(memberId || '').trim();
+    const lookupEmail = String(email || '').trim().toLowerCase();
+    const destinationEmail = String(recipientEmail || email || '').trim().toLowerCase();
+
+    if (!lookupEmail && !lookupMemberId) {
+      return res.status(400).json({ error: 'email or memberId is required' });
+    }
+
+    if (!destinationEmail) {
+      return res.status(400).json({ error: 'recipientEmail is required' });
+    }
+
+    const signedFlows = await prisma.bulletinFlowToken.findMany({
+      where: { status: 'signed' },
+      orderBy: { signedAt: 'desc' },
+      take: 500,
+      select: {
+        token: true,
+        signedAt: true,
+        signatureData: true,
+        memberData: true
+      }
+    });
+
+    const candidateFlows = signedFlows.filter((flow) => {
+      const md = flow.memberData || {};
+      const flowEmail = String(md.email || '').trim().toLowerCase();
+      const flowMemberId = String(md.id || '').trim();
+      const memberMatch = !!lookupMemberId && flowMemberId && flowMemberId === lookupMemberId;
+      const emailMatch = !!lookupEmail && flowEmail === lookupEmail;
+      return memberMatch || emailMatch;
+    });
+
+    let matchingFlow = null;
+    let filename = '';
+    let generatedBuffer = null;
+
+    for (const flow of candidateFlows) {
+      const md = flow.memberData || {};
+      const existingFilename = String(md.generatedDocumentFilename || '').trim();
+
+      if (existingFilename) {
+        try {
+          const generatedPath = path.join(process.cwd(), 'uploads', 'generated', existingFilename);
+          generatedBuffer = await fs.readFile(generatedPath);
+          filename = existingFilename;
+          matchingFlow = flow;
+          break;
+        } catch {
+          // Fichier annoncé mais absent: essayer régénération
+        }
+      }
+
+      if (flow.signatureData) {
+        const regeneratedFilename = `bulletin_${md.lastName || 'adherent'}_${Date.now()}_resend.docx`;
+        const dataWithSignature = {
+          ...md,
+          signature: flow.signatureData,
+          signedDate: flow.signedAt ? new Date(flow.signedAt).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+          signedDateTime: flow.signedAt ? new Date(flow.signedAt).toLocaleString('fr-FR') : new Date().toLocaleString('fr-FR')
+        };
+
+        await generateDocument('adhesion_standard', dataWithSignature, regeneratedFilename);
+        const regeneratedPath = path.join(process.cwd(), 'uploads', 'generated', regeneratedFilename);
+        generatedBuffer = await fs.readFile(regeneratedPath);
+        filename = regeneratedFilename;
+        matchingFlow = flow;
+
+        await updateMemberData(flow.token, {
+          generatedDocumentFilename: regeneratedFilename,
+          generatedDocumentUrl: `/api/templates/download/${regeneratedFilename}`,
+          generatedDocumentAt: new Date().toISOString()
+        });
+        break;
+      }
+    }
+
+    if (!matchingFlow) {
+      return res.status(404).json({ error: 'Aucun bulletin signé trouvé pour cet adhérent' });
+    }
+
+    const flowMemberData = matchingFlow.memberData || {};
+
+    const subject = `Bulletin signé - ${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}`.trim();
+    const text = `Bonjour,\n\nVeuillez trouver en pièce jointe le bulletin signé de ${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}.`;
+    const html = `<p>Bonjour,</p><p>Veuillez trouver en pièce jointe le bulletin signé de <strong>${flowMemberData.firstName || ''} ${flowMemberData.lastName || ''}</strong>.</p>`;
+
+    const senderUserId = await resolveNoreplySenderUserId();
+    let sentVia = 'smtp_fallback';
+
+    if (senderUserId) {
+      await sendEmail(senderUserId, {
+        to: [destinationEmail],
+        subject,
+        body: text,
+        html,
+        fromName: 'RetroBus Essonne',
+        attachments: [
+          {
+            filename,
+            content: generatedBuffer.toString('base64'),
+            contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          }
+        ]
+      });
+      sentVia = 'noreply_session';
+    } else {
+      await sendAdminBulletinViaSmtpFallback({
+        to: destinationEmail,
+        subject,
+        text,
+        html,
+        filename,
+        buffer: generatedBuffer
+      });
+    }
+
+    res.json({
+      success: true,
+      sentTo: destinationEmail,
+      sentVia,
+      filename,
+      signedAt: matchingFlow.signedAt
+    });
+  } catch (error) {
+    console.error('❌ Error resending signed bulletin:', error.message);
+    res.status(500).json({
+      error: error?.message || 'Failed to resend signed bulletin',
+      details: error?.message || 'Unknown resend error'
+    });
+  }
+});
+
+/**
  * GET /api/bulletin-flow/stats - Statistiques des parcours de signature
  */
 router.get('/stats/all', async (req, res) => {
