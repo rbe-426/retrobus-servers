@@ -4,6 +4,8 @@
  */
 
 import express from 'express';
+import fs from 'fs/promises';
+import path from 'path';
 import { PrismaClient } from '@prisma/client';
 import { sendEmail, hasMailSession, getSessionUserIdByEmail } from '../services/mailService.js';
 import { getNoreplyUserId } from '../services/notificationService.js';
@@ -22,6 +24,7 @@ import { generateDocument } from '../services/templateService.js';
 
 const router = express.Router();
 const prisma = new PrismaClient();
+const BULLETIN_ADMIN_EMAIL = process.env.BULLETIN_ADMIN_EMAIL || 'association.rbe@gmail.com';
 
 const resolveBulletinPublicBaseUrl = () => {
   // Priorite aux variables explicites de production
@@ -77,6 +80,25 @@ const applyBulletinTemplateVars = (template = '', vars = {}) => {
   ];
 
   return replacements.reduce((acc, { pattern, value }) => acc.replace(pattern, value), template);
+};
+
+const resolveNoreplySenderUserId = async () => {
+  let senderUserId = getNoreplyUserId();
+
+  if (!senderUserId) {
+    senderUserId = getSessionUserIdByEmail('noreply@association-rbe.fr');
+  }
+
+  if (!senderUserId) {
+    const noreplyUser = await prisma.site_users.findFirst({
+      where: { email: 'noreply@association-rbe.fr' }
+    });
+    if (noreplyUser && hasMailSession(noreplyUser.id)) {
+      senderUserId = noreplyUser.id;
+    }
+  }
+
+  return senderUserId;
 };
 
 /**
@@ -364,6 +386,8 @@ router.post('/:token/signature', async (req, res) => {
 
     let documentGenerated = false;
     let documentUrl = null;
+    let adminEmailSent = false;
+    let adminEmailError = null;
 
     try {
       // Ajouter la signature aux données
@@ -384,6 +408,45 @@ router.post('/:token/signature', async (req, res) => {
         generatedDocumentAt: new Date().toISOString()
       });
 
+      try {
+        const senderUserId = await resolveNoreplySenderUserId();
+        if (!senderUserId) {
+          adminEmailError = 'NO_NOREPLY_SESSION';
+          console.error('❌ Impossible d\'envoyer le bulletin admin: aucun compte noreply connecté');
+        } else {
+          const generatedPath = path.join(process.cwd(), 'uploads', 'generated', outputFilename);
+          const generatedBuffer = await fs.readFile(generatedPath);
+          const apiBaseUrl = resolveRequestApiBaseUrl(req);
+          const absoluteDownloadUrl = apiBaseUrl ? `${apiBaseUrl}${documentUrl}` : documentUrl;
+
+          await sendEmail(senderUserId, {
+            to: [BULLETIN_ADMIN_EMAIL],
+            subject: `Bulletin signé - ${memberData.firstName || ''} ${memberData.lastName || ''}`.trim(),
+            body: `Un bulletin vient d'être signé.\n\nAdhérent: ${memberData.firstName || ''} ${memberData.lastName || ''}\nEmail: ${memberData.email || 'non renseigné'}\nTéléchargement: ${absoluteDownloadUrl}`,
+            html: `
+              <p>Un bulletin vient d'être signé.</p>
+              <p><strong>Adhérent:</strong> ${memberData.firstName || ''} ${memberData.lastName || ''}</p>
+              <p><strong>Email:</strong> ${memberData.email || 'non renseigné'}</p>
+              <p><strong>Téléchargement:</strong> <a href="${absoluteDownloadUrl}">${absoluteDownloadUrl}</a></p>
+            `,
+            fromName: 'RetroBus Essonne',
+            attachments: [
+              {
+                filename: outputFilename,
+                content: generatedBuffer.toString('base64'),
+                contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              }
+            ]
+          });
+
+          adminEmailSent = true;
+          console.log(`✅ Bulletin signé envoyé automatiquement à ${BULLETIN_ADMIN_EMAIL}`);
+        }
+      } catch (mailError) {
+        adminEmailError = mailError.message;
+        console.error('❌ Echec envoi bulletin signé à l\'adresse admin:', mailError.message);
+      }
+
       console.log(`✅ Document généré avec signature: ${outputFilename}`);
     } catch (docError) {
       console.error('⚠️ Failed to generate document:', docError);
@@ -396,7 +459,9 @@ router.post('/:token/signature', async (req, res) => {
       status: 'signed',
       signedAt: signedData?.signedAt || new Date().toISOString(),
       documentGenerated,
-      documentUrl
+      documentUrl,
+      adminEmailSent,
+      adminEmailError
     });
   } catch (error) {
     console.error('❌ Error saving signature:', error);
