@@ -4215,6 +4215,7 @@ const buildMemberSignaturePayload = async (member) => {
       exemptionReason: md.exemptionReason || null,
       hasDrivingLicenses: md.hasDrivingLicenses ?? null,
       drivingLicenses: Array.isArray(md.drivingLicenses) ? md.drivingLicenses : [],
+      drivingLicenseNumber: md.drivingLicenseNumber || null,
       drivingLicenseNumbers: md.drivingLicenseNumbers || {},
       acceptedStatuts: !!md.acceptedStatuts,
       acceptedReglementInterieur: !!md.acceptedReglementInterieur,
