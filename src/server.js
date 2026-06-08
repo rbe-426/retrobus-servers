@@ -4148,6 +4148,99 @@ const prepareMemberData = (body, isUpdate = false) => {
 // 👥 MEMBERS ENDPOINTS
 // ============================================================
 
+const resolveSignatureChannel = (memberData = {}) => {
+  return (
+    memberData.signatureChannel ||
+    memberData.signature_channel ||
+    memberData.signatureMethod ||
+    memberData.signatureSource ||
+    'bulletin_dematerialise_web'
+  );
+};
+
+const buildMemberSignaturePayload = async (member) => {
+  if (!member) {
+    return {
+      signatureHistory: [],
+      latestSignature: null
+    };
+  }
+
+  const memberId = String(member.id || '').trim();
+  const memberEmail = String(member.email || '').trim().toLowerCase();
+  const memberNumber = String(member.memberNumber || '').trim();
+
+  const signedFlows = await prisma.bulletinFlowToken.findMany({
+    where: { status: 'signed' },
+    orderBy: { signedAt: 'desc' },
+    take: 300,
+    select: {
+      token: true,
+      signedAt: true,
+      createdAt: true,
+      signatureData: true,
+      memberData: true,
+      ipAddress: true,
+      userAgent: true
+    }
+  });
+
+  const filtered = signedFlows.filter((flow) => {
+    const md = flow.memberData || {};
+    const flowMemberId = String(md.id || '').trim();
+    const flowEmail = String(md.email || '').trim().toLowerCase();
+    const flowMemberNumber = String(md.memberNumber || '').trim();
+
+    return (
+      (memberId && flowMemberId && flowMemberId === memberId) ||
+      (memberEmail && flowEmail && flowEmail === memberEmail) ||
+      (memberNumber && flowMemberNumber && flowMemberNumber === memberNumber)
+    );
+  });
+
+  const signatureHistory = filtered.map((flow, idx) => {
+    const md = flow.memberData || {};
+    const memberSnapshot = {
+      firstName: md.firstName || null,
+      lastName: md.lastName || null,
+      email: md.email || null,
+      phone: md.phone || null,
+      address: md.address || null,
+      city: md.city || null,
+      postalCode: md.postalCode || null,
+      membershipType: md.membershipType || null,
+      paymentAmount: md.paymentAmount ?? null,
+      paymentMethod: md.paymentMethod || null,
+      isExempted: md.isExempted ?? null,
+      exemptionReason: md.exemptionReason || null,
+      hasDrivingLicenses: md.hasDrivingLicenses ?? null,
+      drivingLicenses: Array.isArray(md.drivingLicenses) ? md.drivingLicenses : [],
+      drivingLicenseNumbers: md.drivingLicenseNumbers || {},
+      acceptedStatuts: !!md.acceptedStatuts,
+      acceptedReglementInterieur: !!md.acceptedReglementInterieur,
+      acceptedCsar: !!md.acceptedCsar
+    };
+
+    return {
+      token: flow.token,
+      signedAt: flow.signedAt,
+      createdAt: flow.createdAt,
+      channel: resolveSignatureChannel(md),
+      ipAddress: flow.ipAddress || null,
+      userAgent: flow.userAgent || null,
+      source: 'bulletin_flow',
+      hasSignature: !!flow.signatureData,
+      signatureDataUrl: idx === 0 ? (flow.signatureData || null) : null,
+      memberSnapshot
+    };
+  });
+
+  return {
+    signatureHistory,
+    latestSignature: signatureHistory.length > 0 ? signatureHistory[0] : null
+  };
+};
+
 // MEMBERS
 app.get(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
@@ -4185,58 +4278,7 @@ app.get(['/api/members/me'], requireAuth, async (req, res) => {
       return res.json({ member: null });
     }
 
-    const memberId = String(member.id || '').trim();
-    const memberEmail = String(member.email || '').trim().toLowerCase();
-    const memberNumber = String(member.memberNumber || '').trim();
-
-    const signedFlows = await prisma.bulletinFlowToken.findMany({
-      where: { status: 'signed' },
-      orderBy: { signedAt: 'desc' },
-      take: 200,
-      select: {
-        token: true,
-        signedAt: true,
-        createdAt: true,
-        memberData: true,
-        ipAddress: true,
-        userAgent: true
-      }
-    });
-
-    const signatureHistory = signedFlows
-      .filter((flow) => {
-        const md = flow.memberData || {};
-        const flowMemberId = String(md.id || '').trim();
-        const flowEmail = String(md.email || '').trim().toLowerCase();
-        const flowMemberNumber = String(md.memberNumber || '').trim();
-
-        return (
-          (memberId && flowMemberId && flowMemberId === memberId) ||
-          (memberEmail && flowEmail && flowEmail === memberEmail) ||
-          (memberNumber && flowMemberNumber && flowMemberNumber === memberNumber)
-        );
-      })
-      .map((flow) => {
-        const md = flow.memberData || {};
-        const channel =
-          md.signatureChannel ||
-          md.signature_channel ||
-          md.signatureMethod ||
-          md.signatureSource ||
-          'bulletin_dematerialise_web';
-
-        return {
-          token: flow.token,
-          signedAt: flow.signedAt,
-          createdAt: flow.createdAt,
-          channel,
-          ipAddress: flow.ipAddress || null,
-          userAgent: flow.userAgent || null,
-          source: 'bulletin_flow'
-        };
-      });
-
-    const latestSignature = signatureHistory.length > 0 ? signatureHistory[0] : null;
+    const { signatureHistory, latestSignature } = await buildMemberSignaturePayload(member);
 
     return res.json({
       member: {
@@ -4438,7 +4480,12 @@ app.get('/api/members/:id', requireAuth, async (req, res) => {
     if (!member) {
       return res.status(404).json({ error: 'Member not found' });
     }
-    res.json(member);
+    const { signatureHistory, latestSignature } = await buildMemberSignaturePayload(member);
+    res.json({
+      ...member,
+      signatureHistory,
+      latestSignature
+    });
   } catch (e) {
     console.error('❌ Error fetching member:', e.message);
     res.status(500).json({ error: 'Failed to fetch member', details: e.message });
