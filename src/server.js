@@ -4294,6 +4294,11 @@ app.post('/api/members/change-password', requireAuth, (req, res) => {
 app.post('/api/members/:id/terminate', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+
+    const existing = await prisma.members.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Member not found' });
+    }
     
     // Update in Prisma
     const updated = await prisma.members.update({
@@ -4310,7 +4315,7 @@ app.post('/api/members/:id/terminate', requireAuth, async (req, res) => {
     
     debouncedSave();
     console.log(`✅ Adhérent ${id} terminé dans Prisma et mémoire`);
-    res.json({ ok: true });
+    res.json({ ok: true, member: updated });
   } catch (e) {
     console.error('❌ Error terminating member:', e.message);
     res.status(500).json({ error: 'Failed to terminate member', details: e.message });
