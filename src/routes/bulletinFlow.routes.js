@@ -6,6 +6,7 @@
 import express from 'express';
 import fs from 'fs/promises';
 import path from 'path';
+import nodemailer from 'nodemailer';
 import { PrismaClient } from '@prisma/client';
 import { sendEmail, hasMailSession, getSessionUserIdByEmail } from '../services/mailService.js';
 import { getNoreplyUserId } from '../services/notificationService.js';
@@ -99,6 +100,52 @@ const resolveNoreplySenderUserId = async () => {
   }
 
   return senderUserId;
+};
+
+const sendAdminBulletinViaSmtpFallback = async ({
+  to,
+  subject,
+  text,
+  html,
+  filename,
+  buffer
+}) => {
+  const smtpHost = process.env.SMTP_HOST || 'mail.infomaniak.com';
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+  const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || 'noreply@association-rbe.fr';
+  const smtpPass = process.env.EMAIL_PASSWORD || process.env.SMTP_PASSWORD;
+
+  if (!smtpPass) {
+    throw new Error('SMTP_FALLBACK_MISSING_CREDENTIALS');
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+    requireTLS: smtpPort !== 465,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass
+    }
+  });
+
+  await transporter.verify();
+
+  await transporter.sendMail({
+    from: `"RetroBus Essonne" <${smtpUser}>`,
+    to,
+    subject,
+    text,
+    html,
+    attachments: [
+      {
+        filename,
+        content: buffer,
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      }
+    ]
+  });
 };
 
 /**
@@ -409,26 +456,26 @@ router.post('/:token/signature', async (req, res) => {
       });
 
       try {
-        const senderUserId = await resolveNoreplySenderUserId();
-        if (!senderUserId) {
-          adminEmailError = 'NO_NOREPLY_SESSION';
-          console.error('❌ Impossible d\'envoyer le bulletin admin: aucun compte noreply connecté');
-        } else {
-          const generatedPath = path.join(process.cwd(), 'uploads', 'generated', outputFilename);
-          const generatedBuffer = await fs.readFile(generatedPath);
-          const apiBaseUrl = resolveRequestApiBaseUrl(req);
-          const absoluteDownloadUrl = apiBaseUrl ? `${apiBaseUrl}${documentUrl}` : documentUrl;
-
-          await sendEmail(senderUserId, {
-            to: [BULLETIN_ADMIN_EMAIL],
-            subject: `Bulletin signé - ${memberData.firstName || ''} ${memberData.lastName || ''}`.trim(),
-            body: `Un bulletin vient d'être signé.\n\nAdhérent: ${memberData.firstName || ''} ${memberData.lastName || ''}\nEmail: ${memberData.email || 'non renseigné'}\nTéléchargement: ${absoluteDownloadUrl}`,
-            html: `
+        const generatedPath = path.join(process.cwd(), 'uploads', 'generated', outputFilename);
+        const generatedBuffer = await fs.readFile(generatedPath);
+        const apiBaseUrl = resolveRequestApiBaseUrl(req);
+        const absoluteDownloadUrl = apiBaseUrl ? `${apiBaseUrl}${documentUrl}` : documentUrl;
+        const mailSubject = `Bulletin signé - ${memberData.firstName || ''} ${memberData.lastName || ''}`.trim();
+        const mailText = `Un bulletin vient d'être signé.\n\nAdhérent: ${memberData.firstName || ''} ${memberData.lastName || ''}\nEmail: ${memberData.email || 'non renseigné'}\nTéléchargement: ${absoluteDownloadUrl}`;
+        const mailHtml = `
               <p>Un bulletin vient d'être signé.</p>
               <p><strong>Adhérent:</strong> ${memberData.firstName || ''} ${memberData.lastName || ''}</p>
               <p><strong>Email:</strong> ${memberData.email || 'non renseigné'}</p>
               <p><strong>Téléchargement:</strong> <a href="${absoluteDownloadUrl}">${absoluteDownloadUrl}</a></p>
-            `,
+            `;
+
+        const senderUserId = await resolveNoreplySenderUserId();
+        if (senderUserId) {
+          await sendEmail(senderUserId, {
+            to: [BULLETIN_ADMIN_EMAIL],
+            subject: mailSubject,
+            body: mailText,
+            html: mailHtml,
             fromName: 'RetroBus Essonne',
             attachments: [
               {
@@ -440,11 +487,51 @@ router.post('/:token/signature', async (req, res) => {
           });
 
           adminEmailSent = true;
-          console.log(`✅ Bulletin signé envoyé automatiquement à ${BULLETIN_ADMIN_EMAIL}`);
+          console.log(`✅ Bulletin signé envoyé automatiquement à ${BULLETIN_ADMIN_EMAIL} (session noreply)`);
+        } else {
+          console.warn('⚠️ Aucune session noreply active, tentative via fallback SMTP...');
+          await sendAdminBulletinViaSmtpFallback({
+            to: BULLETIN_ADMIN_EMAIL,
+            subject: mailSubject,
+            text: mailText,
+            html: mailHtml,
+            filename: outputFilename,
+            buffer: generatedBuffer
+          });
+          adminEmailSent = true;
+          console.log(`✅ Bulletin signé envoyé automatiquement à ${BULLETIN_ADMIN_EMAIL} (fallback SMTP)`);
         }
       } catch (mailError) {
-        adminEmailError = mailError.message;
-        console.error('❌ Echec envoi bulletin signé à l\'adresse admin:', mailError.message);
+        try {
+          console.warn('⚠️ Envoi via session impossible, tentative fallback SMTP...');
+          const generatedPath = path.join(process.cwd(), 'uploads', 'generated', outputFilename);
+          const generatedBuffer = await fs.readFile(generatedPath);
+          const apiBaseUrl = resolveRequestApiBaseUrl(req);
+          const absoluteDownloadUrl = apiBaseUrl ? `${apiBaseUrl}${documentUrl}` : documentUrl;
+          const mailSubject = `Bulletin signé - ${memberData.firstName || ''} ${memberData.lastName || ''}`.trim();
+          const mailText = `Un bulletin vient d'être signé.\n\nAdhérent: ${memberData.firstName || ''} ${memberData.lastName || ''}\nEmail: ${memberData.email || 'non renseigné'}\nTéléchargement: ${absoluteDownloadUrl}`;
+          const mailHtml = `
+              <p>Un bulletin vient d'être signé.</p>
+              <p><strong>Adhérent:</strong> ${memberData.firstName || ''} ${memberData.lastName || ''}</p>
+              <p><strong>Email:</strong> ${memberData.email || 'non renseigné'}</p>
+              <p><strong>Téléchargement:</strong> <a href="${absoluteDownloadUrl}">${absoluteDownloadUrl}</a></p>
+            `;
+
+          await sendAdminBulletinViaSmtpFallback({
+            to: BULLETIN_ADMIN_EMAIL,
+            subject: mailSubject,
+            text: mailText,
+            html: mailHtml,
+            filename: outputFilename,
+            buffer: generatedBuffer
+          });
+          adminEmailSent = true;
+          adminEmailError = null;
+          console.log(`✅ Bulletin signé envoyé automatiquement à ${BULLETIN_ADMIN_EMAIL} (fallback SMTP après échec session)`);
+        } catch (fallbackError) {
+          adminEmailError = `${mailError.message} | fallback: ${fallbackError.message}`;
+          console.error('❌ Echec envoi bulletin signé à l\'adresse admin:', adminEmailError);
+        }
       }
 
       console.log(`✅ Document généré avec signature: ${outputFilename}`);
