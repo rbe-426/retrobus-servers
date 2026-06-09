@@ -215,82 +215,85 @@ router.post('/create', async (req, res) => {
       smsSent: false
     };
 
-    // Envoyer par email
+    // Envoyer par email (asynchrone - fire-and-forget pour réponse instantanée)
     if (sendEmailFlag && email) {
-      try {
-        const bulletinPublicBaseUrl = resolveBulletinPublicBaseUrl();
-        const linkBaseForEmail = bulletinPublicBaseUrl || linkBase;
-        const rawFullLink = generateSignatureLink(token, linkBaseForEmail);
-        const fullLink = apiBaseUrl
-          ? `${rawFullLink}?api=${encodeURIComponent(apiBaseUrl)}`
-          : rawFullLink;
+      // Lancer l'envoi en arrière-plan sans bloquer la réponse API
+      (async () => {
+        try {
+          const bulletinPublicBaseUrl = resolveBulletinPublicBaseUrl();
+          const linkBaseForEmail = bulletinPublicBaseUrl || linkBase;
+          const rawFullLink = generateSignatureLink(token, linkBaseForEmail);
+          const fullLink = apiBaseUrl
+            ? `${rawFullLink}?api=${encodeURIComponent(apiBaseUrl)}`
+            : rawFullLink;
 
-        const basicSubject = 'Votre lien de completion du bulletin d\'adhesion';
-        const basicText = `Bonjour ${memberData.firstName || 'Adherent'},\n\nVeuillez completer votre bulletin via ce lien securise (valide 7 jours):\n${fullLink}\n\nAssociation RETROBUS ESSONNE`;
-        const basicHtml = `
-          <p>Bonjour <strong>${memberData.firstName || 'Adherent'}</strong>,</p>
-          <p>Veuillez completer votre bulletin d'adhesion via ce lien securise (valide 7 jours):</p>
-          <p><a href="${fullLink}">${fullLink}</a></p>
-          <p>Association RETROBUS ESSONNE</p>
-        `;
+          const basicSubject = 'Votre lien de completion du bulletin d\'adhesion';
+          const basicText = `Bonjour ${memberData.firstName || 'Adherent'},\n\nVeuillez completer votre bulletin via ce lien securise (valide 7 jours):\n${fullLink}\n\nAssociation RETROBUS ESSONNE`;
+          const basicHtml = `
+            <p>Bonjour <strong>${memberData.firstName || 'Adherent'}</strong>,</p>
+            <p>Veuillez completer votre bulletin d'adhesion via ce lien securise (valide 7 jours):</p>
+            <p><a href="${fullLink}">${fullLink}</a></p>
+            <p>Association RETROBUS ESSONNE</p>
+          `;
 
-        // Récupérer le template "parcours bulletin"
-        const template = await prisma.emailTemplate.findUnique({
-          where: { name: 'parcours bulletin' }
-        });
-
-        const htmlBody = template?.body
-          ? applyBulletinTemplateVars(template.body, {
-              link: fullLink,
-              firstName: memberData.firstName
-            })
-          : basicHtml;
-
-        const subject = template?.subject
-          ? applyBulletinTemplateVars(template.subject, {
-              link: fullLink,
-              firstName: memberData.firstName
-            })
-          : basicSubject;
-
-        // Priorite: userId de la session noreply connectee
-        let senderUserId = getNoreplyUserId();
-
-        // Fallback: retrouver une session active par email noreply
-        if (!senderUserId) {
-          senderUserId = getSessionUserIdByEmail('noreply@association-rbe.fr');
-        }
-
-        // Fallback final: ID DB noreply si session active sur cet ID
-        if (!senderUserId) {
-          const noreplyUser = await prisma.site_users.findFirst({
-            where: { email: 'noreply@association-rbe.fr' }
+          // Récupérer le template "parcours bulletin"
+          const template = await prisma.emailTemplate.findUnique({
+            where: { name: 'parcours bulletin' }
           });
-          if (noreplyUser && hasMailSession(noreplyUser.id)) {
-            senderUserId = noreplyUser.id;
+
+          const htmlBody = template?.body
+            ? applyBulletinTemplateVars(template.body, {
+                link: fullLink,
+                firstName: memberData.firstName
+              })
+            : basicHtml;
+
+          const subject = template?.subject
+            ? applyBulletinTemplateVars(template.subject, {
+                link: fullLink,
+                firstName: memberData.firstName
+              })
+            : basicSubject;
+
+          // Priorite: userId de la session noreply connectee
+          let senderUserId = getNoreplyUserId();
+
+          // Fallback: retrouver une session active par email noreply
+          if (!senderUserId) {
+            senderUserId = getSessionUserIdByEmail('noreply@association-rbe.fr');
           }
-        }
 
-        if (!senderUserId) {
-          console.error('❌ Aucun compte noreply connecté pour envoi email');
-          response.emailError = 'NO_NOREPLY_SESSION';
-        } else {
-          await sendEmail(senderUserId, {
-            to: [email],
-            subject,
-            html: htmlBody,
-            body: basicText,
-            fromName: 'RetroBus Essonne'
-          });
+          // Fallback final: ID DB noreply si session active sur cet ID
+          if (!senderUserId) {
+            const noreplyUser = await prisma.site_users.findFirst({
+              where: { email: 'noreply@association-rbe.fr' }
+            });
+            if (noreplyUser && hasMailSession(noreplyUser.id)) {
+              senderUserId = noreplyUser.id;
+            }
+          }
 
-          console.log('✅ Email envoyé à:', email);
-          response.emailSent = true;
-          response.emailRecipient = email;
+          if (!senderUserId) {
+            console.error('❌ [ASYNC] Aucun compte noreply connecté pour envoi email');
+          } else {
+            await sendEmail(senderUserId, {
+              to: [email],
+              subject,
+              html: htmlBody,
+              body: basicText,
+              fromName: 'RetroBus Essonne'
+            });
+
+            console.log('✅ [ASYNC] Email envoyé à:', email);
+          }
+        } catch (emailError) {
+          console.error('❌ [ASYNC] Erreur envoi email:', emailError.message);
         }
-      } catch (emailError) {
-        console.error('❌ Erreur envoi email:', emailError.message);
-        response.emailError = emailError.message;
-      }
+      })(); // Exécution immédiate, non bloquante
+
+      // Marquer comme "en cours d'envoi" dans la réponse immédiate
+      response.emailSent = true; // Optimiste - l'envoi est lancé
+      response.emailRecipient = email;
     }
 
     // Envoyer par SMS
