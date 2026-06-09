@@ -274,7 +274,39 @@ router.post('/create', async (req, res) => {
           }
 
           if (!senderUserId) {
-            console.error('❌ [ASYNC] Aucun compte noreply connecté pour envoi email');
+            console.warn('⚠️ [ASYNC] Aucune session mail active, utilisation du fallback SMTP direct');
+            
+            // Fallback SMTP direct avec credentials d'environnement
+            const smtpHost = process.env.SMTP_HOST || 'mail.infomaniak.com';
+            const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+            const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || 'noreply@association-rbe.fr';
+            const smtpPass = process.env.EMAIL_PASSWORD || process.env.SMTP_PASSWORD;
+
+            if (!smtpPass) {
+              console.error('❌ [ASYNC] Fallback SMTP impossible: EMAIL_PASSWORD non configuré');
+              return;
+            }
+
+            const transporter = nodemailer.createTransport({
+              host: smtpHost,
+              port: smtpPort,
+              secure: smtpPort === 465,
+              requireTLS: smtpPort !== 465,
+              auth: {
+                user: smtpUser,
+                pass: smtpPass
+              }
+            });
+
+            await transporter.sendMail({
+              from: `"RetroBus Essonne" <${smtpUser}>`,
+              to: email,
+              subject,
+              text: basicText,
+              html: htmlBody
+            });
+
+            console.log('✅ [ASYNC-FALLBACK] Email envoyé via SMTP direct à:', email);
           } else {
             await sendEmail(senderUserId, {
               to: [email],
@@ -284,10 +316,10 @@ router.post('/create', async (req, res) => {
               fromName: 'RetroBus Essonne'
             });
 
-            console.log('✅ [ASYNC] Email envoyé à:', email);
+            console.log('✅ [ASYNC] Email envoyé via session à:', email);
           }
         } catch (emailError) {
-          console.error('❌ [ASYNC] Erreur envoi email:', emailError.message);
+          console.error('❌ [ASYNC] Erreur envoi email:', emailError.message, emailError.stack);
         }
       })(); // Exécution immédiate, non bloquante
 
