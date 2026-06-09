@@ -406,9 +406,6 @@ export async function sendEmail(userId, mailOptions) {
   });
 
   try {
-    // Vérifier la connexion
-    await transporter.verify();
-
     // Construire le champ "from" avec le nom d'affichage si fourni
     const fromAddress = mailOptions.fromName 
       ? `"${mailOptions.fromName}" <${session.email}>`
