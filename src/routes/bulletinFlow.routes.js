@@ -215,117 +215,145 @@ router.post('/create', async (req, res) => {
       smsSent: false
     };
 
-    // Envoyer par email (asynchrone - fire-and-forget pour réponse instantanée)
+    // Envoyer par email (avec timeout de 3 secondes max)
     if (sendEmailFlag && email) {
-      // Lancer l'envoi en arrière-plan sans bloquer la réponse API
-      (async () => {
-        try {
-          const bulletinPublicBaseUrl = resolveBulletinPublicBaseUrl();
-          const linkBaseForEmail = bulletinPublicBaseUrl || linkBase;
-          const rawFullLink = generateSignatureLink(token, linkBaseForEmail);
-          const fullLink = apiBaseUrl
-            ? `${rawFullLink}?api=${encodeURIComponent(apiBaseUrl)}`
-            : rawFullLink;
+      const bulletinPublicBaseUrl = resolveBulletinPublicBaseUrl();
+      const linkBaseForEmail = bulletinPublicBaseUrl || linkBase;
+      const rawFullLink = generateSignatureLink(token, linkBaseForEmail);
+      const fullLink = apiBaseUrl
+        ? `${rawFullLink}?api=${encodeURIComponent(apiBaseUrl)}`
+        : rawFullLink;
 
-          const basicSubject = 'Votre lien de completion du bulletin d\'adhesion';
-          const basicText = `Bonjour ${memberData.firstName || 'Adherent'},\n\nVeuillez completer votre bulletin via ce lien securise (valide 7 jours):\n${fullLink}\n\nAssociation RETROBUS ESSONNE`;
-          const basicHtml = `
-            <p>Bonjour <strong>${memberData.firstName || 'Adherent'}</strong>,</p>
-            <p>Veuillez completer votre bulletin d'adhesion via ce lien securise (valide 7 jours):</p>
-            <p><a href="${fullLink}">${fullLink}</a></p>
-            <p>Association RETROBUS ESSONNE</p>
-          `;
+      const basicSubject = 'Votre lien de completion du bulletin d\'adhesion';
+      const basicText = `Bonjour ${memberData.firstName || 'Adherent'},\n\nVeuillez completer votre bulletin via ce lien securise (valide 7 jours):\n${fullLink}\n\nAssociation RETROBUS ESSONNE`;
+      const basicHtml = `
+        <p>Bonjour <strong>${memberData.firstName || 'Adherent'}</strong>,</p>
+        <p>Veuillez completer votre bulletin d'adhesion via ce lien securise (valide 7 jours):</p>
+        <p><a href="${fullLink}">${fullLink}</a></p>
+        <p>Association RETROBUS ESSONNE</p>
+      `;
 
-          // Récupérer le template "parcours bulletin"
-          const template = await prisma.emailTemplate.findUnique({
-            where: { name: 'parcours bulletin' }
+      // Récupérer le template "parcours bulletin"
+      const template = await prisma.emailTemplate.findUnique({
+        where: { name: 'parcours bulletin' }
+      });
+
+      const htmlBody = template?.body
+        ? applyBulletinTemplateVars(template.body, {
+            link: fullLink,
+            firstName: memberData.firstName
+          })
+        : basicHtml;
+
+      const subject = template?.subject
+        ? applyBulletinTemplateVars(template.subject, {
+            link: fullLink,
+            firstName: memberData.firstName
+          })
+        : basicSubject;
+
+      // Fonction d'envoi avec fallback automatique
+      const sendEmailWithFallback = async () => {
+        // Priorite: userId de la session noreply connectee
+        let senderUserId = getNoreplyUserId();
+
+        // Fallback: retrouver une session active par email noreply
+        if (!senderUserId) {
+          senderUserId = getSessionUserIdByEmail('noreply@association-rbe.fr');
+        }
+
+        // Fallback final: ID DB noreply si session active sur cet ID
+        if (!senderUserId) {
+          const noreplyUser = await prisma.site_users.findFirst({
+            where: { email: 'noreply@association-rbe.fr' }
+          });
+          if (noreplyUser && hasMailSession(noreplyUser.id)) {
+            senderUserId = noreplyUser.id;
+          }
+        }
+
+        if (!senderUserId) {
+          console.warn('⚠️ Aucune session mail active, utilisation du fallback SMTP direct');
+          
+          // Fallback SMTP direct avec credentials d'environnement
+          const smtpHost = process.env.SMTP_HOST || 'mail.infomaniak.com';
+          const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+          const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || 'noreply@association-rbe.fr';
+          const smtpPass = process.env.EMAIL_PASSWORD || process.env.SMTP_PASSWORD;
+
+          if (!smtpPass) {
+            throw new Error('Fallback SMTP impossible: EMAIL_PASSWORD non configuré');
+          }
+
+          const transporter = nodemailer.createTransport({
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpPort === 465,
+            requireTLS: smtpPort !== 465,
+            auth: {
+              user: smtpUser,
+              pass: smtpPass
+            }
           });
 
-          const htmlBody = template?.body
-            ? applyBulletinTemplateVars(template.body, {
-                link: fullLink,
-                firstName: memberData.firstName
-              })
-            : basicHtml;
+          await transporter.sendMail({
+            from: `"RetroBus Essonne" <${smtpUser}>`,
+            to: email,
+            subject,
+            text: basicText,
+            html: htmlBody
+          });
 
-          const subject = template?.subject
-            ? applyBulletinTemplateVars(template.subject, {
-                link: fullLink,
-                firstName: memberData.firstName
-              })
-            : basicSubject;
+          console.log('✅ Email envoyé via SMTP direct à:', email);
+          return 'smtp-direct';
+        } else {
+          await sendEmail(senderUserId, {
+            to: [email],
+            subject,
+            html: htmlBody,
+            body: basicText,
+            fromName: 'RetroBus Essonne'
+          });
 
-          // Priorite: userId de la session noreply connectee
-          let senderUserId = getNoreplyUserId();
-
-          // Fallback: retrouver une session active par email noreply
-          if (!senderUserId) {
-            senderUserId = getSessionUserIdByEmail('noreply@association-rbe.fr');
-          }
-
-          // Fallback final: ID DB noreply si session active sur cet ID
-          if (!senderUserId) {
-            const noreplyUser = await prisma.site_users.findFirst({
-              where: { email: 'noreply@association-rbe.fr' }
-            });
-            if (noreplyUser && hasMailSession(noreplyUser.id)) {
-              senderUserId = noreplyUser.id;
-            }
-          }
-
-          if (!senderUserId) {
-            console.warn('⚠️ [ASYNC] Aucune session mail active, utilisation du fallback SMTP direct');
-            
-            // Fallback SMTP direct avec credentials d'environnement
-            const smtpHost = process.env.SMTP_HOST || 'mail.infomaniak.com';
-            const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
-            const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || 'noreply@association-rbe.fr';
-            const smtpPass = process.env.EMAIL_PASSWORD || process.env.SMTP_PASSWORD;
-
-            if (!smtpPass) {
-              console.error('❌ [ASYNC] Fallback SMTP impossible: EMAIL_PASSWORD non configuré');
-              return;
-            }
-
-            const transporter = nodemailer.createTransport({
-              host: smtpHost,
-              port: smtpPort,
-              secure: smtpPort === 465,
-              requireTLS: smtpPort !== 465,
-              auth: {
-                user: smtpUser,
-                pass: smtpPass
-              }
-            });
-
-            await transporter.sendMail({
-              from: `"RetroBus Essonne" <${smtpUser}>`,
-              to: email,
-              subject,
-              text: basicText,
-              html: htmlBody
-            });
-
-            console.log('✅ [ASYNC-FALLBACK] Email envoyé via SMTP direct à:', email);
-          } else {
-            await sendEmail(senderUserId, {
-              to: [email],
-              subject,
-              html: htmlBody,
-              body: basicText,
-              fromName: 'RetroBus Essonne'
-            });
-
-            console.log('✅ [ASYNC] Email envoyé via session à:', email);
-          }
-        } catch (emailError) {
-          console.error('❌ [ASYNC] Erreur envoi email:', emailError.message, emailError.stack);
+          console.log('✅ Email envoyé via session à:', email);
+          return 'session';
         }
-      })(); // Exécution immédiate, non bloquante
+      };
 
-      // Marquer comme "en cours d'envoi" dans la réponse immédiate
-      response.emailSent = true; // Optimiste - l'envoi est lancé
-      response.emailRecipient = email;
+      // Timeout Promise (3 secondes max)
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('EMAIL_TIMEOUT')), 3000);
+      });
+
+      try {
+        // Race entre envoi email et timeout
+        const method = await Promise.race([
+          sendEmailWithFallback(),
+          timeoutPromise
+        ]);
+
+        response.emailSent = true;
+        response.emailMethod = method;
+        response.emailRecipient = email;
+        console.log(`📧 Email envoyé avec succès (${method}) en < 3s`);
+      } catch (error) {
+        if (error.message === 'EMAIL_TIMEOUT') {
+          // Timeout atteint - continuer l'envoi en arrière-plan
+          console.warn('⏱️ Email timeout (3s) - envoi continue en arrière-plan');
+          sendEmailWithFallback()
+            .then(() => console.log('✅ Email arrière-plan envoyé à:', email))
+            .catch(bgError => console.error('❌ Email arrière-plan échoué:', bgError.message));
+          
+          response.emailSent = true; // Optimiste
+          response.emailTimeout = true;
+          response.emailRecipient = email;
+        } else {
+          // Erreur réelle
+          console.error('❌ Erreur envoi email:', error.message);
+          response.emailSent = false;
+          response.emailError = error.message;
+        }
+      }
     }
 
     // Envoyer par SMS
