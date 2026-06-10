@@ -4868,8 +4868,7 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
       select: {
         id: true,
         email: true,
-        permissions: true,
-        linkedSiteUserId: true
+        permissions: true
       }
     });
     
@@ -4894,15 +4893,12 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
       }
     }
     
-    // Load permissions from user_permissions table (via linkedSiteUserId or lookup)
-    let siteUserId = member.linkedSiteUserId;
-    if (!siteUserId) {
-      const siteUser = await prisma.site_users.findFirst({
-        where: { linkedMemberId: member.id },
-        select: { id: true, role: true }
-      });
-      siteUserId = siteUser?.id;
-    }
+    // Load permissions from user_permissions table (lookup via linkedMemberId)
+    const siteUser = await prisma.site_users.findFirst({
+      where: { linkedMemberId: member.id },
+      select: { id: true, role: true }
+    });
+    const siteUserId = siteUser?.id;
     
     const dbPermissions = siteUserId 
       ? await prisma.user_permissions.findMany({
