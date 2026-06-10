@@ -4842,10 +4842,20 @@ app.delete('/api/members/:id/permissions/:permission', requireAuth, async (req, 
 
 // PERMISSIONS ENDPOINT - Lookup user role and permissions by memberId or userId
 // ✅ NOW USING PRISMA - Get permissions from members.permissions + user_permissions table
+// Cache en mémoire pour les permissions (1 minute)
+const permissionsCache = new Map();
+const PERMISSIONS_CACHE_TTL = 60000; // 1 minute
+
 app.get('/api/user-permissions/:userId', async (req, res) => {
   try {
     const userId = req.params.userId;
-    console.log(`🔍 GET /api/user-permissions/:userId - ${userId}`);
+    
+    // Vérifier le cache d'abord
+    const cacheKey = `perms_${userId}`;
+    const cached = permissionsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < PERMISSIONS_CACHE_TTL) {
+      return res.json(cached.data);
+    }
     
     // Try to find member first (userId might be memberId)
     const member = await prisma.members.findFirst({
@@ -4854,46 +4864,54 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
           { id: userId },
           { email: userId }
         ]
+      },
+      select: {
+        id: true,
+        email: true,
+        permissions: true,
+        linkedSiteUserId: true
       }
     });
     
     if (!member) {
-      console.log(`   ❌ Member not found for userId: ${userId}`);
-      return res.json({ permissions: [], role: 'MEMBER' });
+      const emptyResponse = { permissions: [], role: 'MEMBER', success: true };
+      permissionsCache.set(cacheKey, { data: emptyResponse, timestamp: Date.now() });
+      return res.json(emptyResponse);
     }
-    
-    console.log(`   📋 Member found: ${member.email}, permissions field:`, member.permissions);
     
     // Convert member permissions JSON format to standard format
     let convertedPermissions = [];
     
     if (member.permissions && typeof member.permissions === 'object') {
-      // Handle both formats:
-      // 1. New format: { blockedResources: [...], restrictiveMode: true }
-      // 2. Old format: { deniedResources: [...], restrictiveMode: true }
-      
       const blockedList = member.permissions.blockedResources || member.permissions.deniedResources || [];
       
       if (member.permissions.restrictiveMode && Array.isArray(blockedList)) {
-        // Convert each blocked resource to the format MyRBE.jsx expects
         convertedPermissions = blockedList.map(resource => ({
           resource,
           actions: ['DENY'],
           reason: 'Restrictive mode enabled'
         }));
-        
-        console.log(`   🔒 Restrictive mode active. Blocked resources: ${blockedList.join(', ')}`);
       }
     }
     
-    // 🆕 Also load permissions from user_permissions table (Prisma)
-    let siteUser = await prisma.site_users.findFirst({
-      where: { linkedMemberId: member.id }
-    });
+    // Load permissions from user_permissions table (via linkedSiteUserId or lookup)
+    let siteUserId = member.linkedSiteUserId;
+    if (!siteUserId) {
+      const siteUser = await prisma.site_users.findFirst({
+        where: { linkedMemberId: member.id },
+        select: { id: true, role: true }
+      });
+      siteUserId = siteUser?.id;
+    }
     
-    const dbPermissions = siteUser 
+    const dbPermissions = siteUserId 
       ? await prisma.user_permissions.findMany({
-          where: { userId: siteUser.id }
+          where: { userId: siteUserId },
+          select: {
+            resource: true,
+            actions: true,
+            reason: true
+          }
         })
       : [];
     
@@ -4903,17 +4921,20 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
       ...dbPermissions
     ];
     
-    const role = siteUser?.role || 'MEMBER';
+    const role = 'MEMBER';
     
-    console.log(`   ✅ Total permissions loaded: ${allPermissions.length}`, allPermissions);
-    
-    res.json({ 
+    const response = { 
       permissions: allPermissions,
       success: true,
       role, 
       memberId: member.id,
       email: member.email
-    });
+    };
+    
+    // Mettre en cache
+    permissionsCache.set(cacheKey, { data: response, timestamp: Date.now() });
+    
+    res.json(response);
   } catch (e) {
     console.error('❌ Error in /api/user-permissions:', e.message);
     res.status(500).json({ error: e.message });
