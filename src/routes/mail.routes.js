@@ -192,7 +192,8 @@ router.get('/list', requireAuth, async (req, res) => {
 
     if (!hasMailSession(userId)) {
       return res.status(401).json({ 
-        error: 'Session mail non active. Veuillez vous reconnecter.' 
+        error: 'Session mail non active. Veuillez vous reconnecter.',
+        success: false
       });
     }
 
@@ -211,8 +212,23 @@ router.get('/list', requireAuth, async (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('Erreur liste emails:', error);
-    res.status(500).json({ error: error.message });
+    console.error(`❌ Erreur liste emails (folder: ${req.query.folder}):`, error.message);
+    
+    // Si le dossier n'existe pas, retourner une liste vide au lieu d'une erreur 500
+    if (error.message?.includes('Mailbox does not exist') || 
+        error.message?.includes('does not exist') ||
+        error.message?.includes('Unknown Mailbox')) {
+      return res.json({
+        success: true,
+        emails: [],
+        warning: `Le dossier "${req.query.folder}" n'existe pas pour ce compte.`
+      });
+    }
+    
+    res.status(500).json({ 
+      error: error.message || 'Erreur lors de la récupération des emails',
+      success: false
+    });
   }
 });
 
