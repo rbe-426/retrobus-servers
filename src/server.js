@@ -7870,6 +7870,7 @@ app.post('/api/admin/users/create-with-password', requireAuth, async (req, res) 
 app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    const { alternativeEmail } = req.body;
 
     // Check if user exists in members
     let user = await prisma.members.findUnique({
@@ -7896,6 +7897,9 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    // Determine target email (alternative or default)
+    const targetEmail = alternativeEmail && alternativeEmail.trim() ? alternativeEmail.trim() : user.email;
 
     // Generate temporary password
     const tempPassword = generateTemporaryPassword();
@@ -7956,7 +7960,7 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
     try {
       await sendTemplatedEmail(
         'mailback password',
-        updatedUser.email,
+        targetEmail,
         {
           firstName: updatedUser.firstName,
           lastName: updatedUser.lastName,
@@ -7965,7 +7969,10 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
         },
         'RétroBus Essonne - Nouveau mot de passe'
       );
-      console.log('✅ Email de réinitialisation envoyé à:', updatedUser.email);
+      console.log('✅ Email de réinitialisation envoyé à:', targetEmail);
+      if (alternativeEmail && alternativeEmail.trim()) {
+        console.log('   (Email alternatif utilisé au lieu de:', updatedUser.email + ')');
+      }
     } catch (emailError) {
       console.error('⚠️ Erreur envoi email de réinitialisation:', emailError.message);
       // Continue even if email fails
@@ -7974,7 +7981,7 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
     res.json({ 
       success: true,
       emailSent: true,
-      message: 'Mot de passe réinitialisé. Un email avec les nouveaux identifiants a été envoyé à ' + updatedUser.email,
+      message: 'Mot de passe réinitialisé. Un email avec les nouveaux identifiants a été envoyé à ' + targetEmail,
       user: {
         id: updatedUser.id,
         email: updatedUser.email,
