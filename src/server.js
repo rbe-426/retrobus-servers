@@ -7533,32 +7533,42 @@ app.get(['/finance/export', '/api/finance/export'], requireAuth, (req, res) => {
 // PERMISSIONS & ADMIN endpoints
 app.get('/api/admin/users', requireAuth, async (req, res) => {
   try {
-    // Read from Prisma (single source of truth)
-    const prismaUsers = await prisma.members.findMany({
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        matricule: true,
-        role: true,
-        status: true,
-        permissions: true,
-        createdAt: true
+    // Récupérer depuis site_users (la table des comptes d'accès)
+    const siteUsers = await prisma.site_users.findMany({
+      include: {
+        members: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            matricule: true,
+            email: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
       }
     });
     
-    // Convert to API response format
-    const users = prismaUsers.map(m => ({
-      id: m.id,
-      email: m.email,
-      firstName: m.firstName,
-      lastName: m.lastName,
-      matricule: m.matricule,
-      role: m.role,
-      status: m.status || 'active',
-      permissions: m.permissions || [],
-      createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt
+    // Formater pour le frontend
+    const users = siteUsers.map(u => ({
+      id: u.id,
+      username: u.username,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email,
+      role: u.role,
+      status: u.isActive ? 'ACTIVE' : 'DISABLED',
+      passwordStatus: u.mustChangePassword ? 'TEMPORARY' : 'PERMANENT',
+      hasInternalAccess: u.hasInternalAccess,
+      hasExternalAccess: u.hasExternalAccess,
+      lastLoginAt: u.lastLoginAt,
+      linkedMemberId: u.linkedMemberId,
+      linkedMemberName: u.members ? `${u.members.firstName} ${u.members.lastName}` : null,
+      linkedMemberMatricule: u.members?.matricule || null,
+      createdAt: u.createdAt,
+      mustChangePassword: u.mustChangePassword
     }));
     
     res.json(users);
@@ -7890,6 +7900,98 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
   } catch (e) {
     console.error('❌ POST /api/admin/users/:id/reset-password error:', e.message);
     res.status(500).json({ error: 'Failed to reset password', details: e.message });
+  }
+});
+
+// POST /api/admin/users/:id/link-member - Link site_users account to a members record
+app.post('/api/admin/users/:id/link-member', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { memberId } = req.body;
+
+    if (!memberId) {
+      return res.status(400).json({ error: 'memberId is required' });
+    }
+
+    // Vérifier que le compte site_users existe
+    const siteUser = await prisma.site_users.findUnique({
+      where: { id }
+    });
+
+    if (!siteUser) {
+      return res.status(404).json({ error: 'Site user account not found' });
+    }
+
+    // Vérifier que le membre existe
+    const member = await prisma.members.findUnique({
+      where: { id: memberId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        matricule: true,
+        email: true
+      }
+    });
+
+    if (!member) {
+      return res.status(404).json({ error: 'Member not found' });
+    }
+
+    // Vérifier qu'aucun autre site_users n'est déjà lié à ce membre
+    const existingLink = await prisma.site_users.findFirst({
+      where: {
+        linkedMemberId: memberId,
+        NOT: { id: id }
+      }
+    });
+
+    if (existingLink) {
+      return res.status(400).json({ 
+        error: 'Ce membre est déjà lié à un autre compte d\'accès',
+        existingAccount: {
+          username: existingLink.username,
+          email: existingLink.email
+        }
+      });
+    }
+
+    // Mettre à jour le lien
+    const updated = await prisma.site_users.update({
+      where: { id },
+      data: {
+        linkedMemberId: memberId,
+        updatedAt: new Date()
+      },
+      include: {
+        members: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            matricule: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    console.log(`✅ Linked site_user ${id} to member ${memberId} (${member.firstName} ${member.lastName}, matricule: ${member.matricule})`);
+
+    res.json({
+      success: true,
+      message: 'Compte lié au membre avec succès',
+      linkedMember: {
+        id: member.id,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        matricule: member.matricule,
+        email: member.email
+      }
+    });
+  } catch (e) {
+    console.error('❌ POST /api/admin/users/:id/link-member error:', e.message);
+    res.status(500).json({ error: 'Failed to link member', details: e.message });
   }
 });
 
