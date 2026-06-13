@@ -884,7 +884,7 @@ model user_permissions {
   id         String     @id
   userId     String
   createdAt  DateTime   @default(now())
-  actions    String?
+  actions    String[]
   expiresAt  DateTime?
   grantedAt  DateTime   @default(now())
   grantedBy  String?

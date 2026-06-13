@@ -9266,6 +9266,208 @@ app.get('/api/admin/users/:id/permissions', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch permissions', details: e.message });
   }
 });
+
+// POST /api/user-permissions/:userId - Add a single permission action
+app.post('/api/user-permissions/:userId', requireAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { resource, action } = req.body;
+
+    if (!resource || !action) {
+      return res.status(400).json({ error: 'Resource and action are required' });
+    }
+
+    // Find site_user
+    const siteUser = await prisma.site_users.findUnique({
+      where: { id: userId }
+    });
+
+    if (!siteUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if permission already exists
+    let permission = await prisma.user_permissions.findFirst({
+      where: { 
+        userId: userId,
+        resource: resource
+      }
+    });
+
+    if (permission) {
+      // Add action if not already present
+      const actions = permission.actions || [];
+      if (!actions.includes(action)) {
+        actions.push(action);
+        permission = await prisma.user_permissions.update({
+          where: { id: permission.id },
+          data: { 
+            actions: actions,
+            updatedAt: new Date()
+          }
+        });
+      }
+    } else {
+      // Create new permission
+      permission = await prisma.user_permissions.create({
+        data: {
+          id: randomUUID(),
+          userId: userId,
+          resource: resource,
+          actions: [action],
+          updatedAt: new Date()
+        }
+      });
+    }
+
+    // Clear cache
+    permissionsCache.delete(`perms_${userId}`);
+
+    console.log(`✅ Added permission ${resource}:${action} for user ${userId}`);
+    res.json({ ok: true, permission });
+  } catch (e) {
+    console.error('❌ POST /api/user-permissions/:userId error:', e.message);
+    res.status(500).json({ error: 'Failed to add permission', details: e.message });
+  }
+});
+
+// DELETE /api/user-permissions/:userId - Remove a single permission action
+app.delete('/api/user-permissions/:userId', requireAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { resource, action } = req.body;
+
+    if (!resource || !action) {
+      return res.status(400).json({ error: 'Resource and action are required' });
+    }
+
+    // Find permission
+    const permission = await prisma.user_permissions.findFirst({
+      where: { 
+        userId: userId,
+        resource: resource
+      }
+    });
+
+    if (!permission) {
+      return res.status(404).json({ error: 'Permission not found' });
+    }
+
+    // Remove action from array
+    const actions = (permission.actions || []).filter(a => a !== action);
+
+    if (actions.length === 0) {
+      // Delete the entire permission if no actions left
+      await prisma.user_permissions.delete({
+        where: { id: permission.id }
+      });
+    } else {
+      // Update with remaining actions
+      await prisma.user_permissions.update({
+        where: { id: permission.id },
+        data: { 
+          actions: actions,
+          updatedAt: new Date()
+        }
+      });
+    }
+
+    // Clear cache
+    permissionsCache.delete(`perms_${userId}`);
+
+    console.log(`✅ Removed permission ${resource}:${action} for user ${userId}`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/user-permissions/:userId error:', e.message);
+    res.status(500).json({ error: 'Failed to remove permission', details: e.message });
+  }
+});
+
+// POST /api/user-permissions/:userId/cards - Set visible MyRBE cards
+app.post('/api/user-permissions/:userId/cards', requireAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { visibleCards } = req.body;
+
+    if (!Array.isArray(visibleCards)) {
+      return res.status(400).json({ error: 'visibleCards must be an array' });
+    }
+
+    // Find site_user
+    const siteUser = await prisma.site_users.findUnique({
+      where: { id: userId }
+    });
+
+    if (!siteUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get all existing permissions
+    const existingPerms = await prisma.user_permissions.findMany({
+      where: { userId: userId }
+    });
+
+    // Remove GRANT action from all permissions
+    for (const perm of existingPerms) {
+      const actions = (perm.actions || []).filter(a => a !== 'GRANT');
+      if (actions.length === 0) {
+        // Delete if no actions left
+        await prisma.user_permissions.delete({ where: { id: perm.id } });
+      } else {
+        // Update with remaining actions
+        await prisma.user_permissions.update({
+          where: { id: perm.id },
+          data: { actions: actions }
+        });
+      }
+    }
+
+    // Add GRANT permission for each visible card
+    for (const card of visibleCards) {
+      const existing = await prisma.user_permissions.findUnique({
+        where: {
+          userId_resource: {
+            userId: userId,
+            resource: card
+          }
+        }
+      });
+
+      if (existing) {
+        // Add GRANT to existing actions
+        const actions = existing.actions || [];
+        if (!actions.includes('GRANT')) {
+          actions.push('GRANT');
+          await prisma.user_permissions.update({
+            where: { id: existing.id },
+            data: { actions: actions }
+          });
+        }
+      } else {
+        // Create new permission with GRANT
+        await prisma.user_permissions.create({
+          data: {
+            id: randomUUID(),
+            userId: userId,
+            resource: card,
+            actions: ['GRANT'],
+            updatedAt: new Date()
+          }
+        });
+      }
+    }
+
+    // Clear cache
+    permissionsCache.delete(`perms_${userId}`);
+
+    console.log(`✅ Updated MyRBE cards for user ${userId}: ${visibleCards.length} cards`);
+    res.json({ ok: true, visibleCards });
+  } catch (e) {
+    console.error('❌ POST /api/user-permissions/:userId/cards error:', e.message);
+    res.status(500).json({ error: 'Failed to update cards', details: e.message });
+  }
+});
+
 app.post('/api/admin/users/:userId/make-admin', requireAuth, async (req, res) => {
   const { userId } = req.params;
   
