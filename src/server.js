@@ -7580,7 +7580,7 @@ app.get('/api/admin/users', requireAuth, async (req, res) => {
 
 app.post('/api/admin/users', requireAuth, async (req, res) => {
   try {
-    const { email, firstName, lastName, matricule, password, temporaryPassword, role } = req.body;
+    const { email, firstName, lastName, matricule, password, temporaryPassword, role, mustChangePassword } = req.body;
     
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
@@ -7603,6 +7603,10 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
     const tempPassword = password || temporaryPassword || generateTemporaryPassword();
     const hashedPassword = hashPasswordForStorage(tempPassword);
     
+    // Determine if password must be changed
+    // If mustChangePassword is explicitly set, use it; otherwise, default to true if no password provided
+    const shouldChangePwd = mustChangePassword !== undefined ? mustChangePassword : (!password);
+    
     // Create in Prisma (single source of truth)
     const newMember = await prisma.members.create({
       data: {
@@ -7612,8 +7616,8 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
         lastName,
         matricule: matricule || '',
         password: hashedPassword,
-        isPasswordTemporary: !password ? true : false,
-        mustChangePassword: !password ? true : false,
+        isPasswordTemporary: shouldChangePwd,
+        mustChangePassword: shouldChangePwd,
         role: role || 'USER',
         status: 'active',
         permissions: {},
@@ -7640,10 +7644,31 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
     
     debouncedSave();
     
-    console.log('✅ User créé:', newMember.id, email, 'role:', role, 'isPasswordTemporary:', newMember.isPasswordTemporary, 'tempPassword:', tempPassword);
+    console.log('✅ User créé:', newMember.id, email, 'role:', role, 'mustChangePassword:', newMember.mustChangePassword, 'tempPassword:', tempPassword);
+    
+    // Send email with credentials using mailback password template
+    try {
+      await sendTemplatedEmail(
+        'mailback password',
+        email,
+        {
+          firstName: newMember.firstName,
+          lastName: newMember.lastName,
+          urbex_id: newMember.matricule || email,
+          temporar_mdp: tempPassword
+        },
+        'RétroBus Essonne - Identifiants'
+      );
+      console.log('✅ Email de bienvenue envoyé à:', email);
+    } catch (emailError) {
+      console.error('⚠️ Erreur envoi email de bienvenue:', emailError.message);
+      // Continue even if email fails
+    }
+    
     res.status(201).json({ 
       user: newMember,
-      temporaryPassword: tempPassword // Return temp password for admin to communicate
+      emailSent: true,
+      message: 'Utilisateur créé. Un email avec les identifiants a été envoyé à ' + email
     });
   } catch (e) {
     console.error('❌ POST /api/admin/users error:', e.message);
@@ -7846,10 +7871,20 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
   try {
     const { id } = req.params;
 
-    // Check if user exists
-    const user = await prisma.members.findUnique({
+    // Check if user exists in members
+    let user = await prisma.members.findUnique({
       where: { id }
     });
+
+    let isSiteUser = false;
+    
+    // If not found in members, check site_users
+    if (!user) {
+      user = await prisma.site_users.findUnique({
+        where: { id }
+      });
+      isSiteUser = true;
+    }
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -7860,36 +7895,66 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
     const hashedPassword = hashPasswordForStorage(tempPassword);
 
     // Update user with hashed temporary password
-    const updatedUser = await prisma.members.update({
-      where: { id },
-      data: {
-        password: hashedPassword,
-        isPasswordTemporary: true,
-        mustChangePassword: true,
-        updatedAt: new Date()
-      }
-    });
+    let updatedUser;
+    if (isSiteUser) {
+      updatedUser = await prisma.site_users.update({
+        where: { id },
+        data: {
+          password: hashedPassword,
+          mustChangePassword: true,
+          updatedAt: new Date()
+        }
+      });
+    } else {
+      updatedUser = await prisma.members.update({
+        where: { id },
+        data: {
+          password: hashedPassword,
+          isPasswordTemporary: true,
+          mustChangePassword: true,
+          updatedAt: new Date()
+        }
+      });
 
-    // Update in memory state
-    const stateIndex = state.members.findIndex(m => m.id === id);
-    if (stateIndex !== -1) {
-      state.members[stateIndex] = {
-        ...state.members[stateIndex],
-        password: hashedPassword,
-        isPasswordTemporary: true,
-        mustChangePassword: true
-      };
+      // Update in memory state for members
+      const stateIndex = state.members.findIndex(m => m.id === id);
+      if (stateIndex !== -1) {
+        state.members[stateIndex] = {
+          ...state.members[stateIndex],
+          password: hashedPassword,
+          isPasswordTemporary: true,
+          mustChangePassword: true
+        };
+      }
     }
 
     debouncedSave();
 
-    console.log('✅ Temporary password generated for user:', id);
+    console.log('✅ Temporary password generated for user:', id, isSiteUser ? '(site_users)' : '(members)');
     
-    // Return temporary password (only time it will be visible)
+    // Send email with new credentials using mailback password template
+    try {
+      await sendTemplatedEmail(
+        'mailback password',
+        updatedUser.email,
+        {
+          firstName: updatedUser.firstName,
+          lastName: updatedUser.lastName,
+          urbex_id: updatedUser.matricule || updatedUser.email,
+          temporar_mdp: tempPassword
+        },
+        'RétroBus Essonne - Nouveau mot de passe'
+      );
+      console.log('✅ Email de réinitialisation envoyé à:', updatedUser.email);
+    } catch (emailError) {
+      console.error('⚠️ Erreur envoi email de réinitialisation:', emailError.message);
+      // Continue even if email fails
+    }
+    
     res.json({ 
       success: true,
-      tempPassword: tempPassword,
-      message: 'Mot de passe temporaire généré. L\'utilisateur doit le changer à la première connexion.',
+      emailSent: true,
+      message: 'Mot de passe réinitialisé. Un email avec les nouveaux identifiants a été envoyé à ' + updatedUser.email,
       user: {
         id: updatedUser.id,
         email: updatedUser.email,
