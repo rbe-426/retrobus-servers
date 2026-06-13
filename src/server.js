@@ -7878,10 +7878,17 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
 
     let isSiteUser = false;
     
-    // If not found in members, check site_users
+    // If not found in members, check site_users (with members relation for matricule)
     if (!user) {
       user = await prisma.site_users.findUnique({
-        where: { id }
+        where: { id },
+        include: {
+          members: {
+            select: {
+              matricule: true
+            }
+          }
+        }
       });
       isSiteUser = true;
     }
@@ -7896,6 +7903,8 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
 
     // Update user with hashed temporary password
     let updatedUser;
+    let userMatricule;
+    
     if (isSiteUser) {
       updatedUser = await prisma.site_users.update({
         where: { id },
@@ -7903,8 +7912,17 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
           password: hashedPassword,
           mustChangePassword: true,
           updatedAt: new Date()
+        },
+        include: {
+          members: {
+            select: {
+              matricule: true
+            }
+          }
         }
       });
+      // Get matricule from linked member
+      userMatricule = updatedUser.members?.matricule || updatedUser.email;
     } else {
       updatedUser = await prisma.members.update({
         where: { id },
@@ -7915,6 +7933,8 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
           updatedAt: new Date()
         }
       });
+      // Get matricule directly from member
+      userMatricule = updatedUser.matricule || updatedUser.email;
 
       // Update in memory state for members
       const stateIndex = state.members.findIndex(m => m.id === id);
@@ -7940,7 +7960,7 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
         {
           firstName: updatedUser.firstName,
           lastName: updatedUser.lastName,
-          urbex_id: updatedUser.matricule || updatedUser.email,
+          urbex_id: userMatricule,
           temporar_mdp: tempPassword
         },
         'RétroBus Essonne - Nouveau mot de passe'
