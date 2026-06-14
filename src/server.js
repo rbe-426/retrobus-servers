@@ -1425,26 +1425,50 @@ app.get(['/auth/me','/api/auth/me'], requireAuth, (req, res) => {
 });
 
 // Session validation - /api/me endpoint
-app.get('/api/me', requireAuth, (req, res) => {
-  const member = state.members.find(m => m.email === req.user.email) || null;
-  if (!member) {
-    return res.json({ user: null });
-  }
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+    const username = String(req.user?.username || '').trim();
 
-  // Get role from member.role first, fall back to site_users if needed
-  let role = member.role || 'MEMBER';
+    // Chercher dans Prisma d'abord
+    let member = await prisma.members.findFirst({
+      where: {
+        OR: [
+          ...(userEmail ? [{ email: userEmail }] : []),
+          ...(username ? [{ matricule: username }] : [])
+        ]
+      }
+    });
 
-  res.json({ 
-    user: { 
-      id: member.id, 
-      email: member.email, 
-      firstName: member.firstName,
-      lastName: member.lastName,
-      role: role,  // ADD ROLE HERE
-      permissions: member.permissions || [],
-      status: member.status || 'active'
+    // Fallback: state.members
+    if (!member) {
+      member = state.members.find(m => m.email === userEmail) || null;
     }
-  });
+
+    if (!member) {
+      return res.json({ user: null });
+    }
+
+    // Get role from member.role first, fall back to site_users if needed
+    let role = member.role || 'MEMBER';
+
+    res.json({ 
+      user: { 
+        id: member.id, 
+        email: member.email, 
+        prenom: member.firstName || member.prenom,
+        nom: member.lastName || member.nom,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        role: role,
+        permissions: member.permissions || [],
+        status: member.status || 'active'
+      }
+    });
+  } catch (e) {
+    console.error('❌ /api/me error:', e.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
 });
 
 // PUBLIC ENDPOINTS (no authentication required)
