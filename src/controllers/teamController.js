@@ -36,13 +36,30 @@ export const getAllTeamMembers = async (req, res) => {
       ]
     });
 
-    // Si mode public, masquer les contacts
-    if (isPublic === 'true') {
-      const publicMembers = members.map(({ email, phone, ...member }) => member);
-      return res.json(publicMembers);
-    }
+    // Déterminer l'URL de base pour les images
+    const baseUrl = process.env.PUBLIC_API_BASE || 
+                    process.env.VITE_API_URL || 
+                    `${req.protocol}://${req.get('host')}`;
 
-    res.json(members);
+    // Transformer les membres
+    const transformedMembers = members.map(member => {
+      const transformed = { ...member };
+      
+      // Si l'image est un chemin relatif, le transformer en URL complète
+      if (transformed.image && transformed.image.startsWith('/uploads/')) {
+        transformed.image = `${baseUrl}${transformed.image}`;
+      }
+      
+      // Si mode public, supprimer les contacts
+      if (isPublic === 'true') {
+        delete transformed.email;
+        delete transformed.phone;
+      }
+      
+      return transformed;
+    });
+
+    res.json(transformedMembers);
   } catch (error) {
     console.error('Erreur récupération équipe:', error);
     res.status(500).json({ error: 'Erreur serveur' });
