@@ -9,12 +9,28 @@
  * PUT    /api/team/:id          - Met à jour un membre (ADMIN uniquement)
  * DELETE /api/team/:id          - Désactive un membre (ADMIN uniquement)
  * POST   /api/team/reorder      - Réordonne les membres (ADMIN uniquement)
+ * POST   /api/team/:id/upload-avatar - Upload photo de profil (ADMIN uniquement)
  */
 
 import express from 'express';
+import multer from 'multer';
 import * as teamController from '../controllers/teamController.js';
 
 const router = express.Router();
+
+// Configuration multer pour upload d'avatars
+const avatarUpload = multer({
+  dest: 'uploads/temp/',
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Type de fichier non autorisé. Utilisez JPG, PNG ou WebP.'));
+    }
+  }
+});
 
 /**
  * Middleware d'authentification
@@ -34,19 +50,13 @@ const requireAdmin = (req, res, next) => {
     return res.status(401).json({ error: 'Non authentifié' });
   }
 
-  // 🐛 DEBUG
-  console.log('🔐 requireAdmin - req.user:', req.user);
-  console.log('🔐 requireAdmin - role:', req.user.role);
-
   const role = req.user.role?.toUpperCase();
   const adminRoles = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'];
   
   if (!adminRoles.includes(role)) {
-    console.log('❌ Rôle refusé:', role, '- Rôles autorisés:', adminRoles);
     return res.status(403).json({ error: 'Accès refusé - Droits administrateur requis' });
   }
 
-  console.log('✅ Accès admin autorisé pour rôle:', role);
   next();
 };
 
@@ -59,5 +69,6 @@ router.post('/', requireAuth, requireAdmin, teamController.createTeamMember);
 router.put('/:id', requireAuth, requireAdmin, teamController.updateTeamMember);
 router.delete('/:id', requireAuth, requireAdmin, teamController.deleteTeamMember);
 router.post('/reorder', requireAuth, requireAdmin, teamController.reorderTeamMembers);
+router.post('/:id/upload-avatar', requireAuth, requireAdmin, avatarUpload.single('avatar'), teamController.uploadTeamAvatar);
 
 export default router;

@@ -4,7 +4,19 @@
  */
 
 import { PrismaClient } from '@prisma/client';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
 const prisma = new PrismaClient();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadsDir = path.join(__dirname, '../../uploads/team-avatars');
+
+// Créer le dossier uploads/team-avatars s'il n'existe pas
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 /**
  * GET /api/team - Récupère tous les membres de l'équipe
@@ -194,3 +206,64 @@ export const reorderTeamMembers = async (req, res) => {
     res.status(500).json({ error: 'Erreur serveur' });
   }
 };
+
+/**
+ * POST /api/team/:id/upload-avatar - Upload photo de profil
+ * Multipart form: file (image)
+ */
+export const uploadTeamAvatar = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!req.file) {
+      return res.status(400).json({ error: 'Aucun fichier fourni' });
+    }
+
+    // Vérifier que le membre existe
+    const member = await prisma.teamMember.findUnique({
+      where: { id }
+    });
+
+    if (!member) {
+      // Supprimer le fichier uploadé si membre inexistant
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: 'Membre non trouvé' });
+    }
+
+    // Générer un nom de fichier unique
+    const ext = path.extname(req.file.originalname);
+    const filename = `${id}-${Date.now()}${ext}`;
+    const filepath = path.join(uploadsDir, filename);
+
+    // Déplacer le fichier uploadé
+    fs.renameSync(req.file.path, filepath);
+
+    // Supprimer l'ancien avatar si existe
+    if (member.image && member.image.startsWith('/uploads/team-avatars/')) {
+      const oldPath = path.join(__dirname, '../../', member.image);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+    }
+
+    // Mettre à jour le chemin de l'image dans la DB
+    const imageUrl = `/uploads/team-avatars/${filename}`;
+    await prisma.teamMember.update({
+      where: { id },
+      data: { image: imageUrl }
+    });
+
+    res.json({ 
+      message: 'Avatar uploadé avec succès',
+      imageUrl 
+    });
+  } catch (error) {
+    console.error('Erreur upload avatar:', error);
+    // Nettoyer le fichier en cas d'erreur
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+};
+
