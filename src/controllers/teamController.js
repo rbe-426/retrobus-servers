@@ -81,7 +81,17 @@ export const getTeamMemberById = async (req, res) => {
       return res.status(404).json({ error: 'Membre non trouvé' });
     }
 
-    res.json(member);
+    // Transformer l'URL de l'image si nécessaire
+    const baseUrl = process.env.PUBLIC_API_BASE || 
+                    process.env.VITE_API_URL || 
+                    `${req.protocol}://${req.get('host')}`;
+    
+    const transformed = { ...member };
+    if (transformed.image && transformed.image.startsWith('/uploads/')) {
+      transformed.image = `${baseUrl}${transformed.image}`;
+    }
+
+    res.json(transformed);
   } catch (error) {
     console.error('Erreur récupération membre:', error);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -232,6 +242,9 @@ export const uploadTeamAvatar = async (req, res) => {
   try {
     const { id } = req.params;
     
+    console.log('📤 Upload avatar demandé pour:', id);
+    console.log('📂 Fichier reçu:', req.file ? req.file.originalname : 'AUCUN');
+    
     if (!req.file) {
       return res.status(400).json({ error: 'Aucun fichier fourni' });
     }
@@ -242,9 +255,22 @@ export const uploadTeamAvatar = async (req, res) => {
     });
 
     if (!member) {
+      console.error('❌ Membre non trouvé:', id);
       // Supprimer le fichier uploadé si membre inexistant
-      fs.unlinkSync(req.file.path);
+      try {
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+      } catch (cleanupError) {
+        console.error('⚠️ Erreur nettoyage fichier temp:', cleanupError);
+      }
       return res.status(404).json({ error: 'Membre non trouvé' });
+    }
+
+    // S'assurer que le dossier uploadsDir existe
+    if (!fs.existsSync(uploadsDir)) {
+      console.log('📁 Création du dossier:', uploadsDir);
+      fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
     // Générer un nom de fichier unique
@@ -252,35 +278,66 @@ export const uploadTeamAvatar = async (req, res) => {
     const filename = `${id}-${Date.now()}${ext}`;
     const filepath = path.join(uploadsDir, filename);
 
-    // Déplacer le fichier uploadé
-    fs.renameSync(req.file.path, filepath);
+    console.log('💾 Déplacement fichier:', req.file.path, '->', filepath);
+
+    // Déplacer le fichier uploadé (utiliser copyFile + unlink pour éviter les problèmes de permissions)
+    try {
+      fs.copyFileSync(req.file.path, filepath);
+      fs.unlinkSync(req.file.path);
+      console.log('✅ Fichier déplacé avec succès');
+    } catch (moveError) {
+      console.error('❌ Erreur déplacement fichier:', moveError);
+      throw new Error(`Impossible de déplacer le fichier: ${moveError.message}`);
+    }
 
     // Supprimer l'ancien avatar si existe
     if (member.image && member.image.startsWith('/uploads/team-avatars/')) {
       const oldPath = path.join(__dirname, '../../', member.image);
-      if (fs.existsSync(oldPath)) {
-        fs.unlinkSync(oldPath);
+      console.log('🗑️ Suppression ancien avatar:', oldPath);
+      try {
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+          console.log('✅ Ancien avatar supprimé');
+        }
+      } catch (deleteError) {
+        console.warn('⚠️ Impossible de supprimer l\'ancien avatar:', deleteError);
+        // Non bloquant, on continue
       }
     }
 
     // Mettre à jour le chemin de l'image dans la DB
     const imageUrl = `/uploads/team-avatars/${filename}`;
+    console.log('💾 Mise à jour DB avec imageUrl:', imageUrl);
+    
     await prisma.teamMember.update({
       where: { id },
       data: { image: imageUrl }
     });
+
+    console.log('✅ Avatar uploadé avec succès pour', member.name);
 
     res.json({ 
       message: 'Avatar uploadé avec succès',
       imageUrl 
     });
   } catch (error) {
-    console.error('Erreur upload avatar:', error);
+    console.error('❌ Erreur upload avatar:', error);
+    console.error('Stack:', error.stack);
+    
     // Nettoyer le fichier en cas d'erreur
     if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+      try {
+        fs.unlinkSync(req.file.path);
+        console.log('🗑️ Fichier temp nettoyé après erreur');
+      } catch (cleanupError) {
+        console.error('⚠️ Impossible de nettoyer le fichier temp:', cleanupError);
+      }
     }
-    res.status(500).json({ error: 'Erreur serveur' });
+    
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de l\'upload',
+      details: error.message 
+    });
   }
 };
 
