@@ -33,6 +33,7 @@ import mailRoutes from './routes/mail.routes.js';
 import templatesRoutes from './routes/templates.routes.js';
 import bulletinFlowRoutes from './routes/bulletinFlow.routes.js';
 import emailTemplateRoutes from './routes/emailTemplate.routes.js';
+import teamRoutes from './routes/team.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
 import { createMailSession } from './services/mailService.js';
 // � Import module de calcul des KPI historiques
@@ -896,6 +897,10 @@ app.use('/museum', museumRoutes);
 // Routes RétroMail (gestion des emails Infomaniak)
 app.use('/api/mail', mailRoutes);
 app.use('/mail', mailRoutes);
+
+// Routes Team (gestion de l'équipe RBE)
+app.use('/api/team', teamRoutes);
+app.use('/team', teamRoutes);
 
 // Routes Templates (gestion des modèles de documents Word)
 app.use('/api/templates', templatesRoutes);

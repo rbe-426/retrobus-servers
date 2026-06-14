@@ -278,6 +278,31 @@ model Usage {
   Vehicle      Vehicle   @relation(fields: [parc], references: [parc], onDelete: Cascade)
 }
 
+model TeamMember {
+  id          String   @id @default(cuid())
+  name        String
+  role        String
+  roleColor   String   @default("blue")
+  hierarchy   Int      @default(4) // 1=Présidence, 2=Conseil, 3=Services, 4=Membres
+  hierarchy2  Int      @default(2) // 1=Membre du Bureau, 2=Adhérent simple
+  joinDate    String
+  memberType  String   @default("Membre")
+  catchphrase String?
+  image       String?
+  email       String?
+  phone       String?
+  expertise   Json?    // Array of {label, color}
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([hierarchy])
+  @@index([hierarchy2])
+  @@index([order])
+  @@index([isActive])
+}
+
 model Vehicle {
   id                       Int                        @id @default(autoincrement())
   parc                     String                     @unique
