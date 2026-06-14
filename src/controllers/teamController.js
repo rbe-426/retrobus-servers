@@ -49,6 +49,15 @@ export const getAllTeamMembers = async (req, res) => {
       if (transformed.image && transformed.image.startsWith('/uploads/')) {
         transformed.image = `${baseUrl}${transformed.image}`;
       }
+      // Si pas d'image, générer un avatar avec initiales
+      else if (!transformed.image) {
+        const initials = member.name
+          .split(' ')
+          .map(n => n[0])
+          .join('')
+          .toUpperCase();
+        transformed.image = `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name)}&size=300&background=random&bold=true`;
+      }
       
       // Si mode public, supprimer les contacts
       if (isPublic === 'true') {

@@ -151,16 +151,25 @@ export const csrfProtection = (req, res, next) => {
   // Récupérer le token depuis le header
   const csrfToken = req.headers['x-csrf-token'];
 
+  console.log(`🔍 CSRF Check: ${req.method} ${req.path}`);
+  console.log(`   Headers présents:`, Object.keys(req.headers).filter(h => h.includes('csrf') || h.includes('token') || h.includes('auth')));
+  console.log(`   X-CSRF-Token:`, csrfToken ? csrfToken.substring(0, 30) + '...' : 'ABSENT');
+
   if (!csrfToken) {
     console.warn(`🚫 CSRF: Missing X-CSRF-Token header on ${req.method} ${req.path}`);
+    console.warn(`   Available headers:`, Object.keys(req.headers));
     return res.status(403).json({
       error: 'CSRF token missing',
-      code: 'CSRF_MISSING'
+      code: 'CSRF_MISSING',
+      path: req.path
     });
   }
 
   // Valider le token
-  if (!verifyCSRFToken(csrfToken)) {
+  const isValid = verifyCSRFToken(csrfToken);
+  console.log(`   Token validation:`, isValid ? '✅ VALID' : '❌ INVALID');
+  
+  if (!isValid) {
     console.warn(`🚫 CSRF: Invalid or expired token on ${req.method} ${req.path}`);
     return res.status(403).json({
       error: 'CSRF token invalid or expired',
@@ -170,6 +179,7 @@ export const csrfProtection = (req, res, next) => {
 
   // Token valide et réutilisable - pas besoin de générer un nouveau token à chaque fois
   // Le token reste valide pendant 24h
+  console.log(`✅ CSRF validated for ${req.method} ${req.path}`);
 
   next();
 };

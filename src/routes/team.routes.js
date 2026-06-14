@@ -75,12 +75,55 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
+/**
+ * Middleware de gestion des erreurs Multer
+ */
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    console.error('❌ Erreur Multer:', err.code, err.message);
+    
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ 
+        error: 'Fichier trop volumineux', 
+        details: 'La taille maximale est de 5 MB' 
+      });
+    }
+    
+    return res.status(400).json({ 
+      error: 'Erreur lors de l\'upload', 
+      details: err.message 
+    });
+  }
+  
+  if (err) {
+    console.error('❌ Erreur upload:', err.message);
+    return res.status(400).json({ 
+      error: 'Erreur lors de l\'upload', 
+      details: err.message 
+    });
+  }
+  
+  next();
+};
+
 // Routes publiques (lecture seule)
 router.get('/', teamController.getAllTeamMembers); // Accepte ?public=true
 router.get('/:id', teamController.getTeamMemberById);
 
 // Routes protégées (ADMIN uniquement)
-router.post('/:id/upload-avatar', requireAuth, requireAdmin, avatarUpload.single('avatar'), teamController.uploadTeamAvatar); // Avant /:id pour éviter conflit
+router.post('/:id/upload-avatar', 
+  requireAuth, 
+  requireAdmin, 
+  (req, res, next) => {
+    avatarUpload.single('avatar')(req, res, (err) => {
+      if (err) {
+        return handleMulterError(err, req, res, next);
+      }
+      next();
+    });
+  },
+  teamController.uploadTeamAvatar
+); // Avant /:id pour éviter conflit
 router.post('/', requireAuth, requireAdmin, teamController.createTeamMember);
 router.put('/:id', requireAuth, requireAdmin, teamController.updateTeamMember);
 router.delete('/:id', requireAuth, requireAdmin, teamController.deleteTeamMember);
