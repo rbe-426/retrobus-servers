@@ -11,12 +11,6 @@ import { fileURLToPath } from 'url';
 const prisma = new PrismaClient();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const uploadsDir = path.join(__dirname, '../../uploads/team-avatars');
-
-// Créer le dossier uploads/team-avatars s'il n'existe pas
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
 
 /**
  * GET /api/team - Récupère tous les membres de l'équipe
@@ -251,72 +245,24 @@ export const uploadTeamAvatar = async (req, res) => {
   try {
     const { id } = req.params;
     
-    console.log('📤 Upload avatar demandé pour:', id);
-    console.log('📂 Fichier reçu:', req.file ? req.file.originalname : 'AUCUN');
-    
     if (!req.file) {
       return res.status(400).json({ error: 'Aucun fichier fourni' });
     }
 
-    // Vérifier que le membre existe
-    const member = await prisma.teamMember.findUnique({
-      where: { id }
-    });
-
+    const member = await prisma.teamMember.findUnique({ where: { id } });
     if (!member) {
-      console.error('❌ Membre non trouvé:', id);
-      // Supprimer le fichier uploadé si membre inexistant
-      try {
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
-      } catch (cleanupError) {
-        console.error('⚠️ Erreur nettoyage fichier temp:', cleanupError);
-      }
       return res.status(404).json({ error: 'Membre non trouvé' });
     }
 
-    // S'assurer que le dossier uploadsDir existe
-    if (!fs.existsSync(uploadsDir)) {
-      console.log('📁 Création du dossier:', uploadsDir);
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
-    // Générer un nom de fichier unique
-    const ext = path.extname(req.file.originalname);
-    const filename = `${id}-${Date.now()}${ext}`;
-    const filepath = path.join(uploadsDir, filename);
-
-    console.log('💾 Déplacement fichier:', req.file.path, '->', filepath);
-
-    // Déplacer le fichier uploadé (utiliser copyFile + unlink pour éviter les problèmes de permissions)
-    try {
-      fs.copyFileSync(req.file.path, filepath);
-      fs.unlinkSync(req.file.path);
-      console.log('✅ Fichier déplacé avec succès');
-    } catch (moveError) {
-      console.error('❌ Erreur déplacement fichier:', moveError);
-      throw new Error(`Impossible de déplacer le fichier: ${moveError.message}`);
-    }
-
-    // Supprimer l'ancien avatar si existe
+    // Supprimer l'ancien avatar
     if (member.image && member.image.startsWith('/uploads/team-avatars/')) {
       const oldPath = path.join(__dirname, '../../', member.image);
-      console.log('🗑️ Suppression ancien avatar:', oldPath);
       try {
-        if (fs.existsSync(oldPath)) {
-          fs.unlinkSync(oldPath);
-          console.log('✅ Ancien avatar supprimé');
-        }
-      } catch (deleteError) {
-        console.warn('⚠️ Impossible de supprimer l\'ancien avatar:', deleteError);
-        // Non bloquant, on continue
-      }
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      } catch (e) {}
     }
 
-    // Mettre à jour le chemin de l'image dans la DB
-    const imageUrl = `/uploads/team-avatars/${filename}`;
-    console.log('💾 Mise à jour DB avec imageUrl:', imageUrl);
+    const imageUrl = `/uploads/team-avatars/${req.file.filename}`;
     
     await prisma.teamMember.update({
       where: { id },

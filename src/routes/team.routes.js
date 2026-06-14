@@ -21,28 +21,31 @@ import * as teamController from '../controllers/teamController.js';
 
 const router = express.Router();
 
-// Créer le dossier temp pour multer s'il n'existe pas
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const tempDir = path.join(__dirname, '../../uploads/temp');
+const uploadsDir = path.join(__dirname, '../../uploads/team-avatars');
 
-if (!fs.existsSync(tempDir)) {
-  console.log('📁 Création du dossier temp:', tempDir);
-  fs.mkdirSync(tempDir, { recursive: true });
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Configuration multer pour upload d'avatars
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${req.params.id}-${Date.now()}${ext}`);
+  }
+});
+
 const avatarUpload = multer({
-  dest: tempDir,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  storage: avatarStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    console.log('📎 Fichier reçu:', file.originalname, file.mimetype);
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      console.error('❌ Type de fichier rejeté:', file.mimetype);
-      cb(new Error('Type de fichier non autorisé. Utilisez JPG, PNG ou WebP.'));
+      cb(new Error('Type de fichier non autorisé'));
     }
   }
 });
