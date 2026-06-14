@@ -34,13 +34,19 @@ const requireAdmin = (req, res, next) => {
     return res.status(401).json({ error: 'Non authentifié' });
   }
 
+  // 🐛 DEBUG
+  console.log('🔐 requireAdmin - req.user:', req.user);
+  console.log('🔐 requireAdmin - role:', req.user.role);
+
   const role = req.user.role?.toUpperCase();
   const adminRoles = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'];
   
   if (!adminRoles.includes(role)) {
+    console.log('❌ Rôle refusé:', role, '- Rôles autorisés:', adminRoles);
     return res.status(403).json({ error: 'Accès refusé - Droits administrateur requis' });
   }
 
+  console.log('✅ Accès admin autorisé pour rôle:', role);
   next();
 };
 
