@@ -26,7 +26,14 @@ async function addRHPermissions() {
     console.log(`✅ Utilisateur trouvé : ${user.firstName} ${user.lastName} (${user.email})`);
     
     // Récupérer les permissions actuelles
-    const currentPermissions = user.permissions ? JSON.parse(JSON.stringify(user.permissions)) : [];
+    let currentPermissions = user.permissions ? JSON.parse(JSON.stringify(user.permissions)) : [];
+    
+    // S'assurer que currentPermissions est un tableau
+    if (!Array.isArray(currentPermissions)) {
+      console.log('⚠️  Permissions actuelles ne sont pas un tableau, conversion...');
+      currentPermissions = [];
+    }
+    
     console.log('📋 Permissions actuelles :', JSON.stringify(currentPermissions, null, 2));
     
     // Vérifier si la permission "Gestion RH" existe déjà
