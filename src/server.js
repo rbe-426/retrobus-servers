@@ -5421,9 +5421,22 @@ app.get(['/events/:id', '/api/events/:id'], requireAuth, async (req, res) => {
 app.get(['/vehicles', '/api/vehicles'], requireAuth, async (req, res) => {
   if (prisma) {
     try {
-      const vehicles = await prisma.vehicle.findMany({ orderBy: { parc: 'asc' } });
-      const normalized = vehicles.map(v => normalizeVehicleWithCaracteristiques(v));
-      return res.json(normalized);
+      const vehicles = await prisma.vehicle.findMany({
+        orderBy: { parc: 'asc' },
+        select: {
+          id: true,
+          parc: true,
+          type: true,
+          modele: true,
+          marque: true,
+          immat: true,
+          etat: true,
+          miseEnCirculation: true,
+          thumbnailImage: true,
+        },
+      });
+
+      return res.json(vehicles);
     } catch (e) {
       console.error('❌ GET /vehicles error:', e.message);
       return res.status(500).json({ error: 'Failed to fetch vehicles', details: e.message });
