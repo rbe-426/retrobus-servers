@@ -64,7 +64,9 @@ import {
   secureLogger,
   encryptSensitiveData,
   decryptSensitiveData,
-  auditLog
+  auditLog,
+  getAuditLogs,
+  getAuditLogsSummary
 } from './security.js';
 // 🚗 Import service d'identification de véhicules
 import { identifyVehicle } from './services/vehicleIdentification.js';
@@ -850,6 +852,126 @@ app.use((req, res, next) => {
 const requireAuth = (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
   next();
+};
+
+const isAdminRequest = async (req) => {
+  const email = req.user?.email;
+  if (!email) return false;
+
+  try {
+    const dbMember = await prisma.member.findFirst({
+      where: {
+        email: {
+          equals: String(email),
+          mode: 'insensitive',
+        },
+      },
+      select: { role: true },
+    });
+
+    if (dbMember?.role === 'ADMIN') return true;
+  } catch (error) {
+    console.warn('⚠️ isAdminRequest DB lookup failed:', error.message);
+  }
+
+  return !!state.members.find((m) => String(m.email || '').toLowerCase() === String(email).toLowerCase() && m.role === 'ADMIN');
+};
+
+const requireAdmin = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const isAdmin = await isAdminRequest(req);
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  next();
+};
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 12000) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const probeHttpUrl = async (url) => {
+  const startedAt = Date.now();
+  try {
+    const response = await fetchWithTimeout(url, { method: 'GET' }, 12000);
+    const elapsedMs = Date.now() - startedAt;
+    const contentType = response.headers.get('content-type') || null;
+    const contentLength = response.headers.get('content-length') || null;
+
+    let title = null;
+    if (contentType && contentType.includes('text/html')) {
+      const body = await response.text();
+      const titleMatch = body.match(/<title>([^<]+)<\/title>/i);
+      title = titleMatch?.[1]?.trim() || null;
+    }
+
+    return {
+      url,
+      ok: response.ok,
+      status: response.status,
+      responseTimeMs: elapsedMs,
+      contentType,
+      contentLength: contentLength ? Number(contentLength) : null,
+      title,
+    };
+  } catch (error) {
+    return {
+      url,
+      ok: false,
+      status: null,
+      responseTimeMs: Date.now() - startedAt,
+      error: error?.name === 'AbortError' ? 'timeout' : (error?.message || 'request_failed'),
+    };
+  }
+};
+
+const getPageSpeedMetrics = async (targetUrl, strategy) => {
+  const apiKey = process.env.PAGESPEED_API_KEY;
+  if (!apiKey) {
+    return {
+      enabled: false,
+      strategy,
+      error: 'PAGESPEED_API_KEY missing',
+    };
+  }
+
+  const endpoint = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(targetUrl)}&strategy=${strategy}&category=performance&key=${encodeURIComponent(apiKey)}`;
+  const response = await fetchWithTimeout(endpoint, { method: 'GET' }, 25000);
+
+  if (!response.ok) {
+    return {
+      enabled: true,
+      strategy,
+      error: `PageSpeed API HTTP ${response.status}`,
+    };
+  }
+
+  const data = await response.json();
+  const lighthouse = data?.lighthouseResult;
+  const audits = lighthouse?.audits || {};
+  const perfScoreRaw = lighthouse?.categories?.performance?.score;
+
+  return {
+    enabled: true,
+    strategy,
+    score: typeof perfScoreRaw === 'number' ? Math.round(perfScoreRaw * 100) : null,
+    lcpMs: Math.round(audits['largest-contentful-paint']?.numericValue || 0),
+    fcpMs: Math.round(audits['first-contentful-paint']?.numericValue || 0),
+    cls: Number(audits['cumulative-layout-shift']?.numericValue || 0),
+    tbtMs: Math.round(audits['total-blocking-time']?.numericValue || 0),
+    speedIndexMs: Math.round(audits['speed-index']?.numericValue || 0),
+    fetchTime: lighthouse?.fetchTime || null,
+  };
 };
 
 // ============================================================
@@ -10073,12 +10195,108 @@ app.get('/api/diagnostic/finance', requireAuth, (req, res) => {
   });
 });
 
-// Endpoint pour nettoyer/normaliser les données
-app.post('/api/admin/normalize-data', requireAuth, (req, res) => {
-  // Vérifier que c'est un admin
-  if (!state.members.find(m => m.email === req.user.email && m.role === 'ADMIN')) {
-    return res.status(403).json({ error: 'Admin access required' });
+app.get('/api/admin/site-logs', requireAuth, requireAdmin, (req, res) => {
+  const requestedLimit = Number.parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(1000, requestedLimit)) : 200;
+  const statusFilter = (req.query.status || '').toString().toLowerCase().trim();
+  const search = (req.query.search || '').toString().toLowerCase().trim();
+
+  let logs = getAuditLogs(1000);
+
+  if (statusFilter) {
+    logs = logs.filter((log) => String(log.status || '').toLowerCase() === statusFilter);
   }
+
+  if (search) {
+    logs = logs.filter((log) => {
+      const haystack = `${log.action || ''} ${log.user || ''} ${log.details || ''}`.toLowerCase();
+      return haystack.includes(search);
+    });
+  }
+
+  const sliced = logs.slice(0, limit);
+
+  res.json({
+    success: true,
+    total: logs.length,
+    returned: sliced.length,
+    summary: getAuditLogsSummary(),
+    logs: sliced,
+  });
+});
+
+app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const externalBase = (process.env.EXTERNAL_SITE_URL || 'https://www.association-rbe.fr').replace(/\/+$/, '');
+    const pagePaths = ['/', '/parc', '/adherer', '/contact', '/evenements'];
+    const resourcePaths = ['/robots.txt', '/sitemap.xml', '/manifest.json', '/llms.txt'];
+
+    const pageProbes = await Promise.all(
+      pagePaths.map((pagePath) => probeHttpUrl(`${externalBase}${pagePath}`))
+    );
+
+    const resourceProbes = await Promise.all(
+      resourcePaths.map((resourcePath) => probeHttpUrl(`${externalBase}${resourcePath}`))
+    );
+
+    const successfulProbes = pageProbes.filter((probe) => probe.ok);
+    const averageResponseTimeMs =
+      successfulProbes.length > 0
+        ? Math.round(successfulProbes.reduce((sum, probe) => sum + (probe.responseTimeMs || 0), 0) / successfulProbes.length)
+        : null;
+
+    const [mobilePerf, desktopPerf] = await Promise.all([
+      getPageSpeedMetrics(externalBase, 'mobile'),
+      getPageSpeedMetrics(externalBase, 'desktop'),
+    ]);
+
+    const memory = process.memoryUsage();
+    const toMb = (bytes) => Math.round((bytes / 1024 / 1024) * 10) / 10;
+    const logsSummary = getAuditLogsSummary();
+
+    res.json({
+      success: true,
+      generatedAt: new Date().toISOString(),
+      externalSite: externalBase,
+      serverContext: {
+        uptimeSeconds: Math.round(process.uptime()),
+        nodeVersion: process.version,
+        memoryMb: {
+          rss: toMb(memory.rss),
+          heapUsed: toMb(memory.heapUsed),
+          heapTotal: toMb(memory.heapTotal),
+        },
+      },
+      trafficContext: {
+        pageProbeCount: pageProbes.length,
+        pageProbeSuccessCount: successfulProbes.length,
+        averageResponseTimeMs,
+        pages: pageProbes,
+        resources: resourceProbes,
+      },
+      pagespeed: {
+        mobile: mobilePerf,
+        desktop: desktopPerf,
+      },
+      logsContext: {
+        totalLogs: logsSummary.total,
+        byStatus: logsSummary.byStatus,
+        topActions: logsSummary.topActions,
+        lastEventAt: logsSummary.lastEventAt,
+      },
+    });
+  } catch (error) {
+    console.error('❌ /api/admin/site-traffic-context error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load traffic and context data',
+      details: error.message,
+    });
+  }
+});
+
+// Endpoint pour nettoyer/normaliser les données
+app.post('/api/admin/normalize-data', requireAuth, requireAdmin, (req, res) => {
 
   const stats = {
     expenseReports: { fixed: 0, skipped: 0 },

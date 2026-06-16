@@ -413,11 +413,61 @@ export const decryptSensitiveData = (encrypted) => {
 // 📋 AUDIT LOGGING - Trace toutes les actions sensibles
 // ============================================================
 
+const AUDIT_LOGS_MAX = 1000;
+const auditLogsBuffer = [];
+
+const pushAuditEntry = (entry) => {
+  auditLogsBuffer.push(entry);
+  if (auditLogsBuffer.length > AUDIT_LOGS_MAX) {
+    auditLogsBuffer.splice(0, auditLogsBuffer.length - AUDIT_LOGS_MAX);
+  }
+};
+
 export const auditLog = (action, user, details, status = 'success') => {
   const timestamp = new Date().toISOString();
   const maskedDetails = maskSensitiveData(JSON.stringify(details));
+
+  pushAuditEntry({
+    timestamp,
+    action,
+    user: user || 'ANONYMOUS',
+    status,
+    details: maskedDetails,
+  });
   
   console.log(`🔐 [AUDIT] ${timestamp} | ${status.toUpperCase()} | ${action} | User: ${user || 'ANONYMOUS'} | ${maskedDetails}`);
+};
+
+export const getAuditLogs = (limit = 200) => {
+  const normalizedLimit = Number.isFinite(Number(limit))
+    ? Math.max(1, Math.min(1000, Number(limit)))
+    : 200;
+
+  return auditLogsBuffer.slice(-normalizedLimit).reverse();
+};
+
+export const getAuditLogsSummary = () => {
+  const byStatus = auditLogsBuffer.reduce((acc, log) => {
+    const key = (log.status || 'unknown').toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const byAction = auditLogsBuffer.reduce((acc, log) => {
+    const key = log.action || 'UNKNOWN';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    total: auditLogsBuffer.length,
+    byStatus,
+    topActions: Object.entries(byAction)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([action, count]) => ({ action, count })),
+    lastEventAt: auditLogsBuffer.length > 0 ? auditLogsBuffer[auditLogsBuffer.length - 1].timestamp : null,
+  };
 };
 
 // ============================================================
@@ -444,4 +494,6 @@ export default {
   encryptSensitiveData,
   decryptSensitiveData,
   auditLog,
+  getAuditLogs,
+  getAuditLogsSummary,
 };
