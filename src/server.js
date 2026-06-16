@@ -32,6 +32,7 @@ import museumRoutes from './routes/museum.routes.js';
 import mailRoutes from './routes/mail.routes.js';
 import templatesRoutes from './routes/templates.routes.js';
 import bulletinFlowRoutes from './routes/bulletinFlow.routes.js';
+import bulletinStatsRoutes from './routes/bulletinStats.routes.js';
 import emailTemplateRoutes from './routes/emailTemplate.routes.js';
 import teamRoutes from './routes/team.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
@@ -909,6 +910,9 @@ app.use('/templates', templatesRoutes);
 // Routes Bulletin Flow (parcours numérique de signature)
 app.use('/api/bulletin-flow', bulletinFlowRoutes);
 app.use('/bulletin-flow', bulletinFlowRoutes);
+
+// Routes Bulletin Stats (statistiques et suivi des bulletins)
+app.use('/api/bulletin-stats', bulletinStatsRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
