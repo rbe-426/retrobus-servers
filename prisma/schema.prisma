@@ -13,9 +13,9 @@ model Changelog {
   title     String
   version   String
   date      DateTime @default(now())
-  changes   String
+  changes   Json     // Array de strings pour les changements
   createdAt DateTime @default(now())
-  updatedAt DateTime
+  updatedAt DateTime @updatedAt
 }
 
 model DevisLine {

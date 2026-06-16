@@ -35,6 +35,7 @@ import bulletinFlowRoutes from './routes/bulletinFlow.routes.js';
 import bulletinStatsRoutes from './routes/bulletinStats.routes.js';
 import emailTemplateRoutes from './routes/emailTemplate.routes.js';
 import teamRoutes from './routes/team.routes.js';
+import changelogRoutes from './routes/changelog.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
 import { createMailSession } from './services/mailService.js';
 // � Import module de calcul des KPI historiques
@@ -913,6 +914,9 @@ app.use('/bulletin-flow', bulletinFlowRoutes);
 
 // Routes Bulletin Stats (statistiques et suivi des bulletins)
 app.use('/api/bulletin-stats', bulletinStatsRoutes);
+
+// Routes Changelog (historique des modifications et versions)
+app.use('/api/changelog', changelogRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
