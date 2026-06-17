@@ -4748,6 +4748,63 @@ const prepareMemberData = (body, isUpdate = false) => {
   return data;
 };
 
+const ADHESION_REQUEST_STATUSES = new Set(['PENDING', 'APPROVED', 'REJECTED']);
+
+const ensureCandidateMailbackTemplate = async () => {
+  try {
+    await prisma.emailTemplate.upsert({
+      where: { name: 'mailback_candidat' },
+      create: {
+        name: 'mailback_candidat',
+        subject: 'Suivi de votre candidature d\'adhésion - RétroBus Essonne',
+        body: [
+          'Bonjour {{candidate.firstName}} {{candidate.lastName}},',
+          '',
+          'Votre demande d\'adhésion est désormais traitée.',
+          '',
+          'Décision : {{decisionLabel}}',
+          'Motif : {{reasonText}}',
+          '',
+          'Si vous avez des questions, vous pouvez répondre à ce message en contactant l\'association.',
+          '',
+          'RétroBus Essonne'
+        ].join('\n'),
+        description: 'Retour automatique envoyé au candidat après décision RH',
+        variables: JSON.stringify(['candidate.firstName', 'candidate.lastName', 'decisionLabel', 'reasonText']),
+        category: 'ADHESION',
+        active: true
+      },
+      update: {
+        active: true,
+        category: 'ADHESION'
+      }
+    });
+  } catch (error) {
+    console.warn('⚠️ Unable to ensure mailback_candidat template:', error.message);
+  }
+};
+
+const getAdhesionAlertRecipients = async () => {
+  try {
+    const rows = await prisma.members.findMany({
+      where: {
+        OR: [
+          { role: { in: ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT'] } },
+          { matricule: { equals: 'n.bayoudh', mode: 'insensitive' } },
+          { email: { contains: 'n.bayoudh', mode: 'insensitive' } }
+        ]
+      },
+      select: { email: true }
+    });
+
+    const emails = [...new Set(rows.map((r) => String(r.email || '').trim().toLowerCase()).filter(Boolean))];
+    return emails;
+  } catch (error) {
+    console.warn('⚠️ getAdhesionAlertRecipients failed:', error.message);
+    return [];
+  }
+};
+
 // ============================================================
 // 👥 MEMBERS ENDPOINTS
 // ============================================================
@@ -4847,6 +4904,201 @@ const buildMemberSignaturePayload = async (member) => {
 };
 
 // MEMBERS
+app.post('/api/public/adhesion-request', async (req, res) => {
+  try {
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const phone = String(req.body?.phone || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const candidature = String(req.body?.candidature || '').trim();
+
+    if (!firstName || !lastName || !email || !candidature) {
+      return res.status(400).json({
+        success: false,
+        error: 'firstName, lastName, email et candidature sont requis'
+      });
+    }
+
+    const created = await prisma.adhesionRequest.create({
+      data: {
+        firstName,
+        lastName,
+        phone: phone || null,
+        email,
+        candidature,
+        status: 'PENDING'
+      }
+    });
+
+    await prisma.notification.create({
+      data: {
+        title: 'Nouvelle adhésion demandée',
+        message: `${firstName} ${lastName} (${email}) a transmis une candidature d'adhésion.`,
+        type: 'info',
+        priority: 'high',
+        targetedTo: 'admins',
+        active: true,
+        createdBy: 'PUBLIC_ADHESION'
+      }
+    }).catch((e) => {
+      console.warn('⚠️ Notification creation failed for adhesion request:', e.message);
+    });
+
+    const recipients = await getAdhesionAlertRecipients();
+    if (transporter && recipients.length > 0) {
+      const subject = `Nouvelle demande d'adhésion - ${firstName} ${lastName}`;
+      const text = [
+        `Une nouvelle candidature d'adhésion vient d'arriver.`,
+        '',
+        `Nom: ${firstName} ${lastName}`,
+        `Email: ${email}`,
+        `Téléphone: ${phone || 'Non renseigné'}`,
+        '',
+        'Candidature:',
+        candidature
+      ].join('\n');
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@association-rbe.fr',
+        to: recipients.join(','),
+        subject,
+        text
+      }).catch((e) => {
+        console.warn('⚠️ Adhesion alert email failed:', e.message);
+      });
+    }
+
+    return res.status(201).json({ success: true, request: created });
+  } catch (error) {
+    console.error('❌ /api/public/adhesion-request error:', error.message);
+    return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la demande d\'adhésion' });
+  }
+});
+
+app.get('/api/adhesion-requests', requireAuth, async (req, res) => {
+  try {
+    const status = String(req.query?.status || '').trim().toUpperCase();
+    const search = String(req.query?.search || '').trim().toLowerCase();
+
+    const where = {};
+    if (status && ADHESION_REQUEST_STATUSES.has(status)) {
+      where.status = status;
+    }
+
+    let requests = await prisma.adhesionRequest.findMany({
+      where,
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (search) {
+      requests = requests.filter((item) => {
+        const haystack = `${item.firstName || ''} ${item.lastName || ''} ${item.email || ''} ${item.phone || ''} ${item.candidature || ''}`.toLowerCase();
+        return haystack.includes(search);
+      });
+    }
+
+    return res.json({ success: true, requests });
+  } catch (error) {
+    console.error('❌ /api/adhesion-requests error:', error.message);
+    return res.status(500).json({ success: false, error: 'Impossible de charger les demandes d\'adhésion' });
+  }
+});
+
+app.get('/api/adhesion-requests/stats', requireAuth, async (req, res) => {
+  try {
+    const [pending, approved, rejected, total] = await Promise.all([
+      prisma.adhesionRequest.count({ where: { status: 'PENDING' } }),
+      prisma.adhesionRequest.count({ where: { status: 'APPROVED' } }),
+      prisma.adhesionRequest.count({ where: { status: 'REJECTED' } }),
+      prisma.adhesionRequest.count()
+    ]);
+
+    return res.json({
+      success: true,
+      stats: { pending, approved, rejected, total }
+    });
+  } catch (error) {
+    console.error('❌ /api/adhesion-requests/stats error:', error.message);
+    return res.status(500).json({ success: false, error: 'Impossible de charger les statistiques des demandes' });
+  }
+});
+
+app.post('/api/adhesion-requests/:id/decision', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const decision = String(req.body?.decision || '').trim().toUpperCase();
+    const reason = String(req.body?.reason || '').trim();
+
+    if (!['APPROVED', 'REJECTED'].includes(decision)) {
+      return res.status(400).json({ success: false, error: 'decision doit être APPROVED ou REJECTED' });
+    }
+
+    const existing = await prisma.adhesionRequest.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: 'Demande introuvable' });
+    }
+
+    const updated = await prisma.adhesionRequest.update({
+      where: { id },
+      data: {
+        status: decision,
+        decisionReason: reason || null,
+        processedBy: req.user?.email || req.user?.id || 'SYSTEM',
+        processedAt: new Date()
+      }
+    });
+
+    if (decision === 'APPROVED') {
+      const alreadyMember = await prisma.members.findFirst({
+        where: {
+          email: {
+            equals: existing.email,
+            mode: 'insensitive'
+          }
+        }
+      });
+
+      if (!alreadyMember) {
+        await prisma.members.create({
+          data: {
+            id: uid(),
+            firstName: existing.firstName,
+            lastName: existing.lastName,
+            email: existing.email,
+            phone: existing.phone || null,
+            membershipType: 'STANDARD',
+            membershipStatus: 'PENDING',
+            notes: `Créé depuis demande d'adhésion. Candidature: ${existing.candidature}`,
+            status: 'active',
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }
+        }).catch((e) => {
+          console.warn('⚠️ Unable to auto-create member after approval:', e.message);
+        });
+      }
+    }
+
+    await ensureCandidateMailbackTemplate();
+    const decisionLabel = decision === 'APPROVED' ? 'Adhésion acceptée' : 'Adhésion non retenue';
+    const reasonText = reason || 'Aucun motif communiqué.';
+    const mailSent = await sendTemplatedEmail('mailback_candidat', existing.email, {
+      candidate: {
+        firstName: existing.firstName,
+        lastName: existing.lastName,
+        email: existing.email
+      },
+      decisionLabel,
+      reasonText
+    }, 'RétroBus Essonne - Gestion RH');
+
+    return res.json({ success: true, request: updated, mailSent });
+  } catch (error) {
+    console.error('❌ /api/adhesion-requests/:id/decision error:', error.message);
+    return res.status(500).json({ success: false, error: 'Impossible de traiter la décision d\'adhésion' });
+  }
+});
+
 app.get(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
     const limit = Number(req.query.limit) || undefined;
