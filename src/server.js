@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import nodemailer from 'nodemailer';
+import { google } from 'googleapis';
 import subventionsRouter from './subventions.mjs';
 import retromerchRouter from './retromerch.mjs';
 import { 
@@ -859,7 +860,7 @@ const isAdminRequest = async (req) => {
   if (!email) return false;
 
   try {
-    const dbMember = await prisma.member.findFirst({
+    const dbMember = await prisma.members.findFirst({
       where: {
         email: {
           equals: String(email),
@@ -949,11 +950,180 @@ const ensureDailyTrafficEntry = (key) => {
         share: 0,
         site: 0,
       },
+      search: {
+        impressions: 0,
+        clicks: 0,
+        queries: {},
+      },
+      adsense: {
+        impressions: 0,
+        clicks: 0,
+        estimatedRevenue: 0,
+      },
       pages: {},
     });
   }
 
   return externalTrafficDailyStore.get(key);
+};
+
+const normalizeSearchQuery = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  return raw.slice(0, 120);
+};
+
+const getMonthRange = (monthParam) => {
+  const now = new Date();
+  const requested = parseMonthParam(monthParam);
+  const year = requested?.year ?? now.getUTCFullYear();
+  const month = requested?.month ?? (now.getUTCMonth() + 1);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const isCurrentMonth = year === now.getUTCFullYear() && month === (now.getUTCMonth() + 1);
+  const currentDay = isCurrentMonth ? now.getUTCDate() : daysInMonth;
+  const monthLabel = `${year}-${String(month).padStart(2, '0')}`;
+  const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+  const endDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+
+  return { year, month, daysInMonth, isCurrentMonth, currentDay, monthLabel, startDate, endDate };
+};
+
+const applyTrafficEventToEntry = (entry, event) => {
+  const eventType = String(event?.eventType || '').toLowerCase();
+  const source = String(event?.source || 'direct').toLowerCase();
+  const pathValue = String(event?.path || '/').slice(0, 200);
+  const query = normalizeSearchQuery(event?.searchQuery);
+  const estimatedCpc = 0.18;
+
+  if (eventType === 'visit') entry.visits += 1;
+  if (eventType === 'pageview') entry.pageViews += 1;
+  if (eventType === 'click') entry.clicks += 1;
+  if (eventType === 'search_impression') entry.search.impressions += 1;
+  if (eventType === 'search_click') entry.search.clicks += 1;
+  if (eventType === 'ad_impression') entry.adsense.impressions += 1;
+  if (eventType === 'ad_click') {
+    entry.adsense.clicks += 1;
+    entry.adsense.estimatedRevenue = Number((entry.adsense.estimatedRevenue + estimatedCpc).toFixed(2));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(entry.sources, source)) {
+    entry.sources[source] += 1;
+  } else {
+    entry.sources.site += 1;
+  }
+
+  if (source === 'google' && eventType === 'visit') entry.search.clicks += 1;
+  if (source === 'google' && eventType === 'pageview') entry.search.impressions += 1;
+
+  if (query) {
+    entry.search.queries[query] = (entry.search.queries[query] || 0) + 1;
+  }
+
+  if (pathValue) {
+    entry.pages[pathValue] = (entry.pages[pathValue] || 0) + 1;
+  }
+};
+
+const getSearchConsoleSiteUrl = () => {
+  return (process.env.SEARCH_CONSOLE_SITE_URL || process.env.EXTERNAL_SITE_URL || '').trim();
+};
+
+const getSearchConsoleCredentials = () => {
+  const rawJson = process.env.SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON;
+  const rawBase64 = process.env.SEARCH_CONSOLE_SERVICE_ACCOUNT_BASE64;
+
+  if (rawJson) {
+    return JSON.parse(rawJson);
+  }
+
+  if (rawBase64) {
+    const decoded = Buffer.from(rawBase64, 'base64').toString('utf-8');
+    return JSON.parse(decoded);
+  }
+
+  return null;
+};
+
+const getSearchConsoleOverview = async ({ monthParam, startDateParam, endDateParam } = {}) => {
+  const siteUrl = getSearchConsoleSiteUrl();
+  const credentials = getSearchConsoleCredentials();
+
+  if (!siteUrl || !credentials?.client_email || !credentials?.private_key) {
+    return {
+      enabled: false,
+      siteUrl: siteUrl || null,
+      error: 'Missing Search Console credentials or site URL',
+    };
+  }
+
+  const monthRange = getMonthRange(monthParam);
+  const startDate = String(startDateParam || monthRange.startDate.toISOString().slice(0, 10));
+  const endDate = String(endDateParam || new Date(monthRange.endDate.getTime() - 86400000).toISOString().slice(0, 10));
+
+  const jwt = new google.auth.JWT({
+    email: credentials.client_email,
+    key: String(credentials.private_key).replace(/\\n/g, '\n'),
+    scopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
+  });
+
+  const webmasters = google.webmasters({ version: 'v3', auth: jwt });
+
+  const [summaryRes, queriesRes] = await Promise.all([
+    webmasters.searchanalytics.query({
+      siteUrl,
+      requestBody: {
+        startDate,
+        endDate,
+        dimensions: ['date'],
+        rowLimit: 25000,
+      },
+    }),
+    webmasters.searchanalytics.query({
+      siteUrl,
+      requestBody: {
+        startDate,
+        endDate,
+        dimensions: ['query'],
+        rowLimit: 25,
+      },
+    }),
+  ]);
+
+  const summaryRows = Array.isArray(summaryRes?.data?.rows) ? summaryRes.data.rows : [];
+  const queryRows = Array.isArray(queriesRes?.data?.rows) ? queriesRes.data.rows : [];
+
+  const totals = summaryRows.reduce((acc, row) => {
+    acc.clicks += Number(row?.clicks || 0);
+    acc.impressions += Number(row?.impressions || 0);
+    acc.positionSum += Number(row?.position || 0) * Number(row?.impressions || 0);
+    return acc;
+  }, { clicks: 0, impressions: 0, positionSum: 0 });
+
+  const ctr = totals.impressions > 0 ? Number(((totals.clicks / totals.impressions) * 100).toFixed(2)) : 0;
+  const avgPosition = totals.impressions > 0 ? Number((totals.positionSum / totals.impressions).toFixed(2)) : 0;
+
+  const topQueries = queryRows
+    .slice(0, 10)
+    .map((row) => ({
+      query: String(row?.keys?.[0] || ''),
+      clicks: Number(row?.clicks || 0),
+      impressions: Number(row?.impressions || 0),
+      ctr: Number((Number(row?.ctr || 0) * 100).toFixed(2)),
+      position: Number(Number(row?.position || 0).toFixed(2)),
+    }))
+    .filter((row) => row.query);
+
+  return {
+    enabled: true,
+    siteUrl,
+    startDate,
+    endDate,
+    clicks: totals.clicks,
+    impressions: totals.impressions,
+    ctr,
+    avgPosition,
+    topQueries,
+  };
 };
 
 const parseMonthParam = (value) => {
@@ -1001,14 +1171,8 @@ const buildMonthlyVisitsSeries = (history, monthParam) => {
   };
 };
 
-const buildMonthlyTrafficAnalytics = (monthParam) => {
-  const now = new Date();
-  const requested = parseMonthParam(monthParam);
-  const year = requested?.year ?? now.getUTCFullYear();
-  const month = requested?.month ?? (now.getUTCMonth() + 1);
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const isCurrentMonth = year === now.getUTCFullYear() && month === (now.getUTCMonth() + 1);
-  const currentDay = now.getUTCDate();
+const buildMonthlyTrafficAnalytics = async (monthParam) => {
+  const range = getMonthRange(monthParam);
 
   const series = [];
   const totals = {
@@ -1022,16 +1186,78 @@ const buildMonthlyTrafficAnalytics = (monthParam) => {
       site: 0,
     },
     pageVisits: {},
+    search: {
+      impressions: 0,
+      clicks: 0,
+      queries: {},
+    },
+    adsense: {
+      impressions: 0,
+      clicks: 0,
+      estimatedRevenue: 0,
+      estimatedCpc: 0.18,
+    },
   };
 
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const daily = externalTrafficDailyStore.get(dateKey);
-    const hasStarted = !isCurrentMonth || day <= currentDay;
+  const monthEntries = new Map();
+  for (let day = 1; day <= range.daysInMonth; day += 1) {
+    monthEntries.set(day, {
+      visits: 0,
+      pageViews: 0,
+      clicks: 0,
+      sources: { google: 0, direct: 0, share: 0, site: 0 },
+      search: { impressions: 0, clicks: 0, queries: {} },
+      adsense: { impressions: 0, clicks: 0, estimatedRevenue: 0 },
+      pages: {},
+    });
+  }
+
+  try {
+    const persistedEvents = await prisma.analyticsTrafficEvent.findMany({
+      where: {
+        createdAt: {
+          gte: range.startDate,
+          lt: range.endDate,
+        },
+      },
+      select: {
+        createdAt: true,
+        eventType: true,
+        path: true,
+        source: true,
+        searchQuery: true,
+      },
+    });
+
+    persistedEvents.forEach((event) => {
+      const day = new Date(event.createdAt).getUTCDate();
+      const entry = monthEntries.get(day);
+      if (!entry) return;
+      applyTrafficEventToEntry(entry, event);
+    });
+  } catch (error) {
+    console.warn('⚠️ buildMonthlyTrafficAnalytics DB fallback to memory:', error.message);
+
+    for (let day = 1; day <= range.daysInMonth; day += 1) {
+      const dateKey = `${range.monthLabel}-${String(day).padStart(2, '0')}`;
+      const memoryEntry = externalTrafficDailyStore.get(dateKey);
+      if (memoryEntry) monthEntries.set(day, memoryEntry);
+    }
+  }
+
+  for (let day = 1; day <= range.daysInMonth; day += 1) {
+    const daily = monthEntries.get(day);
+    const dateKey = `${range.monthLabel}-${String(day).padStart(2, '0')}`;
+    const hasStarted = !range.isCurrentMonth || day <= range.currentDay;
 
     const visits = hasStarted ? Number(daily?.visits || 0) : null;
     const pageViews = hasStarted ? Number(daily?.pageViews || 0) : null;
     const clicks = hasStarted ? Number(daily?.clicks || 0) : null;
+    const searchImpressions = hasStarted ? Number(daily?.search?.impressions || 0) : null;
+    const searchClicks = hasStarted ? Number(daily?.search?.clicks || 0) : null;
+    const adImpressions = hasStarted ? Number(daily?.adsense?.impressions || 0) : null;
+    const adClicks = hasStarted ? Number(daily?.adsense?.clicks || 0) : null;
+    const adRevenue = hasStarted ? Number(daily?.adsense?.estimatedRevenue || 0) : null;
 
     series.push({
       day,
@@ -1039,6 +1265,11 @@ const buildMonthlyTrafficAnalytics = (monthParam) => {
       visits,
       pageViews,
       clicks,
+      searchImpressions,
+      searchClicks,
+      adImpressions,
+      adClicks,
+      adRevenue,
     });
 
     if (hasStarted) {
@@ -1049,9 +1280,18 @@ const buildMonthlyTrafficAnalytics = (monthParam) => {
       totals.sources.direct += Number(daily?.sources?.direct || 0);
       totals.sources.share += Number(daily?.sources?.share || 0);
       totals.sources.site += Number(daily?.sources?.site || 0);
+      totals.search.impressions += Number(daily?.search?.impressions || 0);
+      totals.search.clicks += Number(daily?.search?.clicks || 0);
+      totals.adsense.impressions += Number(daily?.adsense?.impressions || 0);
+      totals.adsense.clicks += Number(daily?.adsense?.clicks || 0);
+      totals.adsense.estimatedRevenue += Number(daily?.adsense?.estimatedRevenue || 0);
 
       Object.entries(daily?.pages || {}).forEach(([pathKey, count]) => {
         totals.pageVisits[pathKey] = (totals.pageVisits[pathKey] || 0) + Number(count || 0);
+      });
+
+      Object.entries(daily?.search?.queries || {}).forEach(([queryKey, count]) => {
+        totals.search.queries[queryKey] = (totals.search.queries[queryKey] || 0) + Number(count || 0);
       });
     }
   }
@@ -1061,10 +1301,25 @@ const buildMonthlyTrafficAnalytics = (monthParam) => {
     .slice(0, 8)
     .map(([path, visits]) => ({ path, visits }));
 
+  const topQueries = Object.entries(totals.search.queries)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([query, clicks]) => ({ query, clicks }));
+
+  const searchCtr = totals.search.impressions > 0
+    ? Number(((totals.search.clicks / totals.search.impressions) * 100).toFixed(2))
+    : 0;
+  const adsCtr = totals.adsense.impressions > 0
+    ? Number(((totals.adsense.clicks / totals.adsense.impressions) * 100).toFixed(2))
+    : 0;
+  const rpm = totals.pageViews > 0
+    ? Number(((totals.adsense.estimatedRevenue / totals.pageViews) * 1000).toFixed(2))
+    : 0;
+
   return {
-    month: `${year}-${String(month).padStart(2, '0')}`,
-    daysInMonth,
-    currentDay: isCurrentMonth ? currentDay : daysInMonth,
+    month: range.monthLabel,
+    daysInMonth: range.daysInMonth,
+    currentDay: range.currentDay,
     series,
     totals: {
       visits: totals.visits,
@@ -1072,6 +1327,20 @@ const buildMonthlyTrafficAnalytics = (monthParam) => {
       clicks: totals.clicks,
       sources: totals.sources,
       topPages,
+      searchConsole: {
+        impressions: totals.search.impressions,
+        clicks: totals.search.clicks,
+        ctr: searchCtr,
+        topQueries,
+      },
+      adsense: {
+        impressions: totals.adsense.impressions,
+        clicks: totals.adsense.clicks,
+        ctr: adsCtr,
+        estimatedCpc: totals.adsense.estimatedCpc,
+        estimatedRevenue: Number(totals.adsense.estimatedRevenue.toFixed(2)),
+        rpm,
+      },
     },
   };
 };
@@ -10414,15 +10683,18 @@ app.get('/api/admin/site-logs', requireAuth, requireAdmin, (req, res) => {
   });
 });
 
-app.post('/api/public/traffic-event', (req, res) => {
+app.post('/api/public/traffic-event', async (req, res) => {
   try {
     const eventType = String(req.body?.eventType || '').toLowerCase();
     const path = String(req.body?.path || '/').slice(0, 200);
+    const adSlot = String(req.body?.adSlot || '').slice(0, 120) || null;
     const referrer = String(req.body?.referrer || req.get('referer') || '');
     const sourceHint = String(req.body?.source || req.body?.sourceHint || '').slice(0, 80);
+    const searchQuery = normalizeSearchQuery(req.body?.searchQuery || req.body?.query || req.body?.keyword);
     const rawTs = req.body?.timestamp;
+    const estimatedCpc = 0.18;
 
-    if (!['visit', 'pageview', 'click'].includes(eventType)) {
+    if (!['visit', 'pageview', 'click', 'search_impression', 'search_click', 'ad_impression', 'ad_click'].includes(eventType)) {
       return res.status(400).json({ success: false, error: 'Invalid eventType' });
     }
 
@@ -10437,12 +10709,46 @@ app.post('/api/public/traffic-event', (req, res) => {
     if (eventType === 'visit') entry.visits += 1;
     if (eventType === 'pageview') entry.pageViews += 1;
     if (eventType === 'click') entry.clicks += 1;
+    if (eventType === 'search_impression') entry.search.impressions += 1;
+    if (eventType === 'search_click') entry.search.clicks += 1;
+    if (eventType === 'ad_impression') entry.adsense.impressions += 1;
+    if (eventType === 'ad_click') {
+      entry.adsense.clicks += 1;
+      entry.adsense.estimatedRevenue = Number((entry.adsense.estimatedRevenue + estimatedCpc).toFixed(2));
+    }
 
     const source = classifyAccessSource(referrer, sourceHint);
     entry.sources[source] = (entry.sources[source] || 0) + 1;
 
+    if (source === 'google' && eventType === 'visit') {
+      entry.search.clicks += 1;
+    }
+    if (source === 'google' && eventType === 'pageview') {
+      entry.search.impressions += 1;
+    }
+
+    if (searchQuery) {
+      entry.search.queries[searchQuery] = (entry.search.queries[searchQuery] || 0) + 1;
+    }
+
     if (path) {
       entry.pages[path] = (entry.pages[path] || 0) + 1;
+    }
+
+    try {
+      await prisma.analyticsTrafficEvent.create({
+        data: {
+          eventType,
+          path,
+          referrer: referrer || null,
+          source,
+          searchQuery: searchQuery || null,
+          adSlot,
+          createdAt: eventDate,
+        },
+      });
+    } catch (dbError) {
+      console.warn('⚠️ Persist traffic event skipped:', dbError.message);
     }
 
     return res.json({ success: true, recorded: { eventType, date: key, source } });
@@ -10497,7 +10803,10 @@ app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req
 
     const timeline = getTrafficTimeline(Number.parseInt(req.query.historyLimit, 10));
     const monthlyVisits = buildMonthlyVisitsSeries(trafficContextHistory, req.query.month);
-    const monthlyTraffic = buildMonthlyTrafficAnalytics(req.query.month);
+    const [monthlyTraffic, searchConsoleApi] = await Promise.all([
+      buildMonthlyTrafficAnalytics(req.query.month),
+      getSearchConsoleOverview({ monthParam: req.query.month }),
+    ]);
 
     res.json({
       success: true,
@@ -10530,6 +10839,7 @@ app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req
         mobile: mobilePerf,
         desktop: desktopPerf,
       },
+      searchConsoleApi,
       logsContext: {
         totalLogs: logsSummary.total,
         byStatus: logsSummary.byStatus,
@@ -10542,6 +10852,25 @@ app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req
     res.status(500).json({
       success: false,
       error: 'Failed to load traffic and context data',
+      details: error.message,
+    });
+  }
+});
+
+app.get('/api/admin/search-console/overview', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const overview = await getSearchConsoleOverview({
+      monthParam: req.query.month,
+      startDateParam: req.query.startDate,
+      endDateParam: req.query.endDate,
+    });
+
+    res.json({ success: true, data: overview });
+  } catch (error) {
+    console.error('❌ /api/admin/search-console/overview error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load Search Console overview',
       details: error.message,
     });
   }

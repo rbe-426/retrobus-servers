@@ -756,6 +756,21 @@ model Route {
   @@index([eventId])
 }
 
+model AnalyticsTrafficEvent {
+  id          String   @id @default(cuid())
+  eventType   String
+  path        String?
+  referrer    String?
+  source      String?
+  searchQuery String?
+  adSlot      String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([eventType])
+  @@index([source])
+}
+
 model Planification {
   id          String   @id
   eventId     String?
