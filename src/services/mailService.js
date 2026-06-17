@@ -68,6 +68,9 @@ const activeSessions = new Map();
  */
 export async function createMailSession(userId, email, password) {
   try {
+    console.log(`🔐 Tentative de connexion mail IMAP pour ${email}...`);
+    console.log(`   Host: ${IMAP_CONFIG.host}:${IMAP_CONFIG.port}`);
+    
     // Tester la connexion IMAP
     const client = new ImapFlow({
       ...IMAP_CONFIG,
@@ -75,6 +78,7 @@ export async function createMailSession(userId, email, password) {
     });
 
     await client.connect();
+    console.log(`✅ Connexion IMAP réussie pour ${email}`);
     await client.logout();
 
     // Chiffrer le mot de passe avant stockage
@@ -90,8 +94,21 @@ export async function createMailSession(userId, email, password) {
     console.log(`✅ Session mail créée pour ${email}`);
     return { success: true, email };
   } catch (error) {
-    console.error('❌ Erreur création session mail:', error.message);
-    throw new Error(`Impossible de se connecter à ${email}: ${error.message}`);
+    console.error(`❌ Erreur création session mail pour ${email}:`, error.message);
+    console.error(`   Code erreur:`, error.code);
+    console.error(`   Détails:`, error.serverResponseText || error.response || 'N/A');
+    
+    // Message d'erreur plus détaillé selon le type d'erreur
+    let userMessage = `Impossible de se connecter à ${email}`;
+    if (error.code === 'EAUTH' || error.message.includes('auth')) {
+      userMessage += ' : Identifiants incorrects (email ou mot de passe invalide)';
+    } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED') {
+      userMessage += ' : Serveur mail injoignable';
+    } else {
+      userMessage += ` : ${error.message}`;
+    }
+    
+    throw new Error(userMessage);
   }
 }
 
