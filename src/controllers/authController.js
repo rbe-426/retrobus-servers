@@ -14,7 +14,7 @@ import { authenticateUser, updateLastLogin, getUserRole } from '../services/user
 export const loginUser = async (req, res) => {
   try {
     const email = sanitizeInput(req.body?.email || '').toLowerCase().trim();
-    const password = sanitizeInput(req.body?.password || '');
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email & password requis' });
@@ -70,7 +70,7 @@ export const loginUser = async (req, res) => {
 export const loginMember = async (req, res) => {
   try {
     const identifier = sanitizeInput(req.body?.identifier || '').toLowerCase().trim();
-    const password = sanitizeInput(req.body?.password || '');
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
     if (!identifier || !password) {
       auditLog('MEMBER_LOGIN_MISSING_FIELDS', identifier, { identifier: !!identifier, password: !!password }, 'failed');

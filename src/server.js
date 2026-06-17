@@ -1705,7 +1705,7 @@ app.post(['/auth/login','/api/auth/login'], authLimiter, async (req, res) => {
   try {
     // 🔐 Validation et sanitization des entrées
     const email = sanitizeInput(req.body?.email || '').toLowerCase().trim();
-    const password = sanitizeInput(req.body?.password || '');
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
     
     if (!email || !password) {
       auditLog('LOGIN_ATTEMPT_MISSING_FIELDS', email, { email: !!email, password: !!password }, 'failed');
@@ -1817,7 +1817,7 @@ app.post(['/auth/member-login','/api/auth/member-login'], authLimiter, async (re
   try {
     // 🔐 Validation et sanitization des entrées
     const identifier = sanitizeInput(req.body?.identifier || '').toLowerCase().trim();
-    const password = sanitizeInput(req.body?.password || '');
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
     
     if (!identifier || !password) {
       auditLog('MEMBER_LOGIN_MISSING_FIELDS', identifier, { identifier: !!identifier, password: !!password }, 'failed');
@@ -8960,9 +8960,9 @@ app.post('/api/admin/users/:id/link-member', requireAuth, async (req, res) => {
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   try {
     // 🔐 Validation et sanitization des entrées
-    const currentPassword = sanitizeInput(req.body?.currentPassword || '');
-    const newPassword = sanitizeInput(req.body?.newPassword || '');
-    const confirmPassword = sanitizeInput(req.body?.confirmPassword || '');
+    const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+    const confirmPassword = typeof req.body?.confirmPassword === 'string' ? req.body.confirmPassword : '';
     const userEmail = req.user?.id; // Decoded from token (usually email)
 
     if (!userEmail) {
