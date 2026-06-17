@@ -8898,6 +8898,7 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
     res.json({ 
       success: true,
       emailSent: true,
+      tempPassword: tempPassword,
       message: 'Mot de passe réinitialisé. Un email avec les nouveaux identifiants a été envoyé à ' + targetEmail,
       user: {
         id: updatedUser.id,
