@@ -5006,12 +5006,60 @@ app.get('/api/adhesion-requests', requireAuth, async (req, res) => {
 
 app.get('/api/adhesion-requests/stats', requireAuth, async (req, res) => {
   try {
-    const [pending, approved, rejected, total] = await Promise.all([
-      prisma.adhesionRequest.count({ where: { status: 'PENDING' } }),
-      prisma.adhesionRequest.count({ where: { status: 'APPROVED' } }),
-      prisma.adhesionRequest.count({ where: { status: 'REJECTED' } }),
-      prisma.adhesionRequest.count()
-    ]);
+    let pending = 0;
+    let approved = 0;
+    let rejected = 0;
+    let total = 0;
+
+    const adhesionRequestModel = prisma?.adhesionRequest;
+
+    if (adhesionRequestModel && typeof adhesionRequestModel.count === 'function') {
+      [pending, approved, rejected, total] = await Promise.all([
+        adhesionRequestModel.count({ where: { status: 'PENDING' } }),
+        adhesionRequestModel.count({ where: { status: 'APPROVED' } }),
+        adhesionRequestModel.count({ where: { status: 'REJECTED' } }),
+        adhesionRequestModel.count()
+      ]);
+    } else if (prisma && typeof prisma.$queryRawUnsafe === 'function') {
+      // Fallback: client Prisma desynchronise (delegate absent), on passe par SQL brut.
+      const tableCandidates = ['"AdhesionRequest"', 'adhesion_requests'];
+      let rows = [];
+
+      for (const tableName of tableCandidates) {
+        try {
+          rows = await prisma.$queryRawUnsafe(
+            `SELECT status, COUNT(*)::int AS count FROM ${tableName} GROUP BY status`
+          );
+          if (Array.isArray(rows)) {
+            break;
+          }
+        } catch (sqlError) {
+          rows = [];
+        }
+      }
+
+      if (Array.isArray(rows) && rows.length > 0) {
+        for (const row of rows) {
+          const status = String(row.status || '').toUpperCase();
+          const value = Number(row.count || 0);
+          if (status === 'PENDING') pending = value;
+          if (status === 'APPROVED') approved = value;
+          if (status === 'REJECTED') rejected = value;
+          total += value;
+        }
+      }
+    }
+
+    if (pending === 0 && approved === 0 && rejected === 0 && total === 0 && Array.isArray(state?.adhesionRequests)) {
+      // Dernier fallback: runtime state en memoire
+      for (const request of state.adhesionRequests) {
+        const status = String(request?.status || '').toUpperCase();
+        if (status === 'PENDING') pending += 1;
+        else if (status === 'APPROVED') approved += 1;
+        else if (status === 'REJECTED') rejected += 1;
+      }
+      total = state.adhesionRequests.length;
+    }
 
     return res.json({
       success: true,
