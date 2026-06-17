@@ -900,6 +900,182 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = 12000) => {
   }
 };
 
+const TRAFFIC_CONTEXT_HISTORY_MAX = 240;
+const trafficContextHistory = [];
+const externalTrafficDailyStore = new Map();
+
+const recordTrafficSnapshot = (snapshot) => {
+  trafficContextHistory.push(snapshot);
+  if (trafficContextHistory.length > TRAFFIC_CONTEXT_HISTORY_MAX) {
+    trafficContextHistory.splice(0, trafficContextHistory.length - TRAFFIC_CONTEXT_HISTORY_MAX);
+  }
+};
+
+const getTrafficTimeline = (limit = 72) => {
+  const normalizedLimit = Number.isFinite(Number(limit))
+    ? Math.max(12, Math.min(240, Number(limit)))
+    : 72;
+
+  return trafficContextHistory.slice(-normalizedLimit);
+};
+
+const buildDailyKey = (date = new Date()) => {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const classifyAccessSource = (referrer = '', sourceHint = '') => {
+  const source = String(sourceHint || '').toLowerCase();
+  const ref = String(referrer || '').toLowerCase();
+
+  if (source.includes('google') || ref.includes('google.')) return 'google';
+  if (source.includes('share') || source.includes('social') || /facebook|instagram|tiktok|discord|x\.com|twitter|linkedin|whatsapp/.test(ref)) return 'share';
+  if (!ref || ref === 'direct' || ref === 'none') return 'direct';
+  return 'site';
+};
+
+const ensureDailyTrafficEntry = (key) => {
+  if (!externalTrafficDailyStore.has(key)) {
+    externalTrafficDailyStore.set(key, {
+      date: key,
+      visits: 0,
+      pageViews: 0,
+      clicks: 0,
+      sources: {
+        google: 0,
+        direct: 0,
+        share: 0,
+        site: 0,
+      },
+      pages: {},
+    });
+  }
+
+  return externalTrafficDailyStore.get(key);
+};
+
+const parseMonthParam = (value) => {
+  const raw = String(value || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(raw)) return null;
+  const [yearStr, monthStr] = raw.split('-');
+  const year = Number.parseInt(yearStr, 10);
+  const month = Number.parseInt(monthStr, 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return { year, month };
+};
+
+const buildMonthlyVisitsSeries = (history, monthParam) => {
+  const now = new Date();
+  const requested = parseMonthParam(monthParam);
+  const year = requested?.year ?? now.getUTCFullYear();
+  const month = requested?.month ?? (now.getUTCMonth() + 1);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+  const buckets = Array.from({ length: daysInMonth }, () => 0);
+
+  for (const point of history) {
+    const timestamp = point?.timestamp ? new Date(point.timestamp) : null;
+    if (!timestamp || Number.isNaN(timestamp.getTime())) continue;
+    const pointYear = timestamp.getUTCFullYear();
+    const pointMonth = timestamp.getUTCMonth() + 1;
+    if (pointYear !== year || pointMonth !== month) continue;
+
+    const day = timestamp.getUTCDate();
+    const idx = day - 1;
+    if (idx < 0 || idx >= buckets.length) continue;
+
+    const visitsCandidate = Number(point.visitsCount);
+    const fallbackCandidate = Number(point.pageProbeSuccessCount);
+    const value = Number.isFinite(visitsCandidate)
+      ? visitsCandidate
+      : (Number.isFinite(fallbackCandidate) ? fallbackCandidate : 0);
+    buckets[idx] += Math.max(0, Math.round(value));
+  }
+
+  return {
+    month: `${year}-${String(month).padStart(2, '0')}`,
+    daysInMonth,
+    series: buckets.map((visits, index) => ({ day: index + 1, visits })),
+  };
+};
+
+const buildMonthlyTrafficAnalytics = (monthParam) => {
+  const now = new Date();
+  const requested = parseMonthParam(monthParam);
+  const year = requested?.year ?? now.getUTCFullYear();
+  const month = requested?.month ?? (now.getUTCMonth() + 1);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const isCurrentMonth = year === now.getUTCFullYear() && month === (now.getUTCMonth() + 1);
+  const currentDay = now.getUTCDate();
+
+  const series = [];
+  const totals = {
+    visits: 0,
+    pageViews: 0,
+    clicks: 0,
+    sources: {
+      google: 0,
+      direct: 0,
+      share: 0,
+      site: 0,
+    },
+    pageVisits: {},
+  };
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const daily = externalTrafficDailyStore.get(dateKey);
+    const hasStarted = !isCurrentMonth || day <= currentDay;
+
+    const visits = hasStarted ? Number(daily?.visits || 0) : null;
+    const pageViews = hasStarted ? Number(daily?.pageViews || 0) : null;
+    const clicks = hasStarted ? Number(daily?.clicks || 0) : null;
+
+    series.push({
+      day,
+      date: dateKey,
+      visits,
+      pageViews,
+      clicks,
+    });
+
+    if (hasStarted) {
+      totals.visits += Number(daily?.visits || 0);
+      totals.pageViews += Number(daily?.pageViews || 0);
+      totals.clicks += Number(daily?.clicks || 0);
+      totals.sources.google += Number(daily?.sources?.google || 0);
+      totals.sources.direct += Number(daily?.sources?.direct || 0);
+      totals.sources.share += Number(daily?.sources?.share || 0);
+      totals.sources.site += Number(daily?.sources?.site || 0);
+
+      Object.entries(daily?.pages || {}).forEach(([pathKey, count]) => {
+        totals.pageVisits[pathKey] = (totals.pageVisits[pathKey] || 0) + Number(count || 0);
+      });
+    }
+  }
+
+  const topPages = Object.entries(totals.pageVisits)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([path, visits]) => ({ path, visits }));
+
+  return {
+    month: `${year}-${String(month).padStart(2, '0')}`,
+    daysInMonth,
+    currentDay: isCurrentMonth ? currentDay : daysInMonth,
+    series,
+    totals: {
+      visits: totals.visits,
+      pageViews: totals.pageViews,
+      clicks: totals.clicks,
+      sources: totals.sources,
+      topPages,
+    },
+  };
+};
+
 const probeHttpUrl = async (url) => {
   const startedAt = Date.now();
   try {
@@ -10238,6 +10414,44 @@ app.get('/api/admin/site-logs', requireAuth, requireAdmin, (req, res) => {
   });
 });
 
+app.post('/api/public/traffic-event', (req, res) => {
+  try {
+    const eventType = String(req.body?.eventType || '').toLowerCase();
+    const path = String(req.body?.path || '/').slice(0, 200);
+    const referrer = String(req.body?.referrer || req.get('referer') || '');
+    const sourceHint = String(req.body?.source || req.body?.sourceHint || '').slice(0, 80);
+    const rawTs = req.body?.timestamp;
+
+    if (!['visit', 'pageview', 'click'].includes(eventType)) {
+      return res.status(400).json({ success: false, error: 'Invalid eventType' });
+    }
+
+    const eventDate = rawTs ? new Date(rawTs) : new Date();
+    if (Number.isNaN(eventDate.getTime())) {
+      return res.status(400).json({ success: false, error: 'Invalid timestamp' });
+    }
+
+    const key = buildDailyKey(eventDate);
+    const entry = ensureDailyTrafficEntry(key);
+
+    if (eventType === 'visit') entry.visits += 1;
+    if (eventType === 'pageview') entry.pageViews += 1;
+    if (eventType === 'click') entry.clicks += 1;
+
+    const source = classifyAccessSource(referrer, sourceHint);
+    entry.sources[source] = (entry.sources[source] || 0) + 1;
+
+    if (path) {
+      entry.pages[path] = (entry.pages[path] || 0) + 1;
+    }
+
+    return res.json({ success: true, recorded: { eventType, date: key, source } });
+  } catch (error) {
+    console.error('❌ /api/public/traffic-event error:', error.message);
+    return res.status(500).json({ success: false, error: 'Failed to record traffic event' });
+  }
+});
+
 app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req, res) => {
   try {
     const externalBase = (process.env.EXTERNAL_SITE_URL || 'https://www.association-rbe.fr').replace(/\/+$/, '');
@@ -10257,6 +10471,9 @@ app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req
       successfulProbes.length > 0
         ? Math.round(successfulProbes.reduce((sum, probe) => sum + (probe.responseTimeMs || 0), 0) / successfulProbes.length)
         : null;
+    const successRatePct = pageProbes.length > 0
+      ? Math.round((successfulProbes.length / pageProbes.length) * 100)
+      : 0;
 
     const [mobilePerf, desktopPerf] = await Promise.all([
       getPageSpeedMetrics(externalBase, 'mobile'),
@@ -10266,6 +10483,21 @@ app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req
     const memory = process.memoryUsage();
     const toMb = (bytes) => Math.round((bytes / 1024 / 1024) * 10) / 10;
     const logsSummary = getAuditLogsSummary();
+
+    recordTrafficSnapshot({
+      timestamp: new Date().toISOString(),
+      averageResponseTimeMs,
+      successRatePct,
+      visitsCount: successfulProbes.length,
+      pageProbeCount: pageProbes.length,
+      pageProbeSuccessCount: successfulProbes.length,
+      pagespeedMobileScore: mobilePerf?.score ?? null,
+      pagespeedDesktopScore: desktopPerf?.score ?? null,
+    });
+
+    const timeline = getTrafficTimeline(Number.parseInt(req.query.historyLimit, 10));
+    const monthlyVisits = buildMonthlyVisitsSeries(trafficContextHistory, req.query.month);
+    const monthlyTraffic = buildMonthlyTrafficAnalytics(req.query.month);
 
     res.json({
       success: true,
@@ -10283,9 +10515,16 @@ app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req
       trafficContext: {
         pageProbeCount: pageProbes.length,
         pageProbeSuccessCount: successfulProbes.length,
+        successRatePct,
         averageResponseTimeMs,
         pages: pageProbes,
         resources: resourceProbes,
+        history: {
+          points: timeline.length,
+          timeline,
+        },
+        monthlyVisits,
+        monthlyTraffic,
       },
       pagespeed: {
         mobile: mobilePerf,
