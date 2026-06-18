@@ -3184,6 +3184,112 @@ app.delete(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) =>
 // NOTIFICATIONS - Maintenant gérées via routes modulaires avec Prisma
 // Les endpoints sont enregistrés ci-dessus: app.use('/api/notifications', notificationsRoutes)
 
+// ===== HOME ANNOUNCEMENTS - Annonces d'accueil persistées =====
+
+// GET /api/home-announcements - Récupérer les annonces actives
+app.get('/api/home-announcements', async (req, res) => {
+  try {
+    const now = new Date();
+    const announcements = await prisma.homeAnnouncement.findMany({
+      where: {
+        active: true,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: now } }
+        ]
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(announcements);
+  } catch (error) {
+    console.error('❌ Erreur GET /api/home-announcements:', error);
+    res.status(500).json({ error: 'Erreur serveur lors de la récupération des annonces' });
+  }
+});
+
+// POST /api/home-announcements - Créer une nouvelle annonce (admin seulement)
+app.post('/api/home-announcements', requireAuth, async (req, res) => {
+  try {
+    const { severity, title, message, dismissible, expiresAt, actions } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'Le message est requis' });
+    }
+
+    const announcement = await prisma.homeAnnouncement.create({
+      data: {
+        severity: severity || 'INFO',
+        title,
+        message,
+        dismissible: dismissible !== false,
+        expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 24 * 60 * 60 * 1000),
+        actions: actions || null,
+        active: true,
+        createdBy: req.user?.urbex_id || null
+      }
+    });
+
+    console.log('✅ Annonce créée:', announcement.id);
+    res.status(201).json(announcement);
+  } catch (error) {
+    console.error('❌ Erreur POST /api/home-announcements:', error);
+    res.status(500).json({ error: 'Erreur serveur lors de la création de l\'annonce' });
+  }
+});
+
+// DELETE /api/home-announcements/:id - Supprimer une annonce (admin seulement)
+app.delete('/api/home-announcements/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Vérifier si l'annonce existe
+    const existing = await prisma.homeAnnouncement.findUnique({
+      where: { id }
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Annonce non trouvée' });
+    }
+
+    await prisma.homeAnnouncement.delete({
+      where: { id }
+    });
+
+    console.log('✅ Annonce supprimée:', id);
+    res.json({ success: true, message: 'Annonce supprimée avec succès' });
+  } catch (error) {
+    console.error('❌ Erreur DELETE /api/home-announcements/:id:', error);
+    res.status(500).json({ error: 'Erreur serveur lors de la suppression de l\'annonce' });
+  }
+});
+
+// PATCH /api/home-announcements/:id - Mettre à jour une annonce (admin seulement)
+app.patch('/api/home-announcements/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { severity, title, message, dismissible, expiresAt, actions, active } = req.body;
+
+    const updated = await prisma.homeAnnouncement.update({
+      where: { id },
+      data: {
+        ...(severity !== undefined && { severity }),
+        ...(title !== undefined && { title }),
+        ...(message !== undefined && { message }),
+        ...(dismissible !== undefined && { dismissible }),
+        ...(expiresAt !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
+        ...(actions !== undefined && { actions }),
+        ...(active !== undefined && { active })
+      }
+    });
+
+    console.log('✅ Annonce mise à jour:', id);
+    res.json(updated);
+  } catch (error) {
+    console.error('❌ Erreur PATCH /api/home-announcements/:id:', error);
+    res.status(500).json({ error: 'Erreur serveur lors de la mise à jour de l\'annonce' });
+  }
+});
+
 // ===== RETROMAIL (stub endpoints) =====
 app.get(['/retromail/list'], requireAuth, (req, res) => {
   // Retourne une liste vide de fiches retromail

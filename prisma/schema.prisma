@@ -1429,3 +1429,31 @@ model AdhesionRequest {
   @@index([createdAt])
   @@index([email])
 }
+
+// ============================================================================
+// HOME ANNOUNCEMENTS - Annonces d'accueil persistées côté serveur
+// ============================================================================
+
+model HomeAnnouncement {
+  id          String                @id @default(cuid())
+  severity    AnnouncementSeverity  @default(INFO)
+  title       String?
+  message     String                @db.Text
+  active      Boolean               @default(true)
+  dismissible Boolean               @default(true)
+  expiresAt   DateTime?
+  actions     Json?                 // Array d'objets {label: string, onClick?: string, dismissAfter?: boolean}
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  createdBy   String?               // ID de l'utilisateur qui a créé l'annonce
+
+  @@index([active])
+  @@index([expiresAt])
+  @@index([createdAt])
+}
+
+enum AnnouncementSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
