@@ -814,6 +814,8 @@ app.use('/uploads', (req, res, next) => {
   } else if (process.env.NODE_ENV !== 'production' && ['localhost', '127.0.0.1'].some(h => origin?.includes(h))) {
     res.header('Access-Control-Allow-Origin', origin);
   }
+  // Override helmet default for media files served to another origin.
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
   res.header('Access-Control-Allow-Methods', 'GET, HEAD');
   res.header('Access-Control-Allow-Headers', 'Origin, Accept, Content-Type');
   res.header('Access-Control-Allow-Credentials', 'true');
