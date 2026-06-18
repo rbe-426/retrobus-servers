@@ -136,7 +136,8 @@ export const csrfProtection = (req, res, next) => {
     '/api/health',
     '/health',
     '/api/csrf-token',
-    '/public/contact'
+    '/public/contact',
+    '/api/public/traffic-event'  // Analytics du site externe
   ];
 
   // Routes publiques du parcours bulletin (sécurisées par token d'URL)
