@@ -4352,6 +4352,8 @@ const normalizeRetroNewsForPrisma = (data, userId) => {
     content: String(data.content || data.body || '').trim(), // Prisma schema uses 'content'
     excerpt: data.excerpt ? String(data.excerpt).trim() : undefined,
     imageUrl: data.imageUrl ? String(data.imageUrl).trim() : undefined,
+    media: data.media || null, // JSON string of media array
+    polls: data.polls || null, // JSON string of polls array
     author: String(data.author || userId || 'anonyme').trim(),
     published: Boolean(data.published !== undefined ? data.published : data.status === 'published'), // Convert status → published boolean
     featured: Boolean(data.featured || data.isFeatured || false),
@@ -4492,7 +4494,7 @@ app.delete(['/api/retro-news/:id'], requireAuth, async (req, res) => {
 
 const retroNewsMediaStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), '../uploads/retroactus');
+    const uploadDir = path.join(pathRoot, 'uploads', 'retroactus');
     fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
