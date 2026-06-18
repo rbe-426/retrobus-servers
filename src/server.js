@@ -4694,7 +4694,11 @@ app.post('/api/retro-news/media/upload', requireAuth, uploadLimiter, retroNewsMe
       return res.status(400).json({ error: 'Aucun fichier uploadé' });
     }
 
-    const mediaUrl = `/uploads/retroactus/${req.file.filename}`;
+    // Build absolute URL for production (Vercel frontend needs Railway API URL)
+    const relativePath = `/uploads/retroactus/${req.file.filename}`;
+    const apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || `${req.protocol}://${req.get('host')}`;
+    const mediaUrl = apiBaseUrl + relativePath;
+    
     const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
     const caption = req.body.caption || '';
 
