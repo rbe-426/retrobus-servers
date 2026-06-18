@@ -1029,16 +1029,33 @@ const getSearchConsoleSiteUrl = () => {
 };
 
 const getSearchConsoleCredentials = () => {
+  // Support OAuth 2.0 (préféré)
+  const clientId = process.env.SEARCH_CONSOLE_CLIENT_ID;
+  const clientSecret = process.env.SEARCH_CONSOLE_CLIENT_SECRET;
+  const refreshToken = process.env.SEARCH_CONSOLE_REFRESH_TOKEN;
+  
+  if (clientId && clientSecret && refreshToken) {
+    return {
+      type: 'oauth2',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken
+    };
+  }
+
+  // Support Service Account (fallback)
   const rawJson = process.env.SEARCH_CONSOLE_SERVICE_ACCOUNT_JSON;
   const rawBase64 = process.env.SEARCH_CONSOLE_SERVICE_ACCOUNT_BASE64;
 
   if (rawJson) {
-    return JSON.parse(rawJson);
+    const parsed = JSON.parse(rawJson);
+    return { ...parsed, type: 'service_account' };
   }
 
   if (rawBase64) {
     const decoded = Buffer.from(rawBase64, 'base64').toString('utf-8');
-    return JSON.parse(decoded);
+    const parsed = JSON.parse(decoded);
+    return { ...parsed, type: 'service_account' };
   }
 
   return null;
@@ -1048,11 +1065,41 @@ const getSearchConsoleOverview = async ({ monthParam, startDateParam, endDatePar
   const siteUrl = getSearchConsoleSiteUrl();
   const credentials = getSearchConsoleCredentials();
 
-  if (!siteUrl || !credentials?.client_email || !credentials?.private_key) {
+  // Vérifier les credentials selon le type
+  const isOAuth = credentials?.type === 'oauth2';
+  const isServiceAccount = credentials?.type === 'service_account';
+  
+  if (!siteUrl) {
+    return {
+      enabled: false,
+      siteUrl: null,
+      error: 'Missing SEARCH_CONSOLE_SITE_URL',
+    };
+  }
+
+  if (!credentials || (!isOAuth && !isServiceAccount)) {
     return {
       enabled: false,
       siteUrl: siteUrl || null,
-      error: 'Missing Search Console credentials or site URL',
+      error: 'Missing Search Console credentials',
+    };
+  }
+
+  // Valider les credentials OAuth
+  if (isOAuth && (!credentials.client_id || !credentials.client_secret || !credentials.refresh_token)) {
+    return {
+      enabled: false,
+      siteUrl: siteUrl || null,
+      error: 'Incomplete OAuth 2.0 credentials',
+    };
+  }
+
+  // Valider les credentials Service Account
+  if (isServiceAccount && (!credentials.client_email || !credentials.private_key)) {
+    return {
+      enabled: false,
+      siteUrl: siteUrl || null,
+      error: 'Incomplete Service Account credentials',
     };
   }
 
@@ -1060,13 +1107,30 @@ const getSearchConsoleOverview = async ({ monthParam, startDateParam, endDatePar
   const startDate = String(startDateParam || monthRange.startDate.toISOString().slice(0, 10));
   const endDate = String(endDateParam || new Date(monthRange.endDate.getTime() - 86400000).toISOString().slice(0, 10));
 
-  const jwt = new google.auth.JWT({
-    email: credentials.client_email,
-    key: String(credentials.private_key).replace(/\\n/g, '\n'),
-    scopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
-  });
+  // Créer le client d'authentification selon le type
+  let auth;
+  if (isOAuth) {
+    // OAuth 2.0 Client
+    auth = new google.auth.OAuth2(
+      credentials.client_id,
+      credentials.client_secret,
+      'http://localhost:3000/oauth2callback' // Redirect URI (pas utilisé ici)
+    );
+    auth.setCredentials({
+      refresh_token: credentials.refresh_token
+    });
+    console.log('🔐 Using OAuth 2.0 for Search Console API');
+  } else {
+    // Service Account JWT
+    auth = new google.auth.JWT({
+      email: credentials.client_email,
+      key: String(credentials.private_key).replace(/\\n/g, '\n'),
+      scopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
+    });
+    console.log('🔐 Using Service Account for Search Console API');
+  }
 
-  const webmasters = google.webmasters({ version: 'v3', auth: jwt });
+  const webmasters = google.webmasters({ version: 'v3', auth });
 
   const [summaryRes, queriesRes] = await Promise.all([
     webmasters.searchanalytics.query({
