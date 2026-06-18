@@ -806,6 +806,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// CORS middleware for static uploads (must be BEFORE express.static)
+app.use('/uploads', (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (process.env.NODE_ENV !== 'production' && ['localhost', '127.0.0.1'].some(h => origin?.includes(h))) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD');
+  res.header('Access-Control-Allow-Headers', 'Origin, Accept, Content-Type');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Cache-Control', 'public, max-age=31536000'); // 1 year for static assets
+  next();
+});
+
 // Static files (serve uploaded content)
 app.use('/uploads', express.static(pathRoot + '/uploads'));
 
@@ -4536,8 +4551,13 @@ const normalizeRetroNewsForPrisma = (data, userId) => {
 
 // 🎯 HELPER: Response format (Prisma → frontend)
 const formatRetroNewsForFrontend = (prismaNews) => {
-  // Build absolute URL prefix for media
-  const apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || 'https://attractive-kindness-rbe-serveurs.up.railway.app';
+  // Build absolute URL prefix for media - force HTTPS for Railway
+  let apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || 'https://attractive-kindness-rbe-serveurs.up.railway.app';
+  
+  // Ensure HTTPS for Railway domains
+  if (apiBaseUrl.startsWith('http://') && apiBaseUrl.includes('railway.app')) {
+    apiBaseUrl = apiBaseUrl.replace('http://', 'https://');
+  }
   
   // Transform media URLs from relative to absolute
   let media = prismaNews.media;
@@ -4712,7 +4732,13 @@ app.post('/api/retro-news/media/upload', requireAuth, uploadLimiter, retroNewsMe
 
     // Build absolute URL for production (Vercel frontend needs Railway API URL)
     const relativePath = `/uploads/retroactus/${req.file.filename}`;
-    const apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || `${req.protocol}://${req.get('host')}`;
+    
+    // Detect protocol - force HTTPS if behind Railway proxy
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const isHttps = protocol === 'https' || req.get('host')?.includes('railway.app');
+    const finalProtocol = isHttps ? 'https' : protocol;
+    
+    const apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || `${finalProtocol}://${req.get('host')}`;
     const mediaUrl = apiBaseUrl + relativePath;
     
     const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
