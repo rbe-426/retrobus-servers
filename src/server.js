@@ -4535,26 +4535,42 @@ const normalizeRetroNewsForPrisma = (data, userId) => {
 };
 
 // 🎯 HELPER: Response format (Prisma → frontend)
-const formatRetroNewsForFrontend = (prismaNews) => ({
-  id: prismaNews.id,
-  title: prismaNews.title,
-  body: prismaNews.content, // Map content to body for frontend
-  content: prismaNews.content,
-  excerpt: prismaNews.excerpt,
-  imageUrl: prismaNews.imageUrl,
-  media: prismaNews.media, // Include media JSON
-  polls: prismaNews.polls, // Include polls JSON
-  author: prismaNews.author,
-  status: prismaNews.published ? 'published' : 'draft', // Map published boolean to status string
-  published: prismaNews.published,
-  isFeatured: prismaNews.featured, // Map featured to isFeatured for frontend
-  featured: prismaNews.featured,
-  showOnExternal: prismaNews.showOnExternal,
-  createdBy: prismaNews.createdBy,
-  publishedAt: prismaNews.publishedAt,
-  createdAt: prismaNews.createdAt,
-  updatedAt: prismaNews.updatedAt
-});
+const formatRetroNewsForFrontend = (prismaNews) => {
+  // Build absolute URL prefix for media
+  const apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || 'https://attractive-kindness-rbe-serveurs.up.railway.app';
+  
+  // Transform media URLs from relative to absolute
+  let media = prismaNews.media;
+  if (Array.isArray(media)) {
+    media = media.map(item => {
+      if (item && item.url && item.url.startsWith('/uploads')) {
+        return { ...item, url: apiBaseUrl + item.url };
+      }
+      return item;
+    });
+  }
+
+  return {
+    id: prismaNews.id,
+    title: prismaNews.title,
+    body: prismaNews.content, // Map content to body for frontend
+    content: prismaNews.content,
+    excerpt: prismaNews.excerpt,
+    imageUrl: prismaNews.imageUrl,
+    media: media, // Include media JSON with absolute URLs
+    polls: prismaNews.polls, // Include polls JSON
+    author: prismaNews.author,
+    status: prismaNews.published ? 'published' : 'draft', // Map published boolean to status string
+    published: prismaNews.published,
+    isFeatured: prismaNews.featured, // Map featured to isFeatured for frontend
+    featured: prismaNews.featured,
+    showOnExternal: prismaNews.showOnExternal,
+    createdBy: prismaNews.createdBy,
+    publishedAt: prismaNews.publishedAt,
+    createdAt: prismaNews.createdAt,
+    updatedAt: prismaNews.updatedAt
+  };
+};
 
 // ============================================
 // RETRO NEWS ENDPOINTS
