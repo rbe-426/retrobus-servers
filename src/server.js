@@ -4198,7 +4198,8 @@ app.get(['/api/retro-requests/admin/all'], requireAuth, async (req, res) => {
   try {
     // Check if user has ADMIN role - lookup by email
     const member = await prisma.members.findUnique({ where: { email: req.user.email } });
-    const isAdmin = member?.role === 'ADMIN';
+    const userRole = String(member?.role || req.user?.role || '').toUpperCase();
+    const isAdmin = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'].includes(userRole);
     
     if (!isAdmin) {
       return res.status(403).json({ error: 'Admin access required' });
@@ -4269,7 +4270,8 @@ app.put(['/api/retro-requests/:id'], requireAuth, async (req, res) => {
     
     // Only allow user to edit their own requests or admins to edit all - lookup by email
     const member = await prisma.members.findUnique({ where: { email: req.user.email } });
-    const isAdmin = member?.role === 'ADMIN';
+    const userRole = String(member?.role || req.user?.role || '').toUpperCase();
+    const isAdmin = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'].includes(userRole);
     if (request.userId !== member.id && !isAdmin) {
       return res.status(403).json({ error: 'Not authorized' });
     }
@@ -4304,7 +4306,8 @@ app.delete(['/api/retro-requests/:id'], requireAuth, async (req, res) => {
     
     // Only allow user to delete their own requests or admins to delete all - lookup by email
     const member = await prisma.members.findUnique({ where: { email: req.user.email } });
-    const isAdmin = member?.role === 'ADMIN';
+    const userRole = String(member?.role || req.user?.role || '').toUpperCase();
+    const isAdmin = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'].includes(userRole);
     if (request.userId !== member.id && !isAdmin) {
       return res.status(403).json({ error: 'Not authorized' });
     }
@@ -4332,7 +4335,8 @@ app.post(['/api/retro-requests/:id/status'], requireAuth, async (req, res) => {
     }
 
     // Check authorization - ONLY ADMIN can change status
-    const isAdmin = member.role === 'ADMIN';
+    const userRole = String(member?.role || req.user?.role || '').toUpperCase();
+    const isAdmin = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'].includes(userRole);
     if (!isAdmin) {
       return res.status(403).json({ error: 'Only admins can change request status' });
     }
@@ -9062,6 +9066,28 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
           }
         }
       });
+      // Keep linked member in sync because authentication uses members table
+      if (updatedUser.linkedMemberId) {
+        await prisma.members.update({
+          where: { id: updatedUser.linkedMemberId },
+          data: {
+            password: hashedPassword,
+            isPasswordTemporary: true,
+            mustChangePassword: true,
+            updatedAt: new Date()
+          }
+        }).catch(() => null);
+
+        const stateIndex = state.members.findIndex(m => m.id === updatedUser.linkedMemberId);
+        if (stateIndex !== -1) {
+          state.members[stateIndex] = {
+            ...state.members[stateIndex],
+            password: hashedPassword,
+            isPasswordTemporary: true,
+            mustChangePassword: true
+          };
+        }
+      }
       // Get matricule from linked member
       userMatricule = updatedUser.members?.matricule || updatedUser.email;
     } else {
@@ -10941,11 +10967,36 @@ app.post('/api/admin/users/:userId/role', requireAuth, async (req, res) => {
   console.log(`👤 Role change request for user: ${userId} -> ${role}`);
   
   try {
-    // Find the member in Prisma
-    const member = await prisma.members.findUnique({
-      where: { id: userId }
-    });
-    
+    // First try site_users (IDs used by admin permissions UI)
+    const siteUser = await prisma.site_users.findUnique({ where: { id: userId } });
+    if (siteUser) {
+      const updatedSiteUser = await prisma.site_users.update({
+        where: { id: userId },
+        data: {
+          role: role,
+          updatedAt: new Date()
+        }
+      });
+
+      // If downgraded from admin-like role, remove elevated ADMIN action entries
+      const isAdminLikeRole = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'].includes(String(role || '').toUpperCase());
+      if (!isAdminLikeRole) {
+        const adminResources = ['members', 'vehicles', 'events', 'finance', 'transactions', 'reports', 'permissions', 'users', 'news', 'documents', 'maintenance', 'admin'];
+        await prisma.user_permissions.deleteMany({
+          where: {
+            userId,
+            resource: { in: adminResources }
+          }
+        });
+      }
+
+      permissionsCache.delete(`perms_${userId}`);
+      console.log(`✅ site_user ${userId} role changed to ${role}`);
+      return res.json({ ok: true, user: updatedSiteUser });
+    }
+
+    // Fallback to members
+    const member = await prisma.members.findUnique({ where: { id: userId } });
     if (!member) {
       return res.status(404).json({ error: 'User not found' });
     }
