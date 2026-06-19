@@ -4720,11 +4720,29 @@ const retroNewsMediaUpload = multer({
   storage: retroNewsMediaStorage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm'];
+    const allowedTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'video/mp4',
+      'video/webm',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'application/zip',
+      'application/x-zip-compressed'
+    ];
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Type de fichier non supporté. Utilisez JPG, PNG, GIF, WEBP, MP4 ou WEBM.'));
+      cb(new Error('Type de fichier non supporté. Utilisez image, vidéo ou document (PDF/Office/TXT/ZIP).'));
     }
   }
 });
@@ -4747,7 +4765,11 @@ app.post('/api/retro-news/media/upload', requireAuth, uploadLimiter, retroNewsMe
     const apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || `${finalProtocol}://${req.get('host')}`;
     const mediaUrl = apiBaseUrl + relativePath;
     
-    const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+    const mediaType = req.file.mimetype.startsWith('video/')
+      ? 'video'
+      : req.file.mimetype.startsWith('image/')
+        ? 'image'
+        : 'file';
     const caption = req.body.caption || '';
 
     console.log(`✅ Media uploaded: ${mediaUrl} (${mediaType})`);
@@ -4759,6 +4781,8 @@ app.post('/api/retro-news/media/upload', requireAuth, uploadLimiter, retroNewsMe
         url: mediaUrl,
         caption: caption,
         filename: req.file.filename,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
         size: req.file.size
       }
     });
