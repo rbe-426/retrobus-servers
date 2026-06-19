@@ -4288,6 +4288,35 @@ app.put(['/api/retro-requests/:id'], requireAuth, async (req, res) => {
         updatedAt: new Date()
       }
     });
+
+    // Notify ticket creator when admins update status/comments
+    try {
+      const actorName = `${member?.firstName || ''} ${member?.lastName || ''}`.trim() || member?.email || req.user?.email || 'Support';
+      const creatorEmail = String(request.userEmail || '').trim().toLowerCase();
+      const actorEmail = String(member?.email || req.user?.email || '').trim().toLowerCase();
+      const statusChanged = (status && status !== request.status);
+      const notesChanged = (notes && notes !== request.notes);
+
+      if (creatorEmail && creatorEmail !== actorEmail && (statusChanged || notesChanged)) {
+        const updates = [];
+        if (statusChanged) updates.push(`Statut mis à jour : ${request.status} → ${status}`);
+        if (notesChanged) updates.push('Nouveau commentaire ajouté sur votre ticket.');
+
+        await prisma.notification.create({
+          data: {
+            title: `🎫 Suivi ticket: ${request.title}`,
+            message: `${updates.join('\n')}\nPar: ${actorName}`,
+            type: 'info',
+            priority: 'normal',
+            active: true,
+            targetedTo: `user:${creatorEmail}`,
+            createdBy: actorEmail || actorName
+          }
+        });
+      }
+    } catch (notifError) {
+      console.warn('⚠️ Notification ticket non envoyée (PUT retro-requests):', notifError.message);
+    }
     
     res.json({ request: updated });
   } catch (e) {
@@ -4349,6 +4378,29 @@ app.post(['/api/retro-requests/:id/status'], requireAuth, async (req, res) => {
         updatedAt: new Date()
       }
     });
+
+    // Notify ticket creator on status update
+    try {
+      const actorName = `${member?.firstName || ''} ${member?.lastName || ''}`.trim() || member?.email || req.user?.email || 'Support';
+      const creatorEmail = String(request.userEmail || '').trim().toLowerCase();
+      const actorEmail = String(member?.email || req.user?.email || '').trim().toLowerCase();
+
+      if (creatorEmail && creatorEmail !== actorEmail && req.body.status !== request.status) {
+        await prisma.notification.create({
+          data: {
+            title: `🎫 Statut ticket mis à jour`,
+            message: `Ticket: ${request.title}\n${request.status} → ${req.body.status}\nPar: ${actorName}`,
+            type: 'info',
+            priority: 'normal',
+            active: true,
+            targetedTo: `user:${creatorEmail}`,
+            createdBy: actorEmail || actorName
+          }
+        });
+      }
+    } catch (notifError) {
+      console.warn('⚠️ Notification ticket non envoyée (POST status):', notifError.message);
+    }
 
     res.json({ ok: true, request: updatedRequest });
   } catch (error) {
