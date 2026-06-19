@@ -9351,14 +9351,53 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   }
 });
 
-app.get(['/api/admin/users/:id/permissions', '/api/user-permissions/:id'], requireAuth, (req, res) => {
-  const member = state.members.find(m => m.id === req.params.id);
-  if (!member) return res.status(404).json({ error: 'User not found' });
-  res.json({ 
-    permissions: member.permissions || [],
-    userId: member.id,
-    email: member.email
-  });
+app.get(['/api/admin/users/:id/permissions', '/api/user-permissions/:id'], requireAuth, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Try site_users first (main source for admin users list)
+    const siteUser = await prisma.site_users.findUnique({ where: { id } });
+    if (siteUser) {
+      const rows = await prisma.user_permissions.findMany({ where: { userId: id } });
+      const permissionMap = rows.reduce((acc, row) => {
+        acc[row.resource] = Array.isArray(row.actions) ? row.actions : [];
+        return acc;
+      }, {});
+
+      return res.json({
+        userId: id,
+        email: siteUser.email,
+        permissions: permissionMap
+      });
+    }
+
+    // Fallback to members
+    const member = await prisma.members.findUnique({ where: { id } });
+    if (member) {
+      let permissionMap = {};
+      const raw = member.permissions;
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        permissionMap = raw;
+      } else if (Array.isArray(raw)) {
+        permissionMap = raw.reduce((acc, p) => {
+          if (p?.resource) acc[p.resource] = Array.isArray(p.actions) ? p.actions : [];
+          return acc;
+        }, {});
+      }
+
+      return res.json({
+        userId: id,
+        email: member.email,
+        permissions: permissionMap
+      });
+    }
+
+    // Keep compatibility with later duplicated route definitions
+    return next();
+  } catch (e) {
+    console.error('❌ GET /api/admin/users/:id/permissions error:', e.message);
+    return res.status(500).json({ error: 'Failed to fetch permissions', details: e.message });
+  }
 });
 
 // NEWSLETTER endpoints
@@ -10437,38 +10476,148 @@ app.use('/api/email-templates', requireAuth, emailTemplateRoutes);
 app.post('/api/admin/users/:id/permissions', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { permissions } = req.body;
-    
-    // Find the member in Prisma
-    const member = await prisma.members.findUnique({
-      where: { id }
-    });
-    
+    const { permissions, resource, actions } = req.body || {};
+
+    // 1) site_users permissions (table user_permissions)
+    const siteUser = await prisma.site_users.findUnique({ where: { id } });
+    if (siteUser) {
+      // Incremental toggle payload from frontend: { resource, actions: ["READ"] }
+      if (resource && Array.isArray(actions) && actions.length > 0) {
+        const existing = await prisma.user_permissions.findFirst({
+          where: { userId: id, resource }
+        });
+
+        if (existing) {
+          const merged = Array.from(new Set([...(existing.actions || []), ...actions]));
+          await prisma.user_permissions.update({
+            where: { id: existing.id },
+            data: { actions: merged, updatedAt: new Date() }
+          });
+        } else {
+          await prisma.user_permissions.create({
+            data: {
+              id: randomUUID(),
+              userId: id,
+              resource,
+              actions,
+              updatedAt: new Date()
+            }
+          });
+        }
+      }
+
+      // Full replace payload: { permissions: { resource: [actions] } }
+      if (permissions && typeof permissions === 'object' && !Array.isArray(permissions)) {
+        await prisma.user_permissions.deleteMany({ where: { userId: id } });
+        const entries = Object.entries(permissions).filter(([_, v]) => Array.isArray(v) && v.length > 0);
+        if (entries.length > 0) {
+          await prisma.user_permissions.createMany({
+            data: entries.map(([resKey, acts]) => ({
+              id: randomUUID(),
+              userId: id,
+              resource: resKey,
+              actions: acts,
+              updatedAt: new Date()
+            }))
+          });
+        }
+      }
+
+      permissionsCache.delete(`perms_${id}`);
+      return res.json({ ok: true, userId: id });
+    }
+
+    // 2) members fallback (legacy)
+    const member = await prisma.members.findUnique({ where: { id } });
     if (!member) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    // Update in Prisma
+
+    let permissionMap = {};
+    const raw = member.permissions;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      permissionMap = { ...raw };
+    } else if (Array.isArray(raw)) {
+      permissionMap = raw.reduce((acc, p) => {
+        if (p?.resource) acc[p.resource] = Array.isArray(p.actions) ? p.actions : [];
+        return acc;
+      }, {});
+    }
+
+    if (resource && Array.isArray(actions) && actions.length > 0) {
+      permissionMap[resource] = Array.from(new Set([...(permissionMap[resource] || []), ...actions]));
+    }
+    if (permissions && typeof permissions === 'object' && !Array.isArray(permissions)) {
+      permissionMap = permissions;
+    }
+
     const updatedMember = await prisma.members.update({
       where: { id },
-      data: {
-        permissions: permissions || []
-      }
+      data: { permissions: permissionMap }
     });
-    
-    // Also update in state.members
+
     const stateUser = state.members.find(m => m.id === id);
-    if (stateUser) {
-      stateUser.permissions = permissions || [];
-    }
-    
+    if (stateUser) stateUser.permissions = permissionMap;
     debouncedSave();
-    
+
     console.log(`✅ Permissions updated for user ${id}`);
     res.json({ ok: true, user: updatedMember });
   } catch (e) {
     console.error('❌ POST /api/admin/users/:id/permissions error:', e.message);
     res.status(500).json({ error: 'Failed to update permissions', details: e.message });
+  }
+});
+
+// DELETE /api/admin/users/:id/permissions/:resource/:action - Remove one action from a resource
+app.delete('/api/admin/users/:id/permissions/:resource/:action', requireAuth, async (req, res) => {
+  try {
+    const { id, resource, action } = req.params;
+
+    const siteUser = await prisma.site_users.findUnique({ where: { id } });
+    if (siteUser) {
+      const existing = await prisma.user_permissions.findFirst({ where: { userId: id, resource } });
+      if (!existing) return res.status(404).json({ error: 'Permission not found' });
+
+      const nextActions = (existing.actions || []).filter(a => a !== action);
+      if (nextActions.length === 0) {
+        await prisma.user_permissions.delete({ where: { id: existing.id } });
+      } else {
+        await prisma.user_permissions.update({
+          where: { id: existing.id },
+          data: { actions: nextActions, updatedAt: new Date() }
+        });
+      }
+
+      permissionsCache.delete(`perms_${id}`);
+      return res.json({ ok: true });
+    }
+
+    const member = await prisma.members.findUnique({ where: { id } });
+    if (!member) return res.status(404).json({ error: 'User not found' });
+
+    let permissionMap = {};
+    const raw = member.permissions;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      permissionMap = { ...raw };
+    } else if (Array.isArray(raw)) {
+      permissionMap = raw.reduce((acc, p) => {
+        if (p?.resource) acc[p.resource] = Array.isArray(p.actions) ? p.actions : [];
+        return acc;
+      }, {});
+    }
+
+    permissionMap[resource] = (permissionMap[resource] || []).filter(a => a !== action);
+    if (permissionMap[resource].length === 0) delete permissionMap[resource];
+
+    await prisma.members.update({ where: { id }, data: { permissions: permissionMap } });
+    const stateUser = state.members.find(m => m.id === id);
+    if (stateUser) stateUser.permissions = permissionMap;
+    debouncedSave();
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/admin/users/:id/permissions/:resource/:action error:', e.message);
+    return res.status(500).json({ error: 'Failed to remove permission', details: e.message });
   }
 });
 
@@ -10704,11 +10853,43 @@ app.post('/api/admin/users/:userId/make-admin', requireAuth, async (req, res) =>
   console.log(`👤 Admin promotion request for user: ${userId}`);
   
   try {
-    // Find the member in Prisma
-    const member = await prisma.members.findUnique({
-      where: { id: userId }
-    });
-    
+    // Try site_users first (the IDs used by Permissions Management UI)
+    const siteUser = await prisma.site_users.findUnique({ where: { id: userId } });
+    if (siteUser) {
+      const updatedSiteUser = await prisma.site_users.update({
+        where: { id: userId },
+        data: { role: 'ADMIN', updatedAt: new Date() }
+      });
+
+      // Optionally seed wide permissions for admin actions
+      const adminResources = ['members', 'vehicles', 'events', 'finance', 'transactions', 'reports', 'permissions', 'users', 'news', 'documents', 'maintenance', 'admin'];
+      const adminActions = ['READ', 'CREATE', 'UPDATE', 'DELETE', 'ADMIN'];
+
+      for (const resource of adminResources) {
+        const existing = await prisma.user_permissions.findFirst({ where: { userId, resource } });
+        if (existing) {
+          const merged = Array.from(new Set([...(existing.actions || []), ...adminActions]));
+          await prisma.user_permissions.update({ where: { id: existing.id }, data: { actions: merged, updatedAt: new Date() } });
+        } else {
+          await prisma.user_permissions.create({
+            data: {
+              id: randomUUID(),
+              userId,
+              resource,
+              actions: adminActions,
+              updatedAt: new Date()
+            }
+          });
+        }
+      }
+
+      permissionsCache.delete(`perms_${userId}`);
+      console.log(`✅ site_user ${userId} promoted to ADMIN`);
+      return res.json({ ok: true, user: updatedSiteUser });
+    }
+
+    // Fallback: members
+    const member = await prisma.members.findUnique({ where: { id: userId } });
     if (!member) {
       return res.status(404).json({ error: 'User not found' });
     }
