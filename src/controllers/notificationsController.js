@@ -83,10 +83,10 @@ export async function createNotification(req, res, next) {
       });
     }
 
-    if (!['all', 'admins', 'members'].includes(targetedTo)) {
+    if (!['all', 'admins', 'members'].includes(targetedTo) && !String(targetedTo).startsWith('user:')) {
       return res.status(400).json({
         error: 'Validation',
-        message: 'targetedTo invalide. Doit être: all, admins ou members',
+        message: 'targetedTo invalide. Doit être: all, admins, members ou user:<email>',
       });
     }
 
@@ -187,7 +187,7 @@ export async function updateNotification(req, res, next) {
     }
 
     if (targetedTo !== undefined) {
-      if (!['all', 'admins', 'members'].includes(targetedTo)) {
+      if (!['all', 'admins', 'members'].includes(targetedTo) && !String(targetedTo).startsWith('user:')) {
         return res.status(400).json({
           error: 'Validation',
           message: 'targetedTo invalide',
@@ -262,6 +262,8 @@ export async function getUserNotifications(req, res, next) {
     console.log(`📬 getUserNotifications - userRole: ${userRole}, isAdmin: ${isAdmin}`);
 
     const now = new Date();
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+    const userId = String(req.user?.id || '').trim();
 
     // Construire les conditions OR pour filteringles notifications visibles
     const orConditions = [
@@ -274,6 +276,14 @@ export async function getUserNotifications(req, res, next) {
     } else {
       // Sinon, ajouter les notifications pour les members
       orConditions.push({ targetedTo: 'members' });
+    }
+
+    // Notifications ciblées utilisateur (email ou id)
+    if (userEmail) {
+      orConditions.push({ targetedTo: `user:${userEmail}` });
+    }
+    if (userId) {
+      orConditions.push({ targetedTo: `user:${userId}` });
     }
 
     // Récupérer les notifications visibles pour l'utilisateur
