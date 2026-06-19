@@ -9049,6 +9049,7 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
     // Update user with hashed temporary password
     let updatedUser;
     let userMatricule;
+    let syncedMemberId = null;
     
     if (isSiteUser) {
       updatedUser = await prisma.site_users.update({
@@ -9066,10 +9067,21 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
           }
         }
       });
-      // Keep linked member in sync because authentication uses members table
-      if (updatedUser.linkedMemberId) {
+
+      // Keep members auth source in sync.
+      // Priority: linked member, fallback by same email if account is not linked.
+      let memberToSyncId = updatedUser.linkedMemberId || null;
+      if (!memberToSyncId && updatedUser.email) {
+        const memberByEmail = await prisma.members.findFirst({
+          where: { email: updatedUser.email },
+          select: { id: true }
+        });
+        memberToSyncId = memberByEmail?.id || null;
+      }
+
+      if (memberToSyncId) {
         await prisma.members.update({
-          where: { id: updatedUser.linkedMemberId },
+          where: { id: memberToSyncId },
           data: {
             password: hashedPassword,
             isPasswordTemporary: true,
@@ -9078,7 +9090,7 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
           }
         }).catch(() => null);
 
-        const stateIndex = state.members.findIndex(m => m.id === updatedUser.linkedMemberId);
+        const stateIndex = state.members.findIndex(m => m.id === memberToSyncId);
         if (stateIndex !== -1) {
           state.members[stateIndex] = {
             ...state.members[stateIndex],
@@ -9087,7 +9099,10 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
             mustChangePassword: true
           };
         }
+
+        syncedMemberId = memberToSyncId;
       }
+
       // Get matricule from linked member
       userMatricule = updatedUser.members?.matricule || updatedUser.email;
     } else {
@@ -9113,6 +9128,7 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
           mustChangePassword: true
         };
       }
+      syncedMemberId = id;
     }
 
     debouncedSave();
@@ -9145,13 +9161,15 @@ app.post('/api/admin/users/:id/reset-password', requireAuth, async (req, res) =>
       success: true,
       emailSent: true,
       tempPassword: tempPassword,
+      temporaryPassword: tempPassword,
       message: 'Mot de passe réinitialisé. Un email avec les nouveaux identifiants a été envoyé à ' + targetEmail,
       user: {
         id: updatedUser.id,
         email: updatedUser.email,
         firstName: updatedUser.firstName,
         lastName: updatedUser.lastName
-      }
+      },
+      syncedMemberId
     });
   } catch (e) {
     console.error('❌ POST /api/admin/users/:id/reset-password error:', e.message);
