@@ -256,7 +256,8 @@ export const uploadTeamAvatar = async (req, res) => {
 
     // Supprimer l'ancien avatar
     if (member.image && member.image.startsWith('/uploads/team-avatars/')) {
-      const oldPath = path.join(__dirname, '../../', member.image);
+      const oldRelativePath = member.image.split('#')[0];
+      const oldPath = path.join(__dirname, '../../', oldRelativePath);
       try {
         if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
       } catch (e) {}
