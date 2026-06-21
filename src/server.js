@@ -5013,6 +5013,7 @@ const prepareMemberData = (body, isUpdate = false) => {
   if (body.postalCode !== undefined) data.postalCode = body.postalCode || null;
   if (body.matricule !== undefined) data.matricule = body.matricule || null;
   if (body.memberNumber !== undefined) data.memberNumber = body.memberNumber || null;
+  if (body.role !== undefined) data.role = body.role || 'MEMBER';
   
   // Membership
   if (body.membershipType !== undefined) data.membershipType = body.membershipType || 'STANDARD';
@@ -5170,6 +5171,8 @@ const buildMemberSignaturePayload = async (member) => {
       city: md.city || null,
       postalCode: md.postalCode || null,
       membershipType: md.membershipType || null,
+      occupiedPosition: md.occupiedPosition || null,
+      role: md.role || member.role || null,
       paymentAmount: md.paymentAmount ?? null,
       paymentMethod: md.paymentMethod || null,
       isExempted: md.isExempted ?? null,
@@ -5462,14 +5465,16 @@ app.get(['/api/members','/members'], requireAuth, async (req, res) => {
 });
 app.get(['/api/members/me'], requireAuth, async (req, res) => {
   try {
+    const userId = String(req.user?.userId || req.user?.id || '').trim();
     const userEmail = String(req.user?.email || '').trim().toLowerCase();
     const username = String(req.user?.username || '').trim();
 
     let member = await prisma.members.findFirst({
       where: {
         OR: [
-          ...(userEmail ? [{ email: userEmail }] : []),
-          ...(username ? [{ matricule: username }] : [])
+          ...(userId ? [{ id: userId }] : []),
+          ...(userEmail ? [{ email: { equals: userEmail, mode: 'insensitive' } }] : []),
+          ...(username ? [{ matricule: { equals: username, mode: 'insensitive' } }] : [])
         ]
       }
     });
@@ -5500,10 +5505,18 @@ app.get(['/api/members/me'], requireAuth, async (req, res) => {
 
 app.put(['/api/members/me'], requireAuth, async (req, res) => {
   try {
-    // Trouver le membre connecté par son email
-    const userEmail = req.user.email;
+    // Trouver le membre connecté de façon robuste (id token > email > matricule)
+    const userId = String(req.user?.userId || req.user?.id || '').trim();
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+    const username = String(req.user?.username || '').trim();
     const currentMember = await prisma.members.findFirst({
-      where: { email: userEmail }
+      where: {
+        OR: [
+          ...(userId ? [{ id: userId }] : []),
+          ...(userEmail ? [{ email: { equals: userEmail, mode: 'insensitive' } }] : []),
+          ...(username ? [{ matricule: { equals: username, mode: 'insensitive' } }] : [])
+        ]
+      }
     });
 
     if (!currentMember) {
