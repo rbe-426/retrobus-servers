@@ -873,6 +873,10 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
+const ADMIN_ACCESS_ROLES = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'];
+
+const hasAdminAccessRole = (role) => ADMIN_ACCESS_ROLES.includes(String(role || '').toUpperCase());
+
 const isAdminRequest = async (req) => {
   const email = req.user?.email;
   if (!email) return false;
@@ -896,6 +900,36 @@ const isAdminRequest = async (req) => {
   return !!state.members.find((m) => String(m.email || '').toLowerCase() === String(email).toLowerCase() && m.role === 'ADMIN');
 };
 
+const isTrafficContextRequest = async (req) => {
+  const email = String(req.user?.email || '').toLowerCase();
+  const id = String(req.user?.id || '').toLowerCase();
+
+  if (email === 'clement.marcypro@gmail.com' || id === 'c.marcy') return true;
+  if (hasAdminAccessRole(req.user?.role)) return true;
+
+  try {
+    const dbMember = await prisma.members.findFirst({
+      where: {
+        email: {
+          equals: String(req.user?.email || req.user?.id || ''),
+          mode: 'insensitive',
+        },
+      },
+      select: { role: true },
+    });
+
+    if (hasAdminAccessRole(dbMember?.role)) return true;
+  } catch (error) {
+    console.warn('⚠️ isTrafficContextRequest DB lookup failed:', error.message);
+  }
+
+  return !!state.members.find((m) => {
+    const memberEmail = String(m.email || '').toLowerCase();
+    const memberId = String(m.matricule || m.username || m.id || '').toLowerCase();
+    return (memberEmail === email || memberId === id) && hasAdminAccessRole(m.role);
+  });
+};
+
 const requireAdmin = async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -904,6 +938,19 @@ const requireAdmin = async (req, res, next) => {
   const isAdmin = await isAdminRequest(req);
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  next();
+};
+
+const requireTrafficContextAccess = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const canAccess = await isTrafficContextRequest(req);
+  if (!canAccess) {
+    return res.status(403).json({ error: 'Traffic context access required' });
   }
 
   next();
@@ -11623,7 +11670,7 @@ app.post('/api/public/traffic-event', async (req, res) => {
   }
 });
 
-app.get('/api/admin/site-traffic-context', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/admin/site-traffic-context', requireAuth, requireTrafficContextAccess, async (req, res) => {
   try {
     const externalBase = (process.env.EXTERNAL_SITE_URL || 'https://www.association-rbe.fr').replace(/\/+$/, '');
     const pagePaths = ['/', '/parc', '/adherer', '/contact', '/evenements'];
