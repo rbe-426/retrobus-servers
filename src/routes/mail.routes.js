@@ -19,6 +19,19 @@ import { setNoreplyUserId } from '../services/notificationService.js';
 
 const router = express.Router();
 
+const normalizeRecipients = (value) => {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => normalizeRecipients(item))
+      .filter(Boolean);
+  }
+
+  return String(value || '')
+    .split(/[;,\n\r]+/)
+    .map((recipient) => recipient.trim())
+    .filter(Boolean);
+};
+
 /**
  * Middleware pour vérifier l'authentification utilisateur
  */
@@ -264,14 +277,17 @@ router.get('/read/:id', requireAuth, async (req, res) => {
 /**
  * POST /api/mail/send
  * Envoyer un email
- * Body: { to, subject, body, html?, attachments? }
+ * Body: { to, cc?, bcc?, subject, body, html?, attachments? }
  */
 router.post('/send', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
     const { to, cc, bcc, subject, body, html, attachments, fromName } = req.body;
+    const toRecipients = normalizeRecipients(to);
+    const ccRecipients = normalizeRecipients(cc);
+    const bccRecipients = normalizeRecipients(bcc);
 
-    if (!to || !subject || !body) {
+    if (toRecipients.length === 0 || !subject || !body) {
       return res.status(400).json({ 
         error: 'Destinataire, objet et message requis' 
       });
@@ -284,9 +300,9 @@ router.post('/send', requireAuth, async (req, res) => {
     }
 
     const result = await sendEmail(userId, {
-      to,
-      cc,
-      bcc,
+      to: toRecipients,
+      cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+      bcc: bccRecipients.length > 0 ? bccRecipients : undefined,
       subject,
       body,
       html,
