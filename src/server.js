@@ -1220,6 +1220,14 @@ const getSearchConsoleOverview = async ({ monthParam, startDateParam, endDatePar
 
   const summaryRows = Array.isArray(summaryRes?.data?.rows) ? summaryRes.data.rows : [];
   const queryRows = Array.isArray(queriesRes?.data?.rows) ? queriesRes.data.rows : [];
+  const latestDataDate = summaryRows
+    .map((row) => String(row?.keys?.[0] || ''))
+    .filter((dateValue) => /^\d{4}-\d{2}-\d{2}$/.test(dateValue))
+    .sort()
+    .at(-1) || null;
+  const dataLagDays = latestDataDate
+    ? Math.max(0, Math.floor((Date.now() - new Date(`${latestDataDate}T00:00:00.000Z`).getTime()) / 86400000))
+    : null;
 
   const totals = summaryRows.reduce((acc, row) => {
     acc.clicks += Number(row?.clicks || 0);
@@ -1247,6 +1255,10 @@ const getSearchConsoleOverview = async ({ monthParam, startDateParam, endDatePar
     siteUrl,
     startDate,
     endDate,
+    generatedAt: new Date().toISOString(),
+    latestDataDate,
+    dataLagDays,
+    rowsCount: summaryRows.length,
     clicks: totals.clicks,
     impressions: totals.impressions,
     ctr,
@@ -1329,6 +1341,13 @@ const buildMonthlyTrafficAnalytics = async (monthParam) => {
   };
 
   const monthEntries = new Map();
+  const freshness = {
+    eventsCount: 0,
+    lastEventAt: null,
+    lastPageViewAt: null,
+    lastSearchEventAt: null,
+    lastAdEventAt: null,
+  };
   for (let day = 1; day <= range.daysInMonth; day += 1) {
     monthEntries.set(day, {
       visits: 0,
@@ -1363,6 +1382,19 @@ const buildMonthlyTrafficAnalytics = async (monthParam) => {
       const entry = monthEntries.get(day);
       if (!entry) return;
       applyTrafficEventToEntry(entry, event);
+      freshness.eventsCount += 1;
+
+      const eventIso = event.createdAt instanceof Date ? event.createdAt.toISOString() : new Date(event.createdAt).toISOString();
+      if (!freshness.lastEventAt || eventIso > freshness.lastEventAt) freshness.lastEventAt = eventIso;
+      if (event.eventType === 'pageview' && (!freshness.lastPageViewAt || eventIso > freshness.lastPageViewAt)) {
+        freshness.lastPageViewAt = eventIso;
+      }
+      if (['search_impression', 'search_click'].includes(event.eventType) && (!freshness.lastSearchEventAt || eventIso > freshness.lastSearchEventAt)) {
+        freshness.lastSearchEventAt = eventIso;
+      }
+      if (['ad_impression', 'ad_click'].includes(event.eventType) && (!freshness.lastAdEventAt || eventIso > freshness.lastAdEventAt)) {
+        freshness.lastAdEventAt = eventIso;
+      }
     });
   } catch (error) {
     console.warn('⚠️ buildMonthlyTrafficAnalytics DB fallback to memory:', error.message);
@@ -1450,6 +1482,7 @@ const buildMonthlyTrafficAnalytics = async (monthParam) => {
     daysInMonth: range.daysInMonth,
     currentDay: range.currentDay,
     series,
+    freshness,
     totals: {
       visits: totals.visits,
       pageViews: totals.pageViews,
