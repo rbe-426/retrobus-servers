@@ -1,6 +1,9 @@
 import { Router } from 'express';
+import { PrismaClient } from '@prisma/client';
 
 const router = Router();
+const prisma = new PrismaClient();
+let processParcTableReady = false;
 
 const requireAuth = (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Non authentifie' });
@@ -95,6 +98,154 @@ const validateTcInfosUrl = (rawUrl) => {
   parsed.hash = '';
   return parsed;
 };
+
+const jsonArray = (value) => Array.isArray(value) ? value : [];
+
+const serializeProject = (project) => ({
+  ...project,
+  documents: jsonArray(project.documents),
+  mailCaptures: jsonArray(project.mailCaptures),
+  reminders: jsonArray(project.reminders),
+  repatriementReports: jsonArray(project.repatriementReports),
+  createdAt: project.createdAt?.toISOString?.() || project.createdAt,
+  updatedAt: project.updatedAt?.toISOString?.() || project.updatedAt,
+  movedToOverviewAt: project.movedToOverviewAt?.toISOString?.() || project.movedToOverviewAt || null
+});
+
+const projectPayload = (body = {}, req) => ({
+  id: body.id || `parc-${Date.now()}`,
+  name: String(body.name || '').trim(),
+  internalFleetNumber: String(body.internalFleetNumber || '').trim(),
+  source: String(body.source || 'manual'),
+  status: String(body.status || 'pre_project'),
+  tcInfos: body.tcInfos || null,
+  documents: jsonArray(body.documents),
+  mailCaptures: jsonArray(body.mailCaptures),
+  reminders: jsonArray(body.reminders),
+  repatriementReports: jsonArray(body.repatriementReports),
+  movedToOverviewAt: body.movedToOverviewAt ? new Date(body.movedToOverviewAt) : null,
+  createdBy: req.user?.email || req.user?.id || null
+});
+
+const ensureProcessParcTable = async () => {
+  if (processParcTableReady) return;
+
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "ProcessParcProject" (
+      "id" TEXT NOT NULL,
+      "name" TEXT NOT NULL,
+      "internalFleetNumber" TEXT NOT NULL,
+      "source" TEXT NOT NULL DEFAULT 'manual',
+      "status" TEXT NOT NULL DEFAULT 'pre_project',
+      "tcInfos" JSONB,
+      "documents" JSONB NOT NULL DEFAULT '[]',
+      "mailCaptures" JSONB NOT NULL DEFAULT '[]',
+      "reminders" JSONB NOT NULL DEFAULT '[]',
+      "repatriementReports" JSONB NOT NULL DEFAULT '[]',
+      "movedToOverviewAt" TIMESTAMP(3),
+      "createdBy" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL,
+      CONSTRAINT "ProcessParcProject_pkey" PRIMARY KEY ("id")
+    )
+  `);
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ProcessParcProject_status_idx" ON "ProcessParcProject"("status")');
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ProcessParcProject_internalFleetNumber_idx" ON "ProcessParcProject"("internalFleetNumber")');
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ProcessParcProject_createdAt_idx" ON "ProcessParcProject"("createdAt")');
+  processParcTableReady = true;
+};
+
+router.get('/projects', requireAuth, async (_req, res) => {
+  try {
+    await ensureProcessParcTable();
+    const projects = await prisma.processParcProject.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    return res.json(projects.map(serializeProject));
+  } catch (error) {
+    console.error('Erreur liste Process PARC:', error);
+    return res.status(500).json({ error: 'Impossible de charger les projets Process PARC' });
+  }
+});
+
+router.post('/projects', requireAuth, async (req, res) => {
+  try {
+    await ensureProcessParcTable();
+    const data = projectPayload(req.body, req);
+    if (!data.name || !data.internalFleetNumber) {
+      return res.status(400).json({ error: 'Nom du projet et numero de parc requis' });
+    }
+
+    const project = await prisma.processParcProject.create({ data });
+    return res.status(201).json(serializeProject(project));
+  } catch (error) {
+    console.error('Erreur creation Process PARC:', error);
+    return res.status(500).json({ error: 'Impossible de creer le projet Process PARC' });
+  }
+});
+
+router.put('/projects/:id', requireAuth, async (req, res) => {
+  try {
+    await ensureProcessParcTable();
+    const data = projectPayload({ ...req.body, id: req.params.id }, req);
+    if (!data.name || !data.internalFleetNumber) {
+      return res.status(400).json({ error: 'Nom du projet et numero de parc requis' });
+    }
+
+    const project = await prisma.processParcProject.upsert({
+      where: { id: req.params.id },
+      create: data,
+      update: {
+        name: data.name,
+        internalFleetNumber: data.internalFleetNumber,
+        source: data.source,
+        status: data.status,
+        tcInfos: data.tcInfos,
+        documents: data.documents,
+        mailCaptures: data.mailCaptures,
+        reminders: data.reminders,
+        repatriementReports: data.repatriementReports,
+        movedToOverviewAt: data.movedToOverviewAt
+      }
+    });
+
+    return res.json(serializeProject(project));
+  } catch (error) {
+    console.error('Erreur mise a jour Process PARC:', error);
+    return res.status(500).json({ error: 'Impossible de mettre a jour le projet Process PARC' });
+  }
+});
+
+router.post('/projects/:id/repatriement-reports', requireAuth, async (req, res) => {
+  try {
+    await ensureProcessParcTable();
+    const project = await prisma.processParcProject.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Projet Process PARC introuvable' });
+
+    const report = {
+      ...req.body,
+      id: req.body?.id || `rapatriement-${Date.now()}`,
+      projectId: req.params.id,
+      submittedAt: req.body?.submittedAt || new Date().toISOString()
+    };
+    const reports = jsonArray(project.repatriementReports);
+    const nextReports = reports.some((item) => item.id === report.id) ? reports : [report, ...reports];
+
+    const updated = await prisma.processParcProject.update({
+      where: { id: req.params.id },
+      data: {
+        repatriementReports: nextReports,
+        status: report.moveToOverview ? 'overview' : project.status,
+        movedToOverviewAt: report.moveToOverview ? new Date(report.closedAt || report.submittedAt) : project.movedToOverviewAt
+      }
+    });
+
+    return res.json(serializeProject(updated));
+  } catch (error) {
+    console.error('Erreur relevé Process PARC:', error);
+    return res.status(500).json({ error: 'Impossible de sauvegarder le releve de rapatriement' });
+  }
+});
 
 router.post('/tc-infos/identify', requireAuth, async (req, res) => {
   try {

@@ -333,6 +333,27 @@ model Vehicle {
   vehicle_service_schedule vehicle_service_schedule[]
 }
 
+model ProcessParcProject {
+  id                  String   @id
+  name                String
+  internalFleetNumber String
+  source              String   @default("manual")
+  status              String   @default("pre_project")
+  tcInfos             Json?
+  documents           Json     @default("[]")
+  mailCaptures        Json     @default("[]")
+  reminders           Json     @default("[]")
+  repatriementReports Json     @default("[]")
+  movedToOverviewAt   DateTime?
+  createdBy           String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([status])
+  @@index([internalFleetNumber])
+  @@index([createdAt])
+}
+
 model access_logs {
   id          String      @id
   siteUserId  String?
