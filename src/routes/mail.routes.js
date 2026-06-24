@@ -313,7 +313,8 @@ router.post('/send', requireAuth, async (req, res) => {
     res.json({
       success: true,
       message: 'Email envoyé',
-      messageId: result.messageId
+      messageId: result.messageId,
+      sentCopy: result.sentCopy || null
     });
   } catch (error) {
     console.error('Erreur envoi email:', error);

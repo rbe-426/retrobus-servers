@@ -38,6 +38,7 @@ import emailTemplateRoutes from './routes/emailTemplate.routes.js';
 import teamRoutes from './routes/team.routes.js';
 import changelogRoutes from './routes/changelog.routes.js';
 import lumistudioRoutes from './routes/lumistudio.routes.js';
+import processParcRoutes from './routes/processParc.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
 import { createMailSession } from './services/mailService.js';
 // � Import module de calcul des KPI historiques
@@ -1650,6 +1651,10 @@ app.use('/api/changelog', changelogRoutes);
 // Routes LumiStudio (lancement distant + healthcheck)
 app.use('/api/lumistudio', lumistudioRoutes);
 app.use('/lumistudio', lumistudioRoutes);
+
+// Routes Process PARC (préservation et intégration véhicules)
+app.use('/api/process-parc', processParcRoutes);
+app.use('/process-parc', processParcRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);

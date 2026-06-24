@@ -26,7 +26,7 @@ const SMTP_CONFIG = {
 // Mapping des noms de dossiers (tentatives multiples pour compatibilité)
 const FOLDER_MAPPING = {
   'INBOX': ['INBOX'],
-  'SENT': ['Sent', 'INBOX.Sent', 'Sent Messages', 'Envoyés', 'INBOX.Envoyés'],
+  'SENT': ['Sent', 'INBOX.Sent', 'Sent Messages', 'Sent Items', 'Envoyés', 'Elements envoyés', 'Éléments envoyés', 'INBOX.Envoyés'],
   'TRASH': ['Trash', 'INBOX.Trash', 'Deleted', 'INBOX.Deleted', 'Corbeille', 'INBOX.Corbeille'],
   'DRAFTS': ['Drafts', 'INBOX.Drafts', 'Brouillons', 'INBOX.Brouillons'],
   'SPAM': ['Spam', 'INBOX.Spam', 'Junk', 'INBOX.Junk']
@@ -405,6 +405,35 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
   }
 }
 
+async function appendSentCopy(session, mailData) {
+  const client = new ImapFlow({
+    ...IMAP_CONFIG,
+    auth: { user: session.email, pass: session.password }
+  });
+
+  try {
+    const rawTransporter = nodemailer.createTransport({
+      streamTransport: true,
+      buffer: true,
+      newline: 'unix'
+    });
+    const rawInfo = await rawTransporter.sendMail(mailData);
+
+    await client.connect();
+    const sentFolder = await findFolderName(client, 'SENT');
+    await client.append(sentFolder, rawInfo.message, ['\\Seen'], new Date());
+    console.log(`✅ Copie ajoutée au dossier Envoyés (${sentFolder})`);
+    return { success: true, folder: sentFolder };
+  } catch (error) {
+    console.warn('⚠️ Copie dans Envoyés impossible:', error.message);
+    return { success: false, error: error.message };
+  } finally {
+    if (client.usable) {
+      await client.logout().catch(() => {});
+    }
+  }
+}
+
 /**
  * Envoyer un email
  * @param {string} userId - ID utilisateur
@@ -438,8 +467,7 @@ export async function sendEmail(userId, mailOptions) {
 
     console.log(`📧 Envoi email avec ${processedAttachments.length} pièce(s) jointe(s)`);
 
-    // Envoyer l'email
-    const info = await transporter.sendMail({
+    const mailData = {
       from: fromAddress,
       to: mailOptions.to,
       cc: mailOptions.cc || undefined,
@@ -448,10 +476,14 @@ export async function sendEmail(userId, mailOptions) {
       text: mailOptions.body,
       html: mailOptions.html || mailOptions.body,
       attachments: processedAttachments
-    });
+    };
+
+    // Envoyer l'email
+    const info = await transporter.sendMail(mailData);
+    const sentCopy = await appendSentCopy(session, mailData);
 
     console.log(`✅ Email envoyé: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
+    return { success: true, messageId: info.messageId, sentCopy };
   } catch (error) {
     console.error('❌ Erreur envoi email:', error.message);
     throw new Error(`Impossible d'envoyer l'email: ${error.message}`);
