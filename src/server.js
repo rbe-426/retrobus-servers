@@ -425,6 +425,43 @@ const buildPrismaVehicleUpdateData = (payload = {}) => {
   return data;
 };
 
+let vehicleLifecycleTableEnsured = false;
+const ensureVehicleLifecycleTable = async () => {
+  if (vehicleLifecycleTableEnsured || !prisma) return;
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "VehicleLifecycleEvent" (
+      "id" SERIAL PRIMARY KEY,
+      "vehicleParc" TEXT NOT NULL,
+      "eventType" TEXT NOT NULL,
+      "severity" TEXT,
+      "title" TEXT NOT NULL,
+      "description" TEXT,
+      "decision" TEXT,
+      "immobilizing" BOOLEAN NOT NULL DEFAULT false,
+      "reformReason" TEXT,
+      "reformDate" TIMESTAMP(3),
+      "decidedBy" TEXT,
+      "createdBy" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "VehicleLifecycleEvent_vehicleParc_fkey"
+        FOREIGN KEY ("vehicleParc") REFERENCES "Vehicle"("parc") ON DELETE CASCADE ON UPDATE CASCADE
+    );
+  `);
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "VehicleLifecycleEvent_vehicleParc_idx" ON "VehicleLifecycleEvent"("vehicleParc");');
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "VehicleLifecycleEvent_eventType_idx" ON "VehicleLifecycleEvent"("eventType");');
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "VehicleLifecycleEvent_severity_idx" ON "VehicleLifecycleEvent"("severity");');
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "VehicleLifecycleEvent_createdAt_idx" ON "VehicleLifecycleEvent"("createdAt");');
+  vehicleLifecycleTableEnsured = true;
+};
+
+const nextLifecycleVehicleState = (eventType, severity, immobilizing) => {
+  if (eventType === 'reforme') return { etat: 'reforme', isPublic: false };
+  if (immobilizing || severity === 'critique') return { etat: 'immobilise' };
+  if (severity === 'majeure') return { etat: 'en_panne' };
+  return {};
+};
+
 const buildStateVehicleUpdateData = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return {};
   const update = {};
@@ -3466,6 +3503,63 @@ app.put(['/vehicles/:parc','/api/vehicles/:parc'], requireAuth, async (req, res)
       return res.status(404).json({ error: 'Vehicle not found' });
     }
     res.status(500).json({ error: 'Failed to update vehicle', details: e.message });
+  }
+});
+
+app.get(['/vehicles/:parc/lifecycle-events','/api/vehicles/:parc/lifecycle-events'], requireAuth, async (req, res) => {
+  try {
+    await ensureVehicleLifecycleTable();
+    const events = await prisma.$queryRaw`
+      SELECT * FROM "VehicleLifecycleEvent"
+      WHERE "vehicleParc" = ${req.params.parc}
+      ORDER BY "createdAt" DESC
+    `;
+    res.json({ events });
+  } catch (e) {
+    console.error('❌ GET /vehicles/:parc/lifecycle-events error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch lifecycle events', details: e.message });
+  }
+});
+
+app.post(['/vehicles/:parc/lifecycle-events','/api/vehicles/:parc/lifecycle-events'], requireAuth, async (req, res) => {
+  try {
+    await ensureVehicleLifecycleTable();
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: req.params.parc } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+
+    const eventType = ['incident', 'reforme'].includes(req.body?.eventType) ? req.body.eventType : 'incident';
+    const severity = ['mineure', 'majeure', 'critique'].includes(req.body?.severity) ? req.body.severity : null;
+    const title = String(req.body?.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'Title is required' });
+
+    const description = req.body?.description ? String(req.body.description).trim() : null;
+    const decision = req.body?.decision ? String(req.body.decision).trim() : null;
+    const immobilizing = Boolean(req.body?.immobilizing || eventType === 'reforme');
+    const reformReason = eventType === 'reforme' && req.body?.reformReason ? String(req.body.reformReason).trim() : null;
+    const reformDate = eventType === 'reforme' && req.body?.reformDate ? new Date(req.body.reformDate) : null;
+    const decidedBy = req.body?.decidedBy ? String(req.body.decidedBy).trim() : null;
+    const createdBy = req.user?.email || req.user?.username || req.user?.id || null;
+
+    const rows = await prisma.$queryRaw`
+      INSERT INTO "VehicleLifecycleEvent" (
+        "vehicleParc", "eventType", "severity", "title", "description", "decision",
+        "immobilizing", "reformReason", "reformDate", "decidedBy", "createdBy", "updatedAt"
+      ) VALUES (
+        ${req.params.parc}, ${eventType}, ${severity}, ${title}, ${description}, ${decision},
+        ${immobilizing}, ${reformReason}, ${reformDate}, ${decidedBy}, ${createdBy}, CURRENT_TIMESTAMP
+      )
+      RETURNING *
+    `;
+
+    const vehicleUpdate = nextLifecycleVehicleState(eventType, severity, immobilizing);
+    const updatedVehicle = Object.keys(vehicleUpdate).length > 0
+      ? await prisma.vehicle.update({ where: { parc: req.params.parc }, data: vehicleUpdate })
+      : vehicle;
+
+    res.status(201).json({ event: rows[0], vehicle: updatedVehicle });
+  } catch (e) {
+    console.error('❌ POST /vehicles/:parc/lifecycle-events error:', e.message);
+    res.status(500).json({ error: 'Failed to create lifecycle event', details: e.message });
   }
 });
 

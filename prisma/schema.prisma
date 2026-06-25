@@ -331,6 +331,30 @@ model Vehicle {
   Usage                    Usage[]
   vehicle_maintenance      vehicle_maintenance[]
   vehicle_service_schedule vehicle_service_schedule[]
+  lifecycleEvents          VehicleLifecycleEvent[]
+}
+
+model VehicleLifecycleEvent {
+  id             Int      @id @default(autoincrement())
+  vehicleParc    String
+  eventType      String
+  severity       String?
+  title          String
+  description    String?
+  decision       String?
+  immobilizing   Boolean  @default(false)
+  reformReason   String?
+  reformDate     DateTime?
+  decidedBy      String?
+  createdBy      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  vehicle        Vehicle  @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
+
+  @@index([vehicleParc])
+  @@index([eventType])
+  @@index([severity])
+  @@index([createdAt])
 }
 
 model ProcessParcProject {

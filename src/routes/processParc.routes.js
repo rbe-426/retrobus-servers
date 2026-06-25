@@ -127,6 +127,82 @@ const projectPayload = (body = {}, req) => ({
   createdBy: req.user?.email || req.user?.id || null
 });
 
+const parseDateOrNull = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const buildVehicleCaracteristiques = (project, report) => {
+  const vehicle = project.tcInfos?.vehicle || {};
+  return [
+    ['Origine', 'Process PARC'],
+    ['Projet PARC', project.name],
+    ['Numéro de parc interne', project.internalFleetNumber],
+    ['Constructeur', vehicle.manufacturer],
+    ['Modèle', vehicle.model],
+    ['Immatriculation', vehicle.registration],
+    ['Mise en circulation', vehicle.firstRegistration],
+    ['Numéro de série', vehicle.vin],
+    ['Longueur', vehicle.length],
+    ['Capacité', vehicle.capacity],
+    ['Énergie', vehicle.energy],
+    ['Norme Euro', vehicle.euroNorm],
+    ['Moteur', vehicle.engine],
+    ['Boîte de vitesses', vehicle.gearbox],
+    ['Nombre de portes', vehicle.doors],
+    ['Livrée', vehicle.livery],
+    ['Girouette', vehicle.destinationSign],
+    ['Climatisation', vehicle.airConditioning],
+    ['Date rapatriement', report.appointmentDate],
+    ['Heure rapatriement', report.appointmentTime],
+    ['Huile', report.oil?.ok ? 'OK' : 'À vérifier'],
+    ['LDR / fluides', report.coolant?.ok ? 'OK' : 'À vérifier'],
+    ['Niveau gasoil', report.fuelLevel]
+  ].filter(([, value]) => value !== undefined && value !== null && String(value).trim())
+    .map(([label, value]) => ({ label, value: String(value) }));
+};
+
+const upsertInternalVehicleFromProcessParc = async (project, report) => {
+  if (!report.moveToOverview || !project.internalFleetNumber) return null;
+
+  const vehicle = project.tcInfos?.vehicle || {};
+  const caracteristiques = buildVehicleCaracteristiques(project, report);
+  const fuel = Number(report.fuelLevel);
+  const now = new Date();
+  const vehicleData = {
+    parc: project.internalFleetNumber,
+    type: 'Véhicule',
+    modele: vehicle.model || project.name || 'Véhicule Process PARC',
+    marque: vehicle.manufacturer || null,
+    subtitle: 'Issu du Process PARC',
+    immat: vehicle.registration || null,
+    etat: 'Préservé',
+    miseEnCirculation: parseDateOrNull(vehicle.firstRegistration),
+    energie: vehicle.energy || null,
+    description: `Véhicule intégré depuis le Process PARC ${project.name}.`,
+    history: report.anomalies ? `Anomalies signalées au rapatriement: ${report.anomalies}` : null,
+    caracteristiques: JSON.stringify(caracteristiques),
+    isPublic: false,
+    fuel: Number.isFinite(fuel) ? fuel : null,
+    updatedAt: now
+  };
+
+  return prisma.vehicle.upsert({
+    where: { parc: project.internalFleetNumber },
+    create: {
+      ...vehicleData,
+      gallery: null,
+      backgroundImage: null,
+      backgroundPosition: null,
+      thumbnailImage: null,
+      mileage: null,
+      createdAt: now
+    },
+    update: vehicleData
+  });
+};
+
 const ensureProcessParcTable = async () => {
   if (processParcTableReady) return;
 
@@ -161,6 +237,15 @@ router.get('/projects', requireAuth, async (_req, res) => {
     const projects = await prisma.processParcProject.findMany({
       orderBy: { createdAt: 'desc' }
     });
+
+    await Promise.all(projects
+      .filter((project) => project.status === 'overview' && project.internalFleetNumber)
+      .map((project) => {
+        const reports = jsonArray(project.repatriementReports);
+        const latestReport = reports[0] || {};
+        return upsertInternalVehicleFromProcessParc(project, { ...latestReport, moveToOverview: true });
+      }));
+
     return res.json(projects.map(serializeProject));
   } catch (error) {
     console.error('Erreur liste Process PARC:', error);
@@ -239,6 +324,8 @@ router.post('/projects/:id/repatriement-reports', requireAuth, async (req, res) 
         movedToOverviewAt: report.moveToOverview ? new Date(report.closedAt || report.submittedAt) : project.movedToOverviewAt
       }
     });
+
+    await upsertInternalVehicleFromProcessParc(updated, report);
 
     return res.json(serializeProject(updated));
   } catch (error) {
