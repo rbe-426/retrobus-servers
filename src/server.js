@@ -911,6 +911,48 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
+const requireMobileVehicleAccess = async (req, res, next) => {
+  if (req.user) return next();
+
+  const matricule = String(req.headers['x-user-matricule'] || '').trim();
+  const qrToken = String(req.headers['x-qr-token'] || '').trim();
+  if (!matricule && !qrToken) return res.status(401).json({ error: 'Mobile vehicle access requires matricule or QR token' });
+
+  if (matricule) {
+    try {
+      const member = await prisma.members.findFirst({
+        where: {
+          OR: [
+            { matricule: { equals: matricule, mode: 'insensitive' } },
+            { email: { equals: matricule, mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true, matricule: true, email: true, firstName: true, lastName: true },
+      });
+      if (member) {
+        req.mobileUser = member;
+        return next();
+      }
+    } catch (error) {
+      console.warn('⚠️ Mobile matricule lookup failed:', error.message);
+    }
+
+    const stateMember = (state.members || []).find((member) => {
+      const memberMatricule = String(member.matricule || member.username || member.id || '').toLowerCase();
+      const memberEmail = String(member.email || '').toLowerCase();
+      const lookup = matricule.toLowerCase();
+      return memberMatricule === lookup || memberEmail === lookup;
+    });
+    if (stateMember) {
+      req.mobileUser = stateMember;
+      return next();
+    }
+  }
+
+  if (qrToken) return next();
+  return res.status(401).json({ error: 'Matricule inconnu' });
+};
+
 const ADMIN_ACCESS_ROLES = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'];
 
 const hasAdminAccessRole = (role) => ADMIN_ACCESS_ROLES.includes(String(role || '').toUpperCase());
@@ -3629,6 +3671,116 @@ app.post(['/vehicles/:parc/usages/:id/end','/api/vehicles/:parc/usages/:id/end']
   } catch (e) {
     console.error('Erreur end usage (Prisma):', e.message);
     res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.get(['/mobile/vehicles/:parc','/api/mobile/vehicles/:parc'], requireMobileVehicleAccess, async (req, res) => {
+  try {
+    const idCandidate = Number(req.params.parc);
+    const filters = [{ parc: req.params.parc }];
+    if (!Number.isNaN(idCandidate)) filters.push({ id: idCandidate });
+    const vehicle = await prisma.vehicle.findFirst({ where: { OR: filters } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json(normalizeVehicleWithCaracteristiques(vehicle));
+  } catch (e) {
+    console.error('❌ GET /mobile/vehicles/:parc error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch mobile vehicle', details: e.message });
+  }
+});
+
+app.get(['/mobile/vehicles/:parc/usages','/api/mobile/vehicles/:parc/usages'], requireMobileVehicleAccess, async (req, res) => {
+  try {
+    const usages = await prisma.Usage.findMany({
+      where: { parc: req.params.parc },
+      orderBy: { startedAt: 'desc' }
+    });
+    res.json(usages);
+  } catch (e) {
+    console.error('❌ GET /mobile/vehicles/:parc/usages error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post(['/mobile/vehicles/:parc/usages','/api/mobile/vehicles/:parc/usages'], requireMobileVehicleAccess, async (req, res) => {
+  try {
+    const { startedAt, initiateur, participants, note, ...extra } = req.body;
+    const mobileUserName = req.mobileUser ? `${req.mobileUser.firstName || ''} ${req.mobileUser.lastName || ''}`.trim() : '';
+    const metadata = {
+      initiateur: initiateur || null,
+      participants: participants || null,
+      rawNote: note || '',
+      extra
+    };
+
+    const usage = await prisma.Usage.create({
+      data: {
+        parc: req.params.parc,
+        startedAt: startedAt ? new Date(startedAt) : new Date(),
+        conducteur: initiateur ? `${initiateur.prenom || ''} ${initiateur.nom || ''}`.trim() : (mobileUserName || 'Conducteur'),
+        participants: participants || null,
+        note: JSON.stringify(metadata)
+      }
+    });
+    res.status(201).json(usage);
+  } catch (e) {
+    console.error('❌ POST /mobile/vehicles/:parc/usages error:', e.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post(['/mobile/vehicles/:parc/usages/:id/end','/api/mobile/vehicles/:parc/usages/:id/end'], requireMobileVehicleAccess, async (req, res) => {
+  try {
+    const { endedAt, participants, note, ...extra } = req.body;
+    const metadata = {
+      participants: participants || null,
+      rawNote: note || '',
+      extra
+    };
+
+    const usage = await prisma.Usage.update({
+      where: { id: parseInt(req.params.id) },
+      data: {
+        endedAt: endedAt ? new Date(endedAt) : new Date(),
+        participants: participants || undefined,
+        note: note ? JSON.stringify(metadata) : undefined
+      }
+    });
+    res.json(usage);
+  } catch (e) {
+    console.error('❌ POST /mobile/vehicles/:parc/usages/:id/end error:', e.message);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.get(['/mobile/vehicles/:parc/reports','/api/mobile/vehicles/:parc/reports'], requireMobileVehicleAccess, async (req, res) => {
+  try {
+    const reports = await prisma.Report.findMany({
+      where: { parc: req.params.parc },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(reports);
+  } catch (e) {
+    console.error('❌ GET /mobile/vehicles/:parc/reports error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+app.post(['/mobile/vehicles/:parc/reports','/api/mobile/vehicles/:parc/reports'], requireMobileVehicleAccess, async (req, res) => {
+  try {
+    const { description, usageId, filesMeta } = req.body || {};
+    const report = await prisma.Report.create({
+      data: {
+        parc: req.params.parc,
+        usageId: usageId ? Number(usageId) : null,
+        description: description || null,
+        filesMeta: filesMeta ? JSON.stringify(filesMeta) : null,
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(report);
+  } catch (e) {
+    console.error('❌ POST /mobile/vehicles/:parc/reports error:', e.message);
+    res.status(500).json({ error: 'Failed to create report' });
   }
 });
 
