@@ -87,10 +87,9 @@ try {
     });
 
     console.log(JSON.stringify({ apply: true, result }, null, 2));
-    return;
+  } else {
+    console.log(JSON.stringify({ members, siteUsers }, null, 2));
   }
-
-  console.log(JSON.stringify({ members, siteUsers }, null, 2));
 } finally {
   await prisma.$disconnect();
 }
