@@ -918,7 +918,12 @@ app.use((req, res, next) => {
 });
 
 const requireAuth = (req, res, next) => {
-  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user) {
+    console.warn(`🚫 requireAuth failed for ${req.method} ${req.path} - No user attached to request`);
+    console.warn(`   Authorization header:`, req.headers.authorization ? req.headers.authorization.substring(0, 50) + '...' : 'ABSENT');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  console.log(`✅ requireAuth passed for ${req.method} ${req.path} - User: ${req.user.email}`);
   next();
 };
 

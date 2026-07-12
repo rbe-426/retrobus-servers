@@ -137,14 +137,19 @@ export const csrfProtection = (req, res, next) => {
     '/health',
     '/api/csrf-token',
     '/public/contact',
-    '/api/public/traffic-event'  // Analytics du site externe
+    '/api/public/traffic-event',  // Analytics du site externe
+    '/api/finance/expense-reports',  // Notes de frais - accessibles à tous les utilisateurs authentifiés
+    '/finance/expense-reports'
   ];
 
   // Routes publiques du parcours bulletin (sécurisées par token d'URL)
   // On n'exempte PAS /create ni /cleanup pour conserver la protection CSRF.
   const isPublicBulletinTokenMutation = /^\/(api\/)?bulletin-flow\/[^/]+\/(step|member-data|signature|resend)$/.test(req.path);
   
-  if (publicRoutes.some(route => req.path === route) || isPublicBulletinTokenMutation) {
+  // Routes expense-reports accessibles sans CSRF (déjà protégées par JWT)
+  const isExpenseReportsRoute = /^\/(api\/)?finance\/expense-reports/.test(req.path);
+  
+  if (publicRoutes.some(route => req.path === route) || isPublicBulletinTokenMutation || isExpenseReportsRoute) {
     console.log(`✅ Bypassing CSRF for public route: ${req.path}`);
     return next();
   }
