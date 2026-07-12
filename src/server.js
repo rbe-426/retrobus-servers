@@ -8682,7 +8682,7 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     
     const reportData = {
       id: reportId,
-      type: type,
+      // type: type,  // TEMPORAIRE: désactivé car client Prisma pas à jour
       userId: userId,
       createdBy: createdBy,
       date: date ? new Date(date) : new Date(),
@@ -8699,9 +8699,10 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     // Save to Prisma
     const saved = await prisma.finance_expense_reports.create({ data: reportData });
     
-    // Also update memory
+    // Also update memory (with type included)
     const report = {
       ...reportData,
+      type: type,  // Ajouté ici pour la mémoire
       createdAt: saved.createdAt,
       updatedAt: saved.updatedAt
     };
