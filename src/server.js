@@ -455,6 +455,17 @@ const ensureVehicleLifecycleTable = async () => {
   vehicleLifecycleTableEnsured = true;
 };
 
+let expenseReportColumnsEnsured = false;
+const ensureExpenseReportColumns = async () => {
+  if (expenseReportColumnsEnsured || !prisma) return;
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "finance_expense_reports"
+    ADD COLUMN IF NOT EXISTS "type" TEXT NOT NULL DEFAULT 'Note de frais avec justificatif',
+    ADD COLUMN IF NOT EXISTS "notes" TEXT;
+  `);
+  expenseReportColumnsEnsured = true;
+};
+
 const nextLifecycleVehicleState = (eventType, severity, immobilizing) => {
   if (eventType === 'reforme') return { etat: 'reforme', isPublic: false };
   if (immobilizing || severity === 'critique') return { etat: 'immobilise' };
@@ -8632,6 +8643,7 @@ app.get(['/finance/category-breakdown', '/api/finance/category-breakdown'], requ
 app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, async (req, res) => {
   try {
     const { eventId } = req.query;
+    await ensureExpenseReportColumns();
     // Load from Prisma (source of truth)
     let reports = await prisma.finance_expense_reports.findMany({
       orderBy: { createdAt: 'desc' }
@@ -8654,7 +8666,10 @@ app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAut
 });
 app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAuth, uploadLimiter, upload.single('file'), async (req, res) => {
   try {
+    await ensureExpenseReportColumns();
     const { date, description, amount, status = 'open', planned = false, eventId } = req.body;
+    const type = req.body.type || 'Note de frais avec justificatif';
+    const notes = req.body.notes || null;
     
     const userId = req.user?.id || req.user?.email || 'anonymous';
     const createdBy = req.user?.name || req.user?.email || 'Anonymous';
@@ -8662,12 +8677,14 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     
     const reportData = {
       id: reportId,
+      type: type,
       userId: userId,
       createdBy: createdBy,
       date: date ? new Date(date) : new Date(),
       description: description || '',
       amount: Number(amount || 0),
       status: status || 'open',
+      notes: notes,
       planned: planned === 'true' || planned === true,
       fileName: req.file?.originalname || null,
       fileUrl: req.file ? `/uploads/${req.file.filename}` : null,
@@ -8755,9 +8772,11 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       date: req.body.date || today(),
+      type: req.body.type || 'Note de frais avec justificatif',
       description: req.body.description || '',
       amount: Number(req.body.amount || 0),
       status: req.body.status || 'open',
+      notes: req.body.notes || null,
       planned: req.body.planned === 'true' || req.body.planned === true,
       fileName: req.file?.originalname,
       fileUrl: req.file ? `/uploads/${req.file.filename}` : '',
@@ -8770,8 +8789,9 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
 });
 app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, async (req, res) => {
   try {
+    await ensureExpenseReportColumns();
     // Filtrer les champs autorisés pour la mise à jour
-    const allowedFields = ['status', 'description', 'amount', 'date', 'notes', 'statusNotes', 'approvedBy', 'attachmentUrl', 'attachmentFileName', 'attachmentType'];
+    const allowedFields = ['status', 'type', 'description', 'amount', 'date', 'notes', 'statusNotes', 'approvedBy', 'attachmentUrl', 'attachmentFileName', 'attachmentType'];
     const updateData = {};
     
     allowedFields.forEach(field => {
@@ -8830,6 +8850,7 @@ app.post(['/finance/expense-reports/:id/reimburse', '/api/finance/expense-report
 app.post(['/finance/expense-reports/:id/status', '/api/finance/expense-reports/:id/status'], requireAuth, async (req, res) => {
   try {
     const { status } = req.body;
+    await ensureExpenseReportColumns();
     
     // Get report before updating to notify creator
     const reportBefore = state.expenseReports.find(r => r.id === req.params.id) || 

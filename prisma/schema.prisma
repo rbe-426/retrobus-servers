@@ -433,6 +433,7 @@ model finance_categories {
 
 model finance_expense_reports {
   id                   String   @id
+  type                 String   @default("Note de frais avec justificatif")
   description          String
   amount               Float
   date                 DateTime @default(now())
@@ -444,6 +445,7 @@ model finance_expense_reports {
   requestedByEmail     String?
   requestedByName      String?
   statusNotes          String?
+  notes                String?
   attachmentUrl        String?
   attachmentFileName   String?
   attachmentType       String?
