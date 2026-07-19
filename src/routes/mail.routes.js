@@ -32,6 +32,74 @@ const normalizeRecipients = (value) => {
     .filter(Boolean);
 };
 
+const improveMailText = (value) => {
+  const replacements = [
+    [/\bje voulais\b/gi, 'je souhaiterais'],
+    [/\bje vous écris pour\b/gi, 'je me permets de vous contacter afin de'],
+    [/\bmerci de me dire\b/gi, "je vous remercie de bien vouloir m'indiquer"],
+    [/\bje voudrais savoir\b/gi, 'je souhaiterais savoir'],
+    [/\bau plus vite\b/gi, 'dans les meilleurs délais'],
+    [/\bcordialement\b/gi, 'Cordialement']
+  ];
+
+  return value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => {
+      const compactLine = line.replace(/\s+/g, ' ').trim();
+      if (!compactLine) return '';
+
+      const rewrittenLine = replacements.reduce(
+        (text, [pattern, replacement]) => text.replace(pattern, replacement),
+        compactLine
+      );
+
+      return rewrittenLine.charAt(0).toLocaleUpperCase('fr-FR') + rewrittenLine.slice(1);
+    })
+    .join('\n')
+    .trim();
+};
+
+const limitContextText = (value, maximumLength) => String(value || '')
+  .replace(/\r\n?/g, '\n')
+  .trim()
+  .slice(0, maximumLength);
+
+const normalizeImprovementContext = (value) => {
+  const rawContext = value && typeof value === 'object' ? value : {};
+  const conversation = rawContext.conversation && typeof rawContext.conversation === 'object'
+    ? {
+        subject: limitContextText(rawContext.conversation.subject, 500),
+        from: limitContextText(rawContext.conversation.from, 500),
+        to: limitContextText(rawContext.conversation.to, 500),
+        date: limitContextText(rawContext.conversation.date, 100),
+        body: limitContextText(rawContext.conversation.body, 12000)
+      }
+    : null;
+  const conversationMessages = Array.isArray(rawContext.conversationMessages)
+    ? rawContext.conversationMessages.slice(0, 8).map((message) => ({
+        subject: limitContextText(message?.subject, 500),
+        from: limitContextText(message?.from, 500),
+        to: limitContextText(message?.to, 500),
+        date: limitContextText(message?.date, 100),
+        body: limitContextText(message?.body, 2500)
+      }))
+    : [];
+  const files = Array.isArray(rawContext.files)
+    ? rawContext.files.slice(0, 5).map((file) => ({
+        name: limitContextText(file?.name, 255),
+        content: limitContextText(file?.content, 12000)
+      })).filter((file) => file.content)
+    : [];
+
+  return {
+    instructions: limitContextText(rawContext.instructions, 4000),
+    conversation,
+    conversationMessages,
+    files
+  };
+};
+
 /**
  * Middleware pour vérifier l'authentification utilisateur
  */
@@ -41,6 +109,35 @@ const requireAuth = (req, res, next) => {
   }
   next();
 };
+
+/**
+ * POST /api/mail/improve-text
+ * Reformule un brouillon de façon plus claire et professionnelle.
+ * Body: { text, context?: { instructions, conversation, conversationMessages, files } }
+ */
+router.post('/improve-text', requireAuth, (req, res) => {
+  const text = String(req.body?.text || '').trim();
+  const context = normalizeImprovementContext(req.body?.context);
+
+  if (!text) {
+    return res.status(400).json({ error: 'Texte à améliorer requis' });
+  }
+
+  if (text.length > 10000) {
+    return res.status(400).json({ error: 'Le texte ne peut pas dépasser 10 000 caractères' });
+  }
+
+  return res.json({
+    improvedText: improveMailText(text),
+    provider: 'local',
+    contextUsed: {
+      instructions: Boolean(context.instructions),
+      conversation: Boolean(context.conversation?.body),
+      conversationMessages: context.conversationMessages.length,
+      files: context.files.map((file) => file.name)
+    }
+  });
+});
 
 /**
  * GET /api/mail/status
