@@ -277,12 +277,12 @@ router.get('/read/:id', requireAuth, async (req, res) => {
 /**
  * POST /api/mail/send
  * Envoyer un email
- * Body: { to, cc?, bcc?, subject, body, html?, attachments? }
+ * Body: { to, cc?, bcc?, subject, body, html?, attachments?, fromName?, profilePhoto? }
  */
 router.post('/send', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { to, cc, bcc, subject, body, html, attachments, fromName } = req.body;
+    const { to, cc, bcc, subject, body, html, attachments, fromName, profilePhoto } = req.body;
     const toRecipients = normalizeRecipients(to);
     const ccRecipients = normalizeRecipients(cc);
     const bccRecipients = normalizeRecipients(bcc);
@@ -307,7 +307,8 @@ router.post('/send', requireAuth, async (req, res) => {
       body,
       html,
       attachments,
-      fromName
+      fromName,
+      profilePhoto
     });
 
     res.json({

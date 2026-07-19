@@ -437,7 +437,7 @@ async function appendSentCopy(session, mailData) {
 /**
  * Envoyer un email
  * @param {string} userId - ID utilisateur
- * @param {object} mailOptions - Options de l'email { to, subject, body, html, attachments, fromName }
+ * @param {object} mailOptions - Options de l'email { to, subject, body, html, attachments, fromName, profilePhoto }
  */
 export async function sendEmail(userId, mailOptions) {
   const session = getMailSession(userId);
@@ -475,8 +475,18 @@ export async function sendEmail(userId, mailOptions) {
       subject: mailOptions.subject,
       text: mailOptions.body,
       html: mailOptions.html || mailOptions.body,
-      attachments: processedAttachments
+      attachments: processedAttachments,
+      headers: {}
     };
+
+    // Ajouter la photo de profil comme en-tête personnalisé si fournie
+    // Note: La plupart des clients mail ne supportent pas l'affichage automatique
+    // mais cela permet une intégration future ou avec des extensions
+    if (mailOptions.profilePhoto) {
+      mailData.headers['X-Sender-Image'] = mailOptions.profilePhoto;
+      mailData.headers['X-Face-Image-URL'] = mailOptions.profilePhoto;
+      console.log('📸 Photo de profil incluse dans les en-têtes personnalisés');
+    }
 
     // Envoyer l'email
     const info = await transporter.sendMail(mailData);
