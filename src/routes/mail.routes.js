@@ -32,7 +32,7 @@ const normalizeRecipients = (value) => {
     .filter(Boolean);
 };
 
-const improveMailText = (value) => {
+const improveMailText = (value, context = {}) => {
   const replacements = [
     [/\bje voulais\b/gi, 'je souhaiterais'],
     [/\bje vous écris pour\b/gi, 'je me permets de vous contacter afin de'],
@@ -42,7 +42,7 @@ const improveMailText = (value) => {
     [/\bcordialement\b/gi, 'Cordialement']
   ];
 
-  return value
+  const improvedText = value
     .replace(/\r\n?/g, '\n')
     .split('\n')
     .map((line) => {
@@ -58,6 +58,25 @@ const improveMailText = (value) => {
     })
     .join('\n')
     .trim();
+
+  const instructions = String(context.instructions || '').trim();
+  const asksForGreeting = /\b(bonjour|salutation|formule d['’]appel)\b/i.test(instructions);
+  const purposeMatch = instructions.match(/\b(présent(?:er|ant)|informer|demander|solliciter|proposer|confirmer|rappeler)\b[\s\S]*/i);
+
+  if (instructions && improvedText.length <= 40 && purposeMatch) {
+    const purpose = purposeMatch[0]
+      .replace(/^présentant\b/i, 'présenter')
+      .replace(/intentions? de préservations?\b/i, 'intentions de préservation')
+      .replace(/[.\s]+$/, '');
+
+    return `${asksForGreeting ? 'Bonjour,' : 'Madame, Monsieur,'}\n\nJe me permets de vous contacter afin de ${purpose}.\n\nJe reste à votre disposition pour toute information complémentaire.\n\nCordialement,`;
+  }
+
+  if (asksForGreeting && !/^bonjour[\s,]/i.test(improvedText)) {
+    return `Bonjour,\n\n${improvedText}\n\nCordialement,`;
+  }
+
+  return improvedText;
 };
 
 const limitContextText = (value, maximumLength) => String(value || '')
@@ -128,7 +147,7 @@ router.post('/improve-text', requireAuth, (req, res) => {
   }
 
   return res.json({
-    improvedText: improveMailText(text),
+    improvedText: improveMailText(text, context),
     provider: 'local',
     contextUsed: {
       instructions: Boolean(context.instructions),
