@@ -1698,44 +1698,34 @@ console.log('🔐 CSRF Protection enabled with token-based validation');
 // ============================================================
 // Routes d'authentification (login, token, etc)
 app.use('/api/auth', authRoutes);
-app.use('/auth', authRoutes);
 // NOTE: /api/login endpoint is now provided by /api/auth/login via modular routes
 
 // Routes système (health, version, status)
 app.use('/api', systemRoutes);
-app.use('/', systemRoutes);
 
 // Routes notifications (gestion des notifications système)
 app.use('/api/notifications', notificationsRoutes);
-app.use('/notifications', notificationsRoutes);
 
 // Routes événements (gestion des événements et participants)
 app.use('/api/events', eventsRoutes);
-app.use('/events', eventsRoutes);
 
 // Routes billetterie musée (gestion des tarifs et ventes)
 app.use('/api/ticketing', ticketingRoutes);
-app.use('/ticketing', ticketingRoutes);
 
 // Routes musée (gestion des collections et modules)
 app.use('/api/museum', museumRoutes);
-app.use('/museum', museumRoutes);
 
 // Routes RétroMail (gestion des emails Infomaniak)
 app.use('/api/mail', mailRoutes);
-app.use('/mail', mailRoutes);
 
 // Routes Team (gestion de l'équipe RBE)
 app.use('/api/team', teamRoutes);
-app.use('/team', teamRoutes);
 
 // Routes Templates (gestion des modèles de documents Word)
 app.use('/api/templates', templatesRoutes);
-app.use('/templates', templatesRoutes);
 
 // Routes Bulletin Flow (parcours numérique de signature)
 app.use('/api/bulletin-flow', bulletinFlowRoutes);
-app.use('/bulletin-flow', bulletinFlowRoutes);
 
 // Routes Bulletin Stats (statistiques et suivi des bulletins)
 app.use('/api/bulletin-stats', bulletinStatsRoutes);
@@ -1745,11 +1735,9 @@ app.use('/api/changelog', changelogRoutes);
 
 // Routes LumiStudio (lancement distant + healthcheck)
 app.use('/api/lumistudio', lumistudioRoutes);
-app.use('/lumistudio', lumistudioRoutes);
 
 // Routes Process PARC (préservation et intégration véhicules)
 app.use('/api/process-parc', processParcRoutes);
-app.use('/process-parc', processParcRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
@@ -1967,7 +1955,7 @@ app.get(['/api/export/state', '/export/state'], async (req, res) => {
 });
 
 // AUTH
-app.post(['/auth/login','/api/auth/login'], authLimiter, async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     // 🔐 Validation et sanitization des entrées
     const email = sanitizeInput(req.body?.email || '').toLowerCase().trim();
@@ -2079,7 +2067,7 @@ app.post(['/auth/login','/api/auth/login'], authLimiter, async (req, res) => {
 });
 
 // Member login endpoint - accepts identifier (email or username) and password
-app.post(['/auth/member-login','/api/auth/member-login'], authLimiter, async (req, res) => {
+app.post('/api/auth/member-login', authLimiter, async (req, res) => {
   try {
     // 🔐 Validation et sanitization des entrées
     const identifier = sanitizeInput(req.body?.identifier || '').toLowerCase().trim();
