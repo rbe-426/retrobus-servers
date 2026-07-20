@@ -119,6 +119,71 @@ const normalizeImprovementContext = (value) => {
   };
 };
 
+const formatImprovementContext = (context) => {
+  const sections = [];
+
+  if (context.instructions) {
+    sections.push(`Consigne complémentaire :\n${context.instructions}`);
+  }
+  if (context.conversation) {
+    sections.push(`Message auquel répondre :\nObjet : ${context.conversation.subject}\nDe : ${context.conversation.from}\nContenu :\n${context.conversation.body}`);
+  }
+  if (context.conversationMessages.length > 0) {
+    sections.push(`Autres messages du fil :\n${context.conversationMessages.map((message) => `De : ${message.from}\nObjet : ${message.subject}\n${message.body}`).join('\n\n---\n\n')}`);
+  }
+  if (context.files.length > 0) {
+    sections.push(`Fichiers textuels joints :\n${context.files.map((file) => `Fichier : ${file.name}\n${file.content}`).join('\n\n---\n\n')}`);
+  }
+
+  return sections.join('\n\n====\n\n');
+};
+
+const improveMailTextWithOpenAI = async (text, context) => {
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const contextText = formatImprovementContext(context);
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.4,
+        messages: [
+          {
+            role: 'system',
+            content: 'Tu es un assistant de rédaction d’emails professionnels en français. Réécris le brouillon selon la consigne et le contexte fournis. Conserve les faits, les noms, les dates et les demandes. N’invente aucune information. Retourne uniquement le texte final de l’email, sans titre, explication, Markdown ni guillemets.'
+          },
+          {
+            role: 'user',
+            content: `Brouillon à améliorer :\n${text}${contextText ? `\n\nContexte :\n${contextText}` : ''}`
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error?.error?.message || `OpenAI a répondu ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const improvedText = String(payload?.choices?.[0]?.message?.content || '').trim();
+    if (!improvedText) throw new Error('OpenAI n’a renvoyé aucun texte');
+    return improvedText;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 /**
  * Middleware pour vérifier l'authentification utilisateur
  */
@@ -134,7 +199,7 @@ const requireAuth = (req, res, next) => {
  * Reformule un brouillon de façon plus claire et professionnelle.
  * Body: { text, context?: { instructions, conversation, conversationMessages, files } }
  */
-router.post('/improve-text', requireAuth, (req, res) => {
+router.post('/improve-text', requireAuth, async (req, res) => {
   const text = String(req.body?.text || '').trim();
   const context = normalizeImprovementContext(req.body?.context);
 
@@ -146,9 +211,19 @@ router.post('/improve-text', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Le texte ne peut pas dépasser 10 000 caractères' });
   }
 
+  let improvedText;
+  let provider = 'local';
+
+  try {
+    improvedText = await improveMailTextWithOpenAI(text, context);
+    if (improvedText) provider = 'openai';
+  } catch (error) {
+    console.error('Amélioration OpenAI indisponible :', error.message);
+  }
+
   return res.json({
-    improvedText: improveMailText(text, context),
-    provider: 'local',
+    improvedText: improvedText || improveMailText(text, context),
+    provider,
     contextUsed: {
       instructions: Boolean(context.instructions),
       conversation: Boolean(context.conversation?.body),
