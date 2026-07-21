@@ -29,7 +29,9 @@ const FOLDER_MAPPING = {
   'SENT': ['Sent', 'INBOX.Sent', 'Sent Messages', 'Sent Items', 'Envoyés', 'Elements envoyés', 'Éléments envoyés', 'INBOX.Envoyés'],
   'TRASH': ['Trash', 'INBOX.Trash', 'Deleted', 'INBOX.Deleted', 'Corbeille', 'INBOX.Corbeille'],
   'DRAFTS': ['Drafts', 'INBOX.Drafts', 'Brouillons', 'INBOX.Brouillons'],
-  'SPAM': ['Spam', 'INBOX.Spam', 'Junk', 'INBOX.Junk']
+  'SPAM': ['Spam', 'INBOX.Spam', 'Junk', 'INBOX.Junk', 'Indésirables', 'INBOX.Indésirables'],
+  'PROMOTIONS': ['Promotions', 'INBOX.Promotions'],
+  'SOCIAL_NETWORKS': ['SocialNetworks', 'INBOX.SocialNetworks', 'Réseaux sociaux', 'INBOX.Réseaux sociaux']
 };
 
 const formatAddressList = (addresses) => (Array.isArray(addresses) ? addresses : [])
