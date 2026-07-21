@@ -662,6 +662,7 @@ router.post('/send', requireAuth, async (req, res) => {
       success: true,
       message: 'Email envoyé',
       messageId: result.messageId,
+      attachmentCount: result.attachmentCount,
       sentCopy: result.sentCopy || null
     });
   } catch (error) {

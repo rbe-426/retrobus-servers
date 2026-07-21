@@ -44,6 +44,31 @@ const formatAddressList = (addresses) => (Array.isArray(addresses) ? addresses :
   .filter(Boolean)
   .join(', ');
 
+const normalizeMailAttachments = (attachments) => {
+  if (!Array.isArray(attachments)) return [];
+
+  return attachments.map((attachment, index) => {
+    const filename = String(attachment?.filename || '').trim();
+    const encodedContent = String(attachment?.content || '').replace(/\s+/g, '');
+
+    if (!filename || !encodedContent || !/^[A-Za-z0-9+/]*={0,2}$/.test(encodedContent)) {
+      throw new Error(`Pièce jointe ${index + 1} invalide.`);
+    }
+
+    const content = Buffer.from(encodedContent, 'base64');
+    if (content.length === 0) {
+      throw new Error(`Pièce jointe ${index + 1} vide.`);
+    }
+
+    return {
+      filename,
+      content,
+      contentType: String(attachment.contentType || 'application/octet-stream'),
+      contentDisposition: 'attachment'
+    };
+  });
+};
+
 /**
  * Trouver le vrai nom d'un dossier IMAP en essayant plusieurs variantes
  * @param {ImapFlow} client - Client IMAP connecté
@@ -474,13 +499,7 @@ export async function sendEmail(userId, mailOptions) {
       ? `"${mailOptions.fromName}" <${session.email}>`
       : session.email;
 
-    // Convertir les pièces jointes base64 en format nodemailer
-    const processedAttachments = (mailOptions.attachments || []).map(att => ({
-      filename: att.filename,
-      content: att.content, // Base64 string
-      encoding: 'base64',
-      contentType: att.contentType || 'application/octet-stream'
-    }));
+    const processedAttachments = normalizeMailAttachments(mailOptions.attachments);
 
     console.log(`📧 Envoi email avec ${processedAttachments.length} pièce(s) jointe(s)`);
 
@@ -509,8 +528,8 @@ export async function sendEmail(userId, mailOptions) {
     const info = await transporter.sendMail(mailData);
     const sentCopy = await appendSentCopy(session, mailData);
 
-    console.log(`✅ Email envoyé: ${info.messageId}`);
-    return { success: true, messageId: info.messageId, sentCopy };
+    console.log(`✅ Email envoyé: ${info.messageId} (${processedAttachments.length} pièce(s) jointe(s))`);
+    return { success: true, messageId: info.messageId, attachmentCount: processedAttachments.length, sentCopy };
   } catch (error) {
     console.error('❌ Erreur envoi email:', error.message);
     throw new Error(`Impossible d'envoyer l'email: ${error.message}`);
