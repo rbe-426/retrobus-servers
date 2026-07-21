@@ -1,4 +1,4 @@
-const INFOMANIAK_API_BASE_URL = 'https://api.infomaniak.com/1';
+const INFOMANIAK_MAIL_API_BASE_URL = 'https://mail.infomaniak.com/api';
 
 const toArray = (value) => {
   const data = value?.data ?? value;
@@ -8,10 +8,8 @@ const toArray = (value) => {
   return [];
 };
 
-const getResourceId = (resource) => resource?.id || resource?.hosting_id || resource?.mailbox_id;
-
 const getMailboxEmail = (mailbox) => String(
-  mailbox?.email || mailbox?.email_address || mailbox?.address || mailbox?.mailbox || ''
+  mailbox?.email || mailbox?.email_idn || mailbox?.email_address || mailbox?.address || mailbox?.mailbox || ''
 ).trim().toLowerCase();
 
 const infomaniakRequest = async (path, options = {}) => {
@@ -20,7 +18,7 @@ const infomaniakRequest = async (path, options = {}) => {
     throw new Error('Le jeton API Infomaniak n est pas configure.');
   }
 
-  const response = await fetch(`${INFOMANIAK_API_BASE_URL}${path}`, {
+  const response = await fetch(`${INFOMANIAK_MAIL_API_BASE_URL}${path}`, {
     method: options.method || 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -31,7 +29,9 @@ const infomaniakRequest = async (path, options = {}) => {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok || payload.result === 'error') {
-    const description = payload?.error?.description || payload?.error?.message || 'La requete Infomaniak a echoue.';
+    const description = response.status === 403
+      ? 'Le jeton Infomaniak est reconnu, mais il n est pas autorisé à administrer cette boîte. Accordez-lui les droits de gestion de la messagerie et de la boîte concernée.'
+      : payload?.error?.description || payload?.error?.message || 'La requête Infomaniak a échoué.';
     const error = new Error(description);
     error.statusCode = response.status;
     throw error;
@@ -41,32 +41,26 @@ const infomaniakRequest = async (path, options = {}) => {
 };
 
 const findMailbox = async (email) => {
-  const hostings = toArray(await infomaniakRequest('/mail/hosting'));
+  const mailboxes = toArray(await infomaniakRequest('/mailbox?with=aliases'));
+  const mailbox = mailboxes.find((candidate) => getMailboxEmail(candidate) === email);
+  const hostingId = mailbox?.hosting_id || mailbox?.hostingId;
+  const mailboxName = mailbox?.real_mailbox || mailbox?.mailbox;
 
-  for (const hosting of hostings) {
-    const hostingId = getResourceId(hosting);
-    if (!hostingId) continue;
-
-    const mailboxes = toArray(await infomaniakRequest(`/mail/hosting/${hostingId}/mailbox`));
-    const mailbox = mailboxes.find((candidate) => getMailboxEmail(candidate) === email);
-    const mailboxId = getResourceId(mailbox);
-
-    if (mailbox && mailboxId) {
-      return { hostingId, mailboxId };
-    }
+  if (mailbox && hostingId && mailboxName) {
+    return { hostingId, mailboxName };
   }
 
-  throw new Error('Boite RétroMail introuvable dans le compte Infomaniak.');
+  throw new Error('Boîte RétroMail introuvable ou non accessible avec le jeton Infomaniak.');
 };
 
 export const getInfomaniakMailboxInfo = async (email) => {
   const mailbox = await findMailbox(email);
-  return { email, hostingId: mailbox.hostingId, mailboxId: mailbox.mailboxId };
+  return { email, hostingId: mailbox.hostingId, mailboxName: mailbox.mailboxName };
 };
 
 export const changeInfomaniakMailboxPassword = async (email, password) => {
   const mailbox = await findMailbox(email);
-  await infomaniakRequest(`/mail/hosting/${mailbox.hostingId}/mailbox/${mailbox.mailboxId}`, {
+  await infomaniakRequest(`/securedProxy/1/mail_hostings/${mailbox.hostingId}/mailboxes/${encodeURIComponent(mailbox.mailboxName)}`, {
     method: 'PATCH',
     body: { password }
   });
