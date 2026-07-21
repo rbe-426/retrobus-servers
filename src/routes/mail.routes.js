@@ -633,10 +633,15 @@ router.post('/send', requireAuth, async (req, res) => {
     const toRecipients = normalizeRecipients(to);
     const ccRecipients = normalizeRecipients(cc);
     const bccRecipients = normalizeRecipients(bcc);
+    const normalizedSubject = String(subject || '').trim();
+    const normalizedBody = String(body || '');
+    const hasContent = normalizedSubject ||
+      normalizedBody.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim() ||
+      (Array.isArray(attachments) && attachments.length > 0);
 
-    if (toRecipients.length === 0 || !subject || !body) {
+    if (toRecipients.length === 0 || !hasContent) {
       return res.status(400).json({ 
-        error: 'Destinataire, objet et message requis' 
+        error: 'Destinataire et contenu requis' 
       });
     }
 
@@ -650,8 +655,8 @@ router.post('/send', requireAuth, async (req, res) => {
       to: toRecipients,
       cc: ccRecipients.length > 0 ? ccRecipients : undefined,
       bcc: bccRecipients.length > 0 ? bccRecipients : undefined,
-      subject,
-      body,
+      subject: normalizedSubject,
+      body: normalizedBody,
       html,
       attachments,
       fromName,
