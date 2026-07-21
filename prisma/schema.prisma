@@ -629,6 +629,8 @@ model members {
   isPasswordTemporary Boolean     @default(false)
   mustChangePassword  Boolean     @default(false)
   passwordChangedAt   DateTime?
+  retroMailPasswordResetRequired Boolean @default(false)
+  retroMailPasswordResetAt       DateTime?
   role                String      @default("USER")
   status              String      @default("active")
   permissions         Json?

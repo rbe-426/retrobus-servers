@@ -94,6 +94,41 @@ export async function sendTemplatedEmail(templateName, recipientEmail, data = {}
   }
 }
 
+export async function sendRetromailPasswordResetEmail(recipientEmail, member, temporaryPassword) {
+  try {
+    if (!noreplyUserId) {
+      console.warn('⚠️ NoReply account not connected, RétroMail reset email not sent');
+      return false;
+    }
+
+    const mailbox = `${member.matricule}@association-rbe.fr`;
+    const firstName = String(member.firstName || '').trim();
+    const text = [
+      `Bonjour ${firstName},`,
+      '',
+      'Votre mot de passe RétroMail a été réinitialisé par l’administration.',
+      `Boîte RétroMail : ${mailbox}`,
+      `Mot de passe provisoire : ${temporaryPassword}`,
+      '',
+      'Connectez-vous à RétroMail avec ce mot de passe provisoire. Vous devrez immédiatement choisir votre nouveau mot de passe.',
+      '',
+      'RétroBus Essonne'
+    ].join('\n');
+
+    await sendEmail(noreplyUserId, {
+      to: recipientEmail,
+      subject: 'RétroMail - Réinitialisation de votre mot de passe',
+      body: text,
+      html: convertTextToHtml(text),
+      fromName: 'RétroBus Essonne - RétroMail'
+    });
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to send RétroMail password reset email:', error.message);
+    return false;
+  }
+}
+
 /**
  * Helper function to replace variables in text
  * Supports {{variable}} and {{object.property}} syntax
@@ -323,6 +358,7 @@ export async function sendWelcomeNotification(member) {
 
 export default {
   sendTemplatedEmail,
+  sendRetromailPasswordResetEmail,
   sendExpenseReportNotification,
   sendVehicleReservationNotification,
   sendEventInvitationNotification,

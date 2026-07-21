@@ -3,6 +3,8 @@
  */
 
 import express from 'express';
+import { PrismaClient } from '@prisma/client';
+import { randomBytes } from 'crypto';
 import {
   createMailSession,
   getMailSession,
@@ -15,9 +17,11 @@ import {
   moveEmail,
   getUnreadCount
 } from '../services/mailService.js';
-import { setNoreplyUserId } from '../services/notificationService.js';
+import { changeInfomaniakMailboxPassword, getInfomaniakMailboxInfo } from '../services/infomaniakMailAdminService.js';
+import { setNoreplyUserId, sendRetromailPasswordResetEmail } from '../services/notificationService.js';
 
 const router = express.Router();
+const prisma = new PrismaClient();
 
 const normalizeRecipients = (value) => {
   if (Array.isArray(value)) {
@@ -194,6 +198,153 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
+const requireMailAdministrator = (req, res, next) => {
+  const role = String(req.user?.role || '').toUpperCase();
+  if (!['ADMIN', 'PRESIDENT'].includes(role)) {
+    return res.status(403).json({ error: 'Acces reserve a l administration RétroMail.' });
+  }
+  next();
+};
+
+const buildRetromailAddress = (matricule) => {
+  const localPart = String(matricule || '').trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9._-]*$/.test(localPart)
+    ? `${localPart}@association-rbe.fr`
+    : '';
+};
+
+const findCurrentMember = async (user) => {
+  const userId = String(user?.id || '').trim();
+  const email = String(user?.email || '').trim().toLowerCase();
+  return prisma.members.findFirst({
+    where: {
+      OR: [
+        ...(userId ? [{ id: userId }] : []),
+        ...(email ? [{ email }] : [])
+      ]
+    }
+  });
+};
+
+const generateRetromailTemporaryPassword = () => `${randomBytes(12).toString('base64url')}Aa1!`;
+
+router.get('/admin/members', requireAuth, requireMailAdministrator, async (_req, res) => {
+  try {
+    const members = await prisma.members.findMany({
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        matricule: true,
+        retroMailPasswordResetRequired: true,
+        retroMailPasswordResetAt: true,
+        updatedAt: true
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }]
+    });
+
+    res.json({
+      members: members.map((member) => ({
+        ...member,
+        mailbox: buildRetromailAddress(member.matricule),
+        hasValidMailboxIdentifier: Boolean(buildRetromailAddress(member.matricule))
+      }))
+    });
+  } catch (error) {
+    console.error('Unable to list RétroMail members:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les adhérents RétroMail.' });
+  }
+});
+
+router.get('/admin/members/:id/mailbox', requireAuth, requireMailAdministrator, async (req, res) => {
+  try {
+    const member = await prisma.members.findUnique({ where: { id: req.params.id } });
+    if (!member) return res.status(404).json({ error: 'Adhérent introuvable.' });
+
+    const email = buildRetromailAddress(member.matricule);
+    if (!email) return res.status(400).json({ error: 'Le matricule de cet adhérent ne permet pas de construire une adresse RétroMail.' });
+
+    const mailbox = await getInfomaniakMailboxInfo(email);
+    res.json({
+      member: { id: member.id, firstName: member.firstName, lastName: member.lastName, personalEmail: member.email },
+      mailbox: {
+        email: mailbox.email,
+        exists: true,
+        passwordResetRequired: member.retroMailPasswordResetRequired,
+        passwordResetAt: member.retroMailPasswordResetAt
+      }
+    });
+  } catch (error) {
+    console.error('Unable to get RétroMail mailbox:', error.message);
+    res.status(error.statusCode || 502).json({ error: error.message || 'Impossible de consulter la boîte RétroMail.' });
+  }
+});
+
+router.post('/admin/members/:id/reset-password', requireAuth, requireMailAdministrator, async (req, res) => {
+  try {
+    const member = await prisma.members.findUnique({ where: { id: req.params.id } });
+    if (!member) return res.status(404).json({ error: 'Adhérent introuvable.' });
+
+    const mailbox = buildRetromailAddress(member.matricule);
+    if (!mailbox) return res.status(400).json({ error: 'Le matricule de cet adhérent ne permet pas de construire une adresse RétroMail.' });
+
+    const temporaryPassword = generateRetromailTemporaryPassword();
+    await changeInfomaniakMailboxPassword(mailbox, temporaryPassword);
+    await prisma.members.update({
+      where: { id: member.id },
+      data: { retroMailPasswordResetRequired: true, retroMailPasswordResetAt: new Date() }
+    });
+
+    const emailSent = await sendRetromailPasswordResetEmail(member.email, member, temporaryPassword);
+    if (!emailSent) {
+      return res.status(503).json({ error: 'Le mot de passe a été réinitialisé, mais l’email personnel n’a pas pu être envoyé. Vérifiez la connexion du compte NoReply avant de relancer la réinitialisation.' });
+    }
+
+    res.json({ success: true, mailbox, recipientEmail: member.email });
+  } catch (error) {
+    console.error('Unable to reset RétroMail password:', error.message);
+    res.status(error.statusCode || 502).json({ error: error.message || 'Réinitialisation RétroMail impossible.' });
+  }
+});
+
+router.get('/password-reset-status', requireAuth, async (req, res) => {
+  try {
+    const member = await findCurrentMember(req.user);
+    if (!member) return res.status(404).json({ error: 'Profil adhérent introuvable.' });
+    res.json({ required: member.retroMailPasswordResetRequired, mailbox: buildRetromailAddress(member.matricule) });
+  } catch (error) {
+    res.status(500).json({ error: 'Impossible de vérifier le statut du mot de passe RétroMail.' });
+  }
+});
+
+router.post('/password-reset/complete', requireAuth, async (req, res) => {
+  try {
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+    const confirmPassword = typeof req.body?.confirmPassword === 'string' ? req.body.confirmPassword : '';
+    if (newPassword.length < 12) return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 12 caractères.' });
+    if (newPassword !== confirmPassword) return res.status(400).json({ error: 'Les mots de passe ne correspondent pas.' });
+
+    const member = await findCurrentMember(req.user);
+    if (!member?.retroMailPasswordResetRequired) return res.status(409).json({ error: 'Aucune réinitialisation RétroMail en attente.' });
+
+    const mailbox = buildRetromailAddress(member.matricule);
+    const session = getMailSession(req.user.id);
+    if (!mailbox || session.email !== mailbox) return res.status(403).json({ error: 'Connectez-vous d’abord à votre boîte RétroMail avec le mot de passe provisoire.' });
+
+    await changeInfomaniakMailboxPassword(mailbox, newPassword);
+    await prisma.members.update({
+      where: { id: member.id },
+      data: { retroMailPasswordResetRequired: false }
+    });
+    deleteMailSession(req.user.id);
+    res.json({ success: true, message: 'Mot de passe RétroMail mis à jour. Connectez-vous avec votre nouveau mot de passe.' });
+  } catch (error) {
+    console.error('Unable to complete RétroMail password reset:', error.message);
+    res.status(error.statusCode || 502).json({ error: error.message || 'Modification du mot de passe RétroMail impossible.' });
+  }
+});
+
 /**
  * POST /api/mail/improve-text
  * Reformule un brouillon de façon plus claire et professionnelle.
@@ -244,9 +395,11 @@ router.get('/status', requireAuth, async (req, res) => {
     
     if (connected) {
       const session = getMailSession(userId);
+      const member = await findCurrentMember(req.user);
       res.json({
         connected: true,
-        email: session.email
+        email: session.email,
+        mustChangeRetromailPassword: Boolean(member?.retroMailPasswordResetRequired)
       });
     } else {
       res.json({
@@ -301,10 +454,13 @@ router.post('/connect', requireAuth, async (req, res) => {
       console.log('✅ Compte NoReply configuré pour les notifications automatiques');
     }
 
+    const member = await findCurrentMember(req.user);
+
     res.json({
       success: true,
       message: 'Connexion réussie',
-      email: result.email
+      email: result.email,
+      mustChangeRetromailPassword: Boolean(member?.retroMailPasswordResetRequired)
     });
   } catch (error) {
     console.error('Erreur connexion mail:', error);
