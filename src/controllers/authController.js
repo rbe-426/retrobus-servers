@@ -51,6 +51,7 @@ export const loginUser = async (req, res) => {
       user: {
         id: member.id,
         email: member.email,
+        matricule: member.matricule || '',
         firstName: member.firstName,
         role: role,
         permissions: member.permissions || []
@@ -110,6 +111,7 @@ export const loginMember = async (req, res) => {
       user: {
         id: member.id,
         email: member.email,
+        matricule: member.matricule || '',
         firstName: member.firstName,
         lastName: member.lastName,
         role: role,
