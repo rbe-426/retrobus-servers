@@ -32,6 +32,16 @@ const FOLDER_MAPPING = {
   'SPAM': ['Spam', 'INBOX.Spam', 'Junk', 'INBOX.Junk']
 };
 
+const formatAddressList = (addresses) => (Array.isArray(addresses) ? addresses : [])
+  .map((entry) => {
+    const address = String(entry?.address || '').trim();
+    const name = String(entry?.name || '').trim();
+    if (!address) return '';
+    return name ? `${name} <${address}>` : address;
+  })
+  .filter(Boolean)
+  .join(', ');
+
 /**
  * Trouver le vrai nom d'un dossier IMAP en essayant plusieurs variantes
  * @param {ImapFlow} client - Client IMAP connecté
@@ -216,6 +226,8 @@ export async function listEmails(userId, folder = 'INBOX', limit = 50) {
           id: msg.uid,
           from: msg.envelope.from?.[0]?.address || 'Inconnu',
           fromName: msg.envelope.from?.[0]?.name || '',
+          to: formatAddressList(msg.envelope.to),
+          cc: formatAddressList(msg.envelope.cc),
           subject: msg.envelope.subject || '(Sans objet)',
           date: msg.envelope.date,
           read: msg.flags.has('\\Seen'), // True si marqué comme lu
@@ -321,10 +333,12 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
       let textContent = '';
       let htmlContent = '';
       let attachments = [];
+      let parsedMessage = null;
       
       if (message.source) {
         try {
           const parsed = await simpleParser(message.source);
+          parsedMessage = parsed;
           
           // Récupérer le texte brut
           if (parsed.text) {
@@ -383,9 +397,10 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
 
       return {
         id: message.uid,
-        from: message.envelope.from?.[0]?.address || 'Inconnu',
-        fromName: message.envelope.from?.[0]?.name || '',
-        to: message.envelope.to?.map(t => t.address).join(', ') || '',
+        from: parsedMessage?.from?.value?.[0]?.address || message.envelope.from?.[0]?.address || 'Inconnu',
+        fromName: parsedMessage?.from?.value?.[0]?.name || message.envelope.from?.[0]?.name || '',
+        to: formatAddressList(parsedMessage?.to?.value || message.envelope.to),
+        cc: formatAddressList(parsedMessage?.cc?.value || message.envelope.cc),
         subject: message.envelope.subject || '(Sans objet)',
         date: message.envelope.date,
         body: body,
