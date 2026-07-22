@@ -1066,39 +1066,6 @@ model VehicleAssurance {
   @@index([vehicleId])
 }
 
-model VehicleRegistrationDocument {
-  id              String   @id
-  parc            String   @unique
-  oldCGPath       String?
-  oldCGFileName   String?
-  newCGPath       String?
-  newCGFileName   String?
-  oldCGBarred     Boolean  @default(false)
-  temporaryStart  DateTime?
-  temporaryEnd    DateTime?
-  notes           String?
-  dateImport      DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([parc])
-}
-
-model VehicleSpeedLimiter {
-  id              String   @id
-  parc            String   @unique
-  attestationPath String?
-  fileName        String?
-  checkedAt       DateTime?
-  validUntil      DateTime?
-  appointmentAt   DateTime?
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([parc])
-}
-
 model VehicleCessionCertificate {
   id              String   @id
   parc            String   @unique
