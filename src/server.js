@@ -4203,42 +4203,59 @@ app.get(['/vehicles/:parc/reports','/api/vehicles/:parc/reports'], requireAuth, 
 
 // ============ ADMINISTRATION VÉHICULES ============
 
-// CARTES GRISES
-app.get(['/vehicles/:parc/cg','/api/vehicles/:parc/cg'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const cg = state.vehicleCarteGrise.find(c => c.parc === parc);
-  res.json(cg || { parc, oldCGPath: null, newCGPath: null, oldCGBarred: false, dateImport: null, notes: '' });
+// CARTES GRISES - documents conservés dans PostgreSQL pour consultation et téléchargement.
+app.get(['/vehicles/:parc/cg','/api/vehicles/:parc/cg'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const cg = await prisma.vehicleRegistrationDocument.findUnique({ where: { parc } });
+    res.json(cg || { parc, oldCGPath: null, newCGPath: null, oldCGBarred: false, dateImport: null, notes: '' });
+  } catch (e) {
+    console.error('❌ GET /cg error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch registration documents', details: e.message });
+  }
 });
 
-app.post(['/vehicles/:parc/cg','/api/vehicles/:parc/cg'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const { type, documentPath, notes } = req.body; // type: 'old' | 'new'
-  let cg = state.vehicleCarteGrise.find(c => c.parc === parc);
-  
-  if (!cg) {
-    cg = { id: uid(), parc, oldCGPath: null, newCGPath: null, oldCGBarred: false, dateImport: new Date().toISOString(), notes: notes || '' };
-    state.vehicleCarteGrise.push(cg);
+app.post(['/vehicles/:parc/cg','/api/vehicles/:parc/cg'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const { type, documentPath, fileName, notes } = req.body;
+    if (!['old', 'new'].includes(type) || !documentPath) return res.status(400).json({ error: 'Type et document de carte grise requis' });
+
+    const isNew = type === 'new';
+    const cg = await prisma.vehicleRegistrationDocument.upsert({
+      where: { parc },
+      update: {
+        oldCGPath: isNew ? undefined : documentPath,
+        oldCGFileName: isNew ? undefined : (fileName || null),
+        newCGPath: isNew ? documentPath : undefined,
+        newCGFileName: isNew ? (fileName || null) : undefined,
+        dateImport: isNew ? new Date() : undefined,
+        notes: notes ?? undefined
+      },
+      create: {
+        id: uid(), parc,
+        oldCGPath: isNew ? null : documentPath,
+        oldCGFileName: isNew ? null : (fileName || null),
+        newCGPath: isNew ? documentPath : null,
+        newCGFileName: isNew ? (fileName || null) : null,
+        dateImport: isNew ? new Date() : null,
+        notes: notes || ''
+      }
+    });
+    res.json(cg);
+  } catch (e) {
+    console.error('❌ POST /cg error:', e.message);
+    res.status(500).json({ error: 'Failed to save registration document', details: e.message });
   }
-  
-  if (type === 'old') {
-    cg.oldCGPath = documentPath;
-  } else if (type === 'new') {
-    cg.newCGPath = documentPath;
-    cg.dateImport = new Date().toISOString();
-  }
-  
-  cg.notes = notes || cg.notes;
-  debouncedSave();
-  res.json(cg);
 });
 
-app.put(['/vehicles/:parc/cg/mark-old-barred','/api/vehicles/:parc/cg/mark-old-barred'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const cg = state.vehicleCarteGrise.find(c => c.parc === parc);
-  if (!cg) return res.status(404).json({ error: 'CG not found' });
-  cg.oldCGBarred = true;
-  debouncedSave();
-  res.json(cg);
+app.put(['/vehicles/:parc/cg/mark-old-barred','/api/vehicles/:parc/cg/mark-old-barred'], requireAuth, async (req, res) => {
+  try {
+    const cg = await prisma.vehicleRegistrationDocument.update({ where: { parc: req.params.parc }, data: { oldCGBarred: true } });
+    res.json(cg);
+  } catch (e) {
+    res.status(404).json({ error: 'CG not found', details: e.message });
+  }
 });
 
 // ASSURANCE - Prisma-backed
@@ -4300,45 +4317,32 @@ app.post(['/vehicles/:parc/assurance','/api/vehicles/:parc/assurance'], requireA
 });
 
 // CERTIFICAT TEMPORAIRE (CG en cours de changement)
-app.get(['/vehicles/:parc/certificat-temporaire','/api/vehicles/:parc/certificat-temporaire'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const certTemp = state.vehicleCarteGrise.find(c => c.parc === parc)?.certificatTemporaire;
-  
-  if (!certTemp) {
-    return res.json({ parc, dateDebut: null, dateFin: null, isActive: false });
+app.get(['/vehicles/:parc/certificat-temporaire','/api/vehicles/:parc/certificat-temporaire'], requireAuth, async (req, res) => {
+  try {
+    const registration = await prisma.vehicleRegistrationDocument.findUnique({ where: { parc: req.params.parc } });
+    const dateDebut = registration?.temporaryStart || null;
+    const dateFin = registration?.temporaryEnd || null;
+    const now = new Date();
+    res.json({ parc: req.params.parc, dateDebut, dateFin, isActive: Boolean(dateDebut && dateFin && new Date(dateDebut) <= now && now <= new Date(dateFin)) });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch temporary registration certificate', details: e.message });
   }
-  
-  const now = new Date();
-  const debut = certTemp.dateDebut ? new Date(certTemp.dateDebut) : null;
-  const fin = certTemp.dateFin ? new Date(certTemp.dateFin) : null;
-  
-  certTemp.isActive = (debut && fin) ? (debut <= now && now <= fin) : false;
-  res.json(certTemp);
 });
 
-app.post(['/vehicles/:parc/certificat-temporaire','/api/vehicles/:parc/certificat-temporaire'], requireAuth, (req, res) => {
-  const parc = req.params.parc;
-  const { dateDebut, dateFin } = req.body;
-  
-  let cg = state.vehicleCarteGrise.find(c => c.parc === parc);
-  if (!cg) {
-    cg = { id: uid(), parc, oldCGPath: null, newCGPath: null, oldCGBarred: false, dateImport: new Date().toISOString(), notes: '', certificatTemporaire: null };
-    state.vehicleCarteGrise.push(cg);
+app.post(['/vehicles/:parc/certificat-temporaire','/api/vehicles/:parc/certificat-temporaire'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const { dateDebut, dateFin } = req.body;
+    const registration = await prisma.vehicleRegistrationDocument.upsert({
+      where: { parc },
+      update: { temporaryStart: dateDebut ? new Date(dateDebut) : null, temporaryEnd: dateFin ? new Date(dateFin) : null },
+      create: { id: uid(), parc, temporaryStart: dateDebut ? new Date(dateDebut) : null, temporaryEnd: dateFin ? new Date(dateFin) : null }
+    });
+    const now = new Date();
+    res.json({ parc, dateDebut: registration.temporaryStart, dateFin: registration.temporaryEnd, isActive: Boolean(registration.temporaryStart && registration.temporaryEnd && registration.temporaryStart <= now && now <= registration.temporaryEnd) });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to save temporary registration certificate', details: e.message });
   }
-  
-  cg.certificatTemporaire = {
-    dateDebut: dateDebut || null,
-    dateFin: dateFin || null,
-    isActive: false // Sera calculé au GET
-  };
-  
-  const now = new Date();
-  const debut = dateDebut ? new Date(dateDebut) : null;
-  const fin = dateFin ? new Date(dateFin) : null;
-  cg.certificatTemporaire.isActive = (debut && fin) ? (debut <= now && now <= fin) : false;
-  
-  debouncedSave();
-  res.json(cg.certificatTemporaire);
 });
 
 // CONTRÔLE TECHNIQUE
@@ -4442,6 +4446,38 @@ app.put(['/vehicles/:parc/ct/appointment','/api/vehicles/:parc/ct/appointment'],
   } catch (e) {
     console.error('❌ Error updating CT appointment:', e.message);
     res.status(500).json({ error: 'Failed to update contrôle technique appointment', details: e.message });
+  }
+});
+
+// LIMITEUR DE VITESSE - validité d'un an après la vérification.
+app.get(['/vehicles/:parc/speed-limiter','/api/vehicles/:parc/speed-limiter'], requireAuth, async (req, res) => {
+  try {
+    const limiter = await prisma.vehicleSpeedLimiter.findUnique({ where: { parc: req.params.parc } });
+    res.json(limiter || { parc: req.params.parc, attestationPath: null, checkedAt: null, validUntil: null, appointmentAt: null, notes: '' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch speed limiter', details: e.message });
+  }
+});
+
+app.post(['/vehicles/:parc/speed-limiter','/api/vehicles/:parc/speed-limiter'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const { attestationPath, fileName, checkedAt, appointmentAt, notes } = req.body;
+    const checkedDate = checkedAt ? new Date(checkedAt) : null;
+    const appointment = appointmentAt ? new Date(appointmentAt) : null;
+    if ((checkedAt && Number.isNaN(checkedDate.getTime())) || (appointmentAt && Number.isNaN(appointment.getTime()))) return res.status(400).json({ error: 'Date du limiteur invalide' });
+
+    const validUntil = checkedDate ? new Date(checkedDate) : undefined;
+    if (validUntil) validUntil.setFullYear(validUntil.getFullYear() + 1);
+    const reportIsConforming = Boolean(checkedDate && attestationPath);
+    const limiter = await prisma.vehicleSpeedLimiter.upsert({
+      where: { parc },
+      update: { attestationPath: attestationPath || undefined, fileName: fileName || undefined, checkedAt: checkedDate || undefined, validUntil, appointmentAt: reportIsConforming ? null : (appointment || undefined), notes: notes ?? undefined },
+      create: { id: uid(), parc, attestationPath: attestationPath || null, fileName: fileName || null, checkedAt, validUntil: validUntil || null, appointmentAt: appointment || null, notes: notes || '' }
+    });
+    res.json(limiter);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to save speed limiter', details: e.message });
   }
 });
 
