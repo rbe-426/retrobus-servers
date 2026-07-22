@@ -509,6 +509,10 @@ export async function sendEmail(userId, mailOptions) {
       to: mailOptions.to,
       cc: mailOptions.cc || undefined,
       bcc: mailOptions.bcc || undefined,
+      envelope: {
+        from: session.email,
+        to: [...mailOptions.to, ...(mailOptions.cc || []), ...(mailOptions.bcc || [])]
+      },
       subject: mailOptions.subject,
       text: mailOptions.body,
       html: mailOptions.html || mailOptions.body,
