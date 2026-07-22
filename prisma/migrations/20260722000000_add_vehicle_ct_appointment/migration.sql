@@ -1,2 +1,2 @@
 ALTER TABLE "Vehicle"
-ADD COLUMN "ctAppointmentDate" TIMESTAMP(3);
+ADD COLUMN IF NOT EXISTS "ctAppointmentDate" TIMESTAMP(3);
