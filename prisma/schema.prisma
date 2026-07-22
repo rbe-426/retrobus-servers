@@ -326,6 +326,7 @@ model Vehicle {
   isPublic                 Boolean                    @default(false)
   fuel                     Float?
   mileage                  Float?
+  ctAppointmentDate        DateTime?
   Event                    Event[]
   Report                   Report[]
   Usage                    Usage[]

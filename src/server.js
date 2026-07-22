@@ -4345,13 +4345,24 @@ app.post(['/vehicles/:parc/certificat-temporaire','/api/vehicles/:parc/certifica
 app.get(['/vehicles/:parc/ct','/api/vehicles/:parc/ct'], requireAuth, async (req, res) => {
   try {
     const parc = req.params.parc;
-    const cts = await prisma.vehicleControlTechnique.findMany({
-      where: { parc },
-      orderBy: { ctDate: 'desc' }
-    });
+    const [cts, vehicle] = await Promise.all([
+      prisma.vehicleControlTechnique.findMany({
+        where: { parc },
+        orderBy: { ctDate: 'desc' }
+      }),
+      prisma.vehicle.findUnique({
+        where: { parc },
+        select: { ctAppointmentDate: true }
+      })
+    ]);
     
     const latest = cts[0] || null;
-    res.json({ parc, ctHistory: cts, latestCT: latest });
+    res.json({
+      parc,
+      ctHistory: cts,
+      latestCT: latest,
+      appointmentDate: vehicle?.ctAppointmentDate || null
+    });
   } catch (e) {
     console.error('❌ Error fetching CT:', e.message);
     res.status(500).json({ error: 'Failed to fetch contrôle technique', details: e.message });
@@ -4378,6 +4389,14 @@ app.post(['/vehicles/:parc/ct','/api/vehicles/:parc/ct'], requireAuth, async (re
         updatedAt: new Date()
       }
     });
+
+    // Un rapport conforme avec son attestation clôture le rendez-vous de renouvellement.
+    if (ct.ctStatus === 'passed' && ct.attestationPath) {
+      await prisma.vehicle.updateMany({
+        where: { parc },
+        data: { ctAppointmentDate: null, updatedAt: new Date() }
+      });
+    }
     
     // Also save to state for in-memory access
     state.vehicleControleTechnique.push({
@@ -4397,6 +4416,32 @@ app.post(['/vehicles/:parc/ct','/api/vehicles/:parc/ct'], requireAuth, async (re
   } catch (e) {
     console.error('❌ Error creating CT:', e.message);
     res.status(500).json({ error: 'Failed to create contrôle technique', details: e.message });
+  }
+});
+
+app.put(['/vehicles/:parc/ct/appointment','/api/vehicles/:parc/ct/appointment'], requireAuth, async (req, res) => {
+  try {
+    const parc = req.params.parc;
+    const appointmentDate = String(req.body?.appointmentDate || '').trim();
+    const parsedDate = appointmentDate ? new Date(appointmentDate) : null;
+
+    if (appointmentDate && Number.isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: 'Date de rendez-vous CT invalide' });
+    }
+
+    const vehicle = await prisma.vehicle.update({
+      where: { parc },
+      data: {
+        ctAppointmentDate: parsedDate,
+        updatedAt: new Date()
+      },
+      select: { parc: true, ctAppointmentDate: true }
+    });
+
+    res.json({ parc: vehicle.parc, appointmentDate: vehicle.ctAppointmentDate });
+  } catch (e) {
+    console.error('❌ Error updating CT appointment:', e.message);
+    res.status(500).json({ error: 'Failed to update contrôle technique appointment', details: e.message });
   }
 });
 
