@@ -55,14 +55,15 @@ const normalizeMailAttachments = (attachments) => {
       throw new Error(`Pièce jointe ${index + 1} invalide.`);
     }
 
-    const content = Buffer.from(encodedContent, 'base64');
-    if (content.length === 0) {
+    const decodedSize = Buffer.byteLength(encodedContent, 'base64');
+    if (decodedSize === 0) {
       throw new Error(`Pièce jointe ${index + 1} vide.`);
     }
 
     return {
       filename,
-      content,
+      content: encodedContent,
+      encoding: 'base64',
       contentType: String(attachment.contentType || 'application/octet-stream'),
       contentDisposition: 'attachment'
     };
