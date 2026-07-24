@@ -18,60 +18,109 @@ const parseDate = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-router.post('/requests', requireAuth, async (req, res) => {
-  try {
-    const prisma = req.app.locals.prisma;
-    const {
+const prepareRequestData = (body, saveAsDraft) => {
+  const contactDate = parseDate(body?.contactDate);
+  const shootDate = parseDate(body?.shootDate);
+  const contactName = String(body?.contactName || '').trim() || null;
+  const contactRole = String(body?.contactRole || '').trim() || null;
+  const productionCompany = String(body?.productionCompany || '').trim() || null;
+  const audiovisualProject = String(body?.audiovisualProject || '').trim() || null;
+  const hasInvalidDate = (body?.contactDate && !contactDate) || (body?.shootDate && !shootDate);
+  const hasAnyInformation = contactDate || shootDate || contactName || contactRole || productionCompany || audiovisualProject;
+  const isComplete = contactDate && shootDate && contactName && contactRole && productionCompany && audiovisualProject;
+
+  if (hasInvalidDate) return { error: 'Les dates saisies doivent etre valides.' };
+  if (!hasAnyInformation) return { error: 'Ajoutez au moins une information avant d enregistrer le brouillon.' };
+  if (!saveAsDraft && !isComplete) return { error: 'Les informations de prise de contact et de tournage sont obligatoires.' };
+
+  const leadTimeDays = contactDate && shootDate
+    ? Math.round((shootDate.getTime() - contactDate.getTime()) / DAY_MS)
+    : null;
+  const validationRequired = !saveAsDraft && leadTimeDays !== null && leadTimeDays <= 15;
+
+  return {
+    data: {
       contactDate,
       contactName,
       contactRole,
       productionCompany,
       audiovisualProject,
-      shootDate
-    } = req.body || {};
+      shootDate,
+      leadTimeDays,
+      validationRequired,
+      status: saveAsDraft ? 'DRAFT' : validationRequired ? 'PENDING_VALIDATION' : 'RECORDED'
+    },
+    validationRequired
+  };
+};
 
-    const parsedContactDate = parseDate(contactDate);
-    const parsedShootDate = parseDate(shootDate);
-    const requiredFields = [contactName, contactRole, productionCompany, audiovisualProject];
-
-    if (!parsedContactDate || !parsedShootDate || requiredFields.some((field) => !String(field || '').trim())) {
-      return res.status(400).json({ error: 'Les informations de prise de contact et de tournage sont obligatoires.' });
+const createValidationNotification = async (prisma, request, shootDate, createdBy) => {
+  if (!request.validationRequired) return;
+  await prisma.notification.create({
+    data: {
+      title: `RetroStudio : validation requise (${request.leadTimeDays} jours)`,
+      message: `${request.productionCompany} - ${request.audiovisualProject}. Tournage prévu le ${shootDate}. Validation présidentielle requise.`,
+      type: 'warning',
+      priority: 'high',
+      targetedTo: `user:${GAELLE_EMAIL}`,
+      createdBy: createdBy || 'SYSTEM'
     }
+  });
+};
 
-    const leadTimeDays = Math.round((parsedShootDate.getTime() - parsedContactDate.getTime()) / DAY_MS);
-    const validationRequired = leadTimeDays <= 15;
+router.post('/requests', requireAuth, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const preparedRequest = prepareRequestData(req.body, Boolean(req.body?.saveAsDraft));
+    if (preparedRequest.error) return res.status(400).json({ error: preparedRequest.error });
     const request = await prisma.retroStudioRequest.create({
       data: {
-        contactDate: parsedContactDate,
-        contactName: String(contactName).trim(),
-        contactRole: String(contactRole).trim(),
-        productionCompany: String(productionCompany).trim(),
-        audiovisualProject: String(audiovisualProject).trim(),
-        shootDate: parsedShootDate,
-        leadTimeDays,
-        validationRequired,
-        status: validationRequired ? 'PENDING_VALIDATION' : 'RECORDED',
+        ...preparedRequest.data,
         createdBy: req.user.email || req.user.id || null
       }
     });
 
-    if (validationRequired) {
-      await prisma.notification.create({
-        data: {
-          title: `RetroStudio : validation requise (${leadTimeDays} jours)`,
-          message: `${request.productionCompany} - ${request.audiovisualProject}. Tournage prévu le ${shootDate}. Validation présidentielle requise.`,
-          type: 'warning',
-          priority: 'high',
-          targetedTo: `user:${GAELLE_EMAIL}`,
-          createdBy: req.user.email || req.user.id || 'SYSTEM'
-        }
-      });
-    }
+    await createValidationNotification(prisma, request, req.body?.shootDate, req.user.email || req.user.id);
 
     return res.status(201).json(request);
   } catch (error) {
     console.error('RetroStudio request creation failed:', error.message);
     return res.status(500).json({ error: 'Impossible d enregistrer le dossier RetroStudio.' });
+  }
+});
+
+router.put('/requests/:id', requireAuth, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const existingRequest = await prisma.retroStudioRequest.findUnique({ where: { id: req.params.id } });
+    if (!existingRequest) return res.status(404).json({ error: 'Brouillon RetroStudio introuvable.' });
+    if (existingRequest.status !== 'DRAFT') return res.status(409).json({ error: 'Seuls les brouillons peuvent etre modifies.' });
+
+    const preparedRequest = prepareRequestData(req.body, Boolean(req.body?.saveAsDraft));
+    if (preparedRequest.error) return res.status(400).json({ error: preparedRequest.error });
+    const request = await prisma.retroStudioRequest.update({
+      where: { id: req.params.id },
+      data: preparedRequest.data
+    });
+
+    await createValidationNotification(prisma, request, req.body?.shootDate, req.user.email || req.user.id);
+    return res.json(request);
+  } catch (error) {
+    console.error('RetroStudio draft update failed:', error.message);
+    return res.status(500).json({ error: 'Impossible de mettre a jour le brouillon RetroStudio.' });
+  }
+});
+
+router.get('/requests', requireAuth, async (req, res) => {
+  try {
+    const requests = await req.app.locals.prisma.retroStudioRequest.findMany({
+      where: { status: { in: ['DRAFT', 'RECORDED', 'PENDING_VALIDATION', 'APPROVED'] } },
+      orderBy: [{ shootDate: 'asc' }, { createdAt: 'desc' }]
+    });
+    return res.json(requests);
+  } catch (error) {
+    console.error('RetroStudio ongoing requests failed:', error.message);
+    return res.status(500).json({ error: 'Impossible de charger les demandes RetroStudio en cours.' });
   }
 });
 
@@ -100,8 +149,8 @@ router.put('/requests/:id/validation', requireAuth, async (req, res) => {
   }
 
   try {
-    const request = await req.app.locals.prisma.retroStudioRequest.update({
-      where: { id: req.params.id },
+    const result = await req.app.locals.prisma.retroStudioRequest.updateMany({
+      where: { id: req.params.id, status: 'PENDING_VALIDATION' },
       data: {
         status: decision,
         validatedBy: GAELLE_EMAIL,
@@ -109,9 +158,14 @@ router.put('/requests/:id/validation', requireAuth, async (req, res) => {
         validationComment
       }
     });
+
+    if (result.count === 0) {
+      return res.status(409).json({ error: 'Ce dossier est introuvable ou a deja ete traite.' });
+    }
+
+    const request = await req.app.locals.prisma.retroStudioRequest.findUnique({ where: { id: req.params.id } });
     return res.json(request);
   } catch (error) {
-    if (error.code === 'P2025') return res.status(404).json({ error: 'Dossier RetroStudio introuvable.' });
     console.error('RetroStudio validation failed:', error.message);
     return res.status(500).json({ error: 'Impossible de valider le dossier RetroStudio.' });
   }

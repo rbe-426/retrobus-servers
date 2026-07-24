@@ -1145,13 +1145,13 @@ model VehicleInspection {
 
 model RetroStudioRequest {
   id                 String   @id @default(cuid())
-  contactDate        DateTime
-  contactName        String
-  contactRole        String
-  productionCompany  String
-  audiovisualProject String
-  shootDate          DateTime
-  leadTimeDays       Int
+  contactDate        DateTime?
+  contactName        String?
+  contactRole        String?
+  productionCompany  String?
+  audiovisualProject String?
+  shootDate          DateTime?
+  leadTimeDays       Int?
   status             String   @default("RECORDED")
   validationRequired Boolean  @default(false)
   validatedBy        String?
