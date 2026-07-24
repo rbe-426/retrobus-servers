@@ -1,7 +1,8 @@
 import { Router } from 'express';
 
 const router = Router();
-const GAELLE_EMAIL = 'g.champenois@retrobus-essonne.fr';
+const PRESIDENT_EMAIL = 'belaidiw91@gmail.com';
+const PRESIDENT_MATRICULE = 'w.belaidi';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const requireAuth = (req, res, next) => {
@@ -9,7 +10,11 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
-const isGaelle = (req) => String(req.user?.email || '').trim().toLowerCase() === GAELLE_EMAIL;
+const isPresident = (req) => {
+  const email = String(req.user?.email || '').trim().toLowerCase();
+  const matricule = String(req.user?.matricule || req.user?.username || '').trim().toLowerCase();
+  return email === PRESIDENT_EMAIL || matricule === PRESIDENT_MATRICULE;
+};
 
 const parseDate = (value) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -62,7 +67,7 @@ const createValidationNotification = async (prisma, request, shootDate, createdB
       message: `${request.productionCompany} - ${request.audiovisualProject}. Tournage prévu le ${shootDate}. Validation présidentielle requise.`,
       type: 'warning',
       priority: 'high',
-      targetedTo: `user:${GAELLE_EMAIL}`,
+      targetedTo: `user:${PRESIDENT_EMAIL}`,
       createdBy: createdBy || 'SYSTEM'
     }
   });
@@ -125,7 +130,7 @@ router.get('/requests', requireAuth, async (req, res) => {
 });
 
 router.get('/requests/pending-validation', requireAuth, async (req, res) => {
-  if (!isGaelle(req)) return res.status(403).json({ error: 'Validation reservee a la presidente responsable.' });
+  if (!isPresident(req)) return res.status(403).json({ error: 'Validation reservee au president.' });
 
   try {
     const requests = await req.app.locals.prisma.retroStudioRequest.findMany({
@@ -140,7 +145,7 @@ router.get('/requests/pending-validation', requireAuth, async (req, res) => {
 });
 
 router.put('/requests/:id/validation', requireAuth, async (req, res) => {
-  if (!isGaelle(req)) return res.status(403).json({ error: 'Validation reservee a Gaelle Champenois.' });
+  if (!isPresident(req)) return res.status(403).json({ error: 'Validation reservee au president.' });
 
   const decision = String(req.body?.decision || '').toUpperCase();
   const validationComment = String(req.body?.comment || '').trim() || null;
@@ -153,7 +158,7 @@ router.put('/requests/:id/validation', requireAuth, async (req, res) => {
       where: { id: req.params.id, status: 'PENDING_VALIDATION' },
       data: {
         status: decision,
-        validatedBy: GAELLE_EMAIL,
+        validatedBy: PRESIDENT_EMAIL,
         validatedAt: new Date(),
         validationComment
       }
