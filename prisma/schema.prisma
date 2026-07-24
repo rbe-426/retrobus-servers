@@ -1143,6 +1143,29 @@ model VehicleInspection {
   @@index([inspectionDate])
 }
 
+model RetroStudioRequest {
+  id                 String   @id @default(cuid())
+  contactDate        DateTime
+  contactName        String
+  contactRole        String
+  productionCompany  String
+  audiovisualProject String
+  shootDate          DateTime
+  leadTimeDays       Int
+  status             String   @default("RECORDED")
+  validationRequired Boolean  @default(false)
+  validatedBy        String?
+  validatedAt        DateTime?
+  validationComment  String?
+  createdBy          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([status])
+  @@index([shootDate])
+  @@index([validationRequired])
+}
+
 model Notification {
   id        String   @id @default(cuid())
   title     String
