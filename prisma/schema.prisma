@@ -970,6 +970,17 @@ model site_users {
   user_permissions   user_permissions[]
 }
 
+model retromail_settings {
+  userId       String   @id
+  signature    String?  @db.Text
+  profilePhoto String?  @db.Text
+  mailFont     String?  @default("Arial")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([updatedAt])
+}
+
 model user_permissions {
   id         String     @id
   userId     String

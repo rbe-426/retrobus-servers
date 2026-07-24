@@ -44,6 +44,13 @@ const formatAddressList = (addresses) => (Array.isArray(addresses) ? addresses :
   .filter(Boolean)
   .join(', ');
 
+const getMessageHeader = (source, headerName) => {
+  const headerBlock = String(source || '').split(/\r?\n\r?\n/, 1)[0];
+  const headerPattern = new RegExp(`^${headerName}:\\s*([^\\r\\n]*(?:\\r?\\n[ \\t]+[^\\r\\n]*)*)`, 'im');
+  const match = headerBlock.match(headerPattern);
+  return match ? match[1].replace(/\r?\n[ \t]+/g, ' ').trim() : '';
+};
+
 const normalizeMailAttachments = (attachments) => {
   if (!Array.isArray(attachments)) return [];
 
@@ -247,15 +254,20 @@ export async function listEmails(userId, folder = 'INBOX', limit = 50) {
       for await (let msg of client.fetch(range, { 
         envelope: true, 
         bodyStructure: true,
+        source: folder === 'SENT',
         flags: true,
         uid: true
       })) {
+        const sourceTo = folder === 'SENT' ? getMessageHeader(msg.source, 'to') : '';
+        const sourceCc = folder === 'SENT' ? getMessageHeader(msg.source, 'cc') : '';
+        const sourceBcc = folder === 'SENT' ? getMessageHeader(msg.source, 'x-retromail-bcc') : '';
         messages.push({
           id: msg.uid,
           from: msg.envelope.from?.[0]?.address || 'Inconnu',
           fromName: msg.envelope.from?.[0]?.name || '',
-          to: formatAddressList(msg.envelope.to),
-          cc: formatAddressList(msg.envelope.cc),
+          to: formatAddressList(msg.envelope.to) || sourceTo,
+          cc: formatAddressList(msg.envelope.cc) || sourceCc,
+          bcc: sourceBcc,
           subject: msg.envelope.subject || '(Sans objet)',
           date: msg.envelope.date,
           read: msg.flags.has('\\Seen'), // True si marqué comme lu
@@ -429,6 +441,7 @@ export async function getEmail(userId, emailId, folder = 'INBOX') {
         fromName: parsedMessage?.from?.value?.[0]?.name || message.envelope.from?.[0]?.name || '',
         to: formatAddressList(parsedMessage?.to?.value || message.envelope.to),
         cc: formatAddressList(parsedMessage?.cc?.value || message.envelope.cc),
+        bcc: getMessageHeader(message.source, 'x-retromail-bcc'),
         subject: message.envelope.subject || '(Sans objet)',
         date: message.envelope.date,
         body: body,
@@ -531,7 +544,13 @@ export async function sendEmail(userId, mailOptions) {
 
     // Envoyer l'email
     const info = await transporter.sendMail(mailData);
-    const sentCopy = await appendSentCopy(session, mailData);
+    const sentCopy = await appendSentCopy(session, {
+      ...mailData,
+      headers: {
+        ...mailData.headers,
+        ...(mailOptions.bcc?.length ? { 'X-RetroMail-Bcc': mailOptions.bcc.join(', ') } : {})
+      }
+    });
 
     console.log(`✅ Email envoyé: ${info.messageId} (${processedAttachments.length} pièce(s) jointe(s))`);
     return { success: true, messageId: info.messageId, attachmentCount: processedAttachments.length, sentCopy };

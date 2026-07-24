@@ -36,6 +36,12 @@ const normalizeRecipients = (value) => {
     .filter(Boolean);
 };
 
+const normalizeMailSettings = (value = {}) => ({
+  signature: String(value.signature || '').slice(0, 250000),
+  profilePhoto: String(value.profilePhoto || '').slice(0, 250000),
+  mailFont: String(value.mailFont || 'Arial').slice(0, 100)
+});
+
 const improveMailText = (value, context = {}) => {
   const replacements = [
     [/\bje voulais\b/gi, 'je souhaiterais'],
@@ -486,6 +492,35 @@ router.post('/disconnect', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('Erreur déconnexion mail:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/settings', requireAuth, async (req, res) => {
+  try {
+    const settings = await prisma.retromail_settings.findUnique({
+      where: { userId: req.user.id }
+    });
+
+    res.json({ settings: normalizeMailSettings(settings) });
+  } catch (error) {
+    console.error('Erreur chargement paramètres RétroMail:', error);
+    res.status(500).json({ error: 'Impossible de charger les paramètres RétroMail.' });
+  }
+});
+
+router.put('/settings', requireAuth, async (req, res) => {
+  try {
+    const settings = normalizeMailSettings(req.body);
+    const savedSettings = await prisma.retromail_settings.upsert({
+      where: { userId: req.user.id },
+      create: { userId: req.user.id, ...settings },
+      update: settings
+    });
+
+    res.json({ settings: normalizeMailSettings(savedSettings) });
+  } catch (error) {
+    console.error('Erreur sauvegarde paramètres RétroMail:', error);
+    res.status(500).json({ error: 'Impossible de sauvegarder les paramètres RétroMail.' });
   }
 });
 
