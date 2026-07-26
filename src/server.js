@@ -4045,8 +4045,29 @@ app.get(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/
   try {
     const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
     const route = await prisma.ineoRoute.findUnique({ where: { courseReference } });
-    if (!route) return res.status(404).json({ error: 'Reference de course introuvable' });
-    res.json({ route });
+    if (route) return res.json({ route, source: 'route' });
+
+    const mission = await prisma.ineoMission.findFirst({
+      where: { serviceReference: { equals: courseReference, mode: 'insensitive' } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!mission) return res.status(404).json({ error: 'Reference de course introuvable' });
+
+    const formatCourseTime = (value) => value ? new Date(value).toLocaleTimeString('fr-FR', {
+      timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', hour12: false,
+    }) : null;
+    res.json({
+      source: 'mission',
+      route: {
+        courseReference,
+        routeName: mission.serviceName,
+        vehicleParc: mission.vehicleParc,
+        scheduledDeparture: formatCourseTime(mission.scheduledDeparture),
+        scheduledArrival: formatCourseTime(mission.scheduledArrival),
+        stops: [],
+        notes: mission.notes || null,
+      },
+    });
   } catch (error) {
     console.error('GET /api/ineo/routes/reference/:courseReference:', error.message);
     res.status(500).json({ error: 'Impossible de rechercher la reference de course' });
