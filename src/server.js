@@ -4009,11 +4009,17 @@ app.put(['/ineo/vehicle-trackers/:parc', '/api/ineo/vehicle-trackers/:parc'], re
     if (!/^\d{14,17}$/.test(imei)) return res.status(400).json({ error: 'IMEI invalide: 14 a 17 chiffres attendus' });
     const vehicle = await prisma.vehicle.findUnique({ where: { parc: vehicleParc }, select: { parc: true } });
     if (!vehicle) return res.status(404).json({ error: 'Vehicule introuvable' });
-    const tracker = await prisma.ineoVehicleTracker.upsert({
-      where: { vehicleParc },
-      create: { vehicleParc, imei, deviceLabel },
-      update: { imei, deviceLabel },
-      include: { vehicle: true },
+    const tracker = await prisma.$transaction(async (transaction) => {
+      const existingTracker = await transaction.ineoVehicleTracker.findUnique({ where: { imei } });
+      if (existingTracker && existingTracker.vehicleParc !== vehicleParc) {
+        await transaction.ineoVehicleTracker.delete({ where: { id: existingTracker.id } });
+      }
+      return transaction.ineoVehicleTracker.upsert({
+        where: { vehicleParc },
+        create: { vehicleParc, imei, deviceLabel },
+        update: { imei, deviceLabel },
+        include: { vehicle: true },
+      });
     });
     await logIneoOperationsActivity(req, 'INEO_TRACKER_SAVED', true, { vehicleParc, imei });
     res.json({ tracker });
@@ -4241,6 +4247,7 @@ app.post(['/ineo/missions/:id/position', '/api/ineo/missions/:id/position'], req
     const [, mission] = await prisma.$transaction([
       prisma.ineoPosition.create({ data: { missionId: result.mission.id, latitude, longitude, speedKmh, accuracy, recordedAt } }),
       prisma.ineoMission.update({ where: { id: result.mission.id }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
+      prisma.ineoVehicleTracker.updateMany({ where: { vehicleParc: result.mission.vehicleParc }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
     ]);
     res.json({ mission });
   } catch (error) {
