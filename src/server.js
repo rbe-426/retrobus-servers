@@ -4041,6 +4041,41 @@ app.get(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperations
   }
 });
 
+app.get(['/ineo/routes/search', '/api/ineo/routes/search'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const query = String(req.query.q || '').trim();
+    if (query.length < 2) return res.json({ matches: [] });
+    const [routes, missions] = await Promise.all([
+      prisma.ineoRoute.findMany({ where: { courseReference: { contains: query, mode: 'insensitive' } }, orderBy: { updatedAt: 'desc' }, take: 8 }),
+      prisma.ineoMission.findMany({ where: { serviceReference: { contains: query, mode: 'insensitive' } }, orderBy: { createdAt: 'desc' }, take: 8 }),
+    ]);
+    const formatCourseTime = (value) => value ? new Date(value).toLocaleTimeString('fr-FR', {
+      timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', hour12: false,
+    }) : null;
+    const routeMatches = routes.map((route) => ({ source: 'route', route }));
+    const routeReferences = new Set(routes.map((route) => route.courseReference.toUpperCase()));
+    const missionMatches = missions
+      .filter((mission) => !routeReferences.has(String(mission.serviceReference || '').toUpperCase()))
+      .map((mission) => ({
+        source: 'mission',
+        assignment: { driverName: mission.driverName, driverIdentifier: mission.driverIdentifier, vehicleParc: mission.vehicleParc },
+        route: {
+          courseReference: mission.serviceReference,
+          routeName: mission.serviceName,
+          vehicleParc: mission.vehicleParc,
+          scheduledDeparture: formatCourseTime(mission.scheduledDeparture),
+          scheduledArrival: formatCourseTime(mission.scheduledArrival),
+          stops: [],
+          notes: mission.notes || null,
+        },
+      }));
+    res.json({ matches: [...routeMatches, ...missionMatches] });
+  } catch (error) {
+    console.error('GET /api/ineo/routes/search:', error.message);
+    res.status(500).json({ error: 'Impossible de rechercher les references de course' });
+  }
+});
+
 app.get(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/:courseReference'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
