@@ -4052,7 +4052,21 @@ app.get(['/ineo/routes/search', '/api/ineo/routes/search'], requireAuth, require
     const formatCourseTime = (value) => value ? new Date(value).toLocaleTimeString('fr-FR', {
       timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', hour12: false,
     }) : null;
-    const routeMatches = routes.map((route) => ({ source: 'route', route }));
+    const missionsByReference = new Map(missions.map((mission) => [String(mission.serviceReference || '').toUpperCase(), mission]));
+    const routeMatches = routes.map((route) => {
+      const mission = missionsByReference.get(route.courseReference.toUpperCase());
+      return {
+        source: mission ? 'mission' : 'route',
+        assignment: mission ? { driverName: mission.driverName, driverIdentifier: mission.driverIdentifier, vehicleParc: mission.vehicleParc } : null,
+        route: {
+          ...route,
+          vehicleParc: route.vehicleParc || mission?.vehicleParc || null,
+          scheduledDeparture: route.scheduledDeparture || formatCourseTime(mission?.scheduledDeparture),
+          scheduledArrival: route.scheduledArrival || formatCourseTime(mission?.scheduledArrival),
+          notes: route.notes || mission?.notes || null,
+        },
+      };
+    });
     const routeReferences = new Set(routes.map((route) => route.courseReference.toUpperCase()));
     const missionMatches = missions
       .filter((mission) => !routeReferences.has(String(mission.serviceReference || '').toUpperCase()))
