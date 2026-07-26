@@ -4229,11 +4229,19 @@ app.get(['/ineo/driver/current', '/api/ineo/driver/current'], requireAuth, async
   try {
     const context = await getIneoDriverContext(req);
     if (!context.identifiers.length) return res.json({ mission: null });
-    const mission = await prisma.ineoMission.findFirst({
-      where: { driverIdentifier: { in: context.identifiers }, status: { in: ['PLANNED', 'ACTIVE'] } },
-      include: { vehicle: true }, orderBy: [{ status: 'desc' }, { scheduledDeparture: 'asc' }],
+    const activeMission = await prisma.ineoMission.findFirst({
+      where: { driverIdentifier: { in: context.identifiers }, status: 'ACTIVE' }, include: { vehicle: true }, orderBy: { actualDeparture: 'desc' },
     });
-    res.json({ mission, driverName: context.name });
+    const plannedMissions = activeMission ? [] : await prisma.ineoMission.findMany({
+      where: { driverIdentifier: { in: context.identifiers }, status: 'PLANNED' }, include: { vehicle: true }, orderBy: { scheduledDeparture: 'asc' },
+    });
+    const now = Date.now();
+    const mission = activeMission || plannedMissions.sort((left, right) => Math.abs(new Date(left.scheduledDeparture || 0).getTime() - now) - Math.abs(new Date(right.scheduledDeparture || 0).getTime() - now))[0] || null;
+    const route = mission ? await prisma.ineoRoute.findFirst({
+      where: { OR: [{ serviceReference: { equals: mission.serviceReference || '', mode: 'insensitive' } }, { courseReference: { equals: mission.serviceReference || '', mode: 'insensitive' } }] },
+      orderBy: { updatedAt: 'desc' },
+    }) : null;
+    res.json({ mission, route, driverName: context.name });
   } catch (error) {
     console.error('❌ GET /api/ineo/driver/current:', error.message);
     res.status(500).json({ error: 'Impossible de charger votre mission Inéo' });
@@ -4245,8 +4253,16 @@ app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAu
     const result = await findIneoDriverMission(req, req.params.id);
     if (result.error) return res.status(result.status).json({ error: result.error });
     if (result.mission.status !== 'PLANNED') return res.status(409).json({ error: 'Cette mission ne peut pas être démarrée' });
+    const serviceReference = String(req.body?.serviceReference || '').trim().toUpperCase();
+    const courseReference = String(req.body?.courseReference || '').trim().toUpperCase();
+    if (!serviceReference || !courseReference) return res.status(400).json({ error: 'Code service et code course requis pour prendre le service' });
+    if (serviceReference !== String(result.mission.serviceReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le code service saisi ne correspond pas à votre affectation' });
+    const route = await prisma.ineoRoute.findFirst({
+      where: { courseReference, OR: [{ serviceReference: { equals: serviceReference, mode: 'insensitive' } }, { courseReference: { equals: serviceReference, mode: 'insensitive' } }] },
+    });
+    if (!route) return res.status(403).json({ error: 'Le code course ne correspond pas au code service affecté' });
     const mission = await prisma.ineoMission.update({ where: { id: result.mission.id }, data: { status: 'ACTIVE', actualDeparture: new Date() }, include: { vehicle: true } });
-    res.json({ mission });
+    res.json({ mission, route });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions/:id/start:', error.message);
     res.status(500).json({ error: 'Impossible de démarrer la mission' });
