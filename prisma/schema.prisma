@@ -416,6 +416,7 @@ model IneoVehicleTracker {
 model IneoRoute {
   id                 String   @id @default(cuid())
   courseReference    String   @unique
+  serviceReference   String?
   lineName           String?
   routeName          String
   vehicleParc        String?
@@ -427,6 +428,7 @@ model IneoRoute {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
+  @@index([serviceReference])
   @@index([lineName])
 }
 

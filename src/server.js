@@ -4092,7 +4092,7 @@ app.get(['/ineo/routes/search', '/api/ineo/routes/search'], requireAuth, require
     const query = String(req.query.q || '').trim();
     if (query.length < 2) return res.json({ matches: [] });
     const [routes, missions] = await Promise.all([
-      prisma.ineoRoute.findMany({ where: { courseReference: { contains: query, mode: 'insensitive' } }, orderBy: { updatedAt: 'desc' }, take: 8 }),
+      prisma.ineoRoute.findMany({ where: { OR: [{ courseReference: { contains: query, mode: 'insensitive' } }, { serviceReference: { contains: query, mode: 'insensitive' } }] }, orderBy: { updatedAt: 'desc' }, take: 8 }),
       prisma.ineoMission.findMany({ where: { serviceReference: { contains: query, mode: 'insensitive' } }, orderBy: { createdAt: 'desc' }, take: 8 }),
     ]);
     const formatCourseTime = (value) => value ? new Date(value).toLocaleTimeString('fr-FR', {
@@ -4100,7 +4100,7 @@ app.get(['/ineo/routes/search', '/api/ineo/routes/search'], requireAuth, require
     }) : null;
     const missionsByReference = new Map(missions.map((mission) => [String(mission.serviceReference || '').toUpperCase(), mission]));
     const routeMatches = routes.map((route) => {
-      const mission = missionsByReference.get(route.courseReference.toUpperCase());
+      const mission = missionsByReference.get(String(route.serviceReference || '').toUpperCase());
       return {
         source: mission ? 'mission' : 'route',
         assignment: mission ? { driverName: mission.driverName, driverIdentifier: mission.driverIdentifier, vehicleParc: mission.vehicleParc } : null,
@@ -4113,14 +4113,15 @@ app.get(['/ineo/routes/search', '/api/ineo/routes/search'], requireAuth, require
         },
       };
     });
-    const routeReferences = new Set(routes.map((route) => route.courseReference.toUpperCase()));
+    const routeServiceReferences = new Set(routes.map((route) => String(route.serviceReference || '').toUpperCase()).filter(Boolean));
     const missionMatches = missions
-      .filter((mission) => !routeReferences.has(String(mission.serviceReference || '').toUpperCase()))
+      .filter((mission) => !routeServiceReferences.has(String(mission.serviceReference || '').toUpperCase()))
       .map((mission) => ({
         source: 'mission',
         assignment: { driverName: mission.driverName, driverIdentifier: mission.driverIdentifier, vehicleParc: mission.vehicleParc },
         route: {
-          courseReference: mission.serviceReference,
+          courseReference: '',
+          serviceReference: mission.serviceReference,
           routeName: mission.serviceName,
           vehicleParc: mission.vehicleParc,
           scheduledDeparture: formatCourseTime(mission.scheduledDeparture),
@@ -4139,7 +4140,7 @@ app.get(['/ineo/routes/search', '/api/ineo/routes/search'], requireAuth, require
 app.get(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/:courseReference'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
-    const route = await prisma.ineoRoute.findUnique({ where: { courseReference } });
+    const route = await prisma.ineoRoute.findUnique({ where: { courseReference } }) || await prisma.ineoRoute.findFirst({ where: { serviceReference: { equals: courseReference, mode: 'insensitive' } }, orderBy: { updatedAt: 'desc' } });
     if (route) return res.json({ route, source: 'route' });
 
     const mission = await prisma.ineoMission.findFirst({
@@ -4154,7 +4155,8 @@ app.get(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/
     res.json({
       source: 'mission',
       route: {
-        courseReference,
+        courseReference: '',
+        serviceReference: mission.serviceReference,
         routeName: mission.serviceName,
         vehicleParc: mission.vehicleParc,
         scheduledDeparture: formatCourseTime(mission.scheduledDeparture),
@@ -4181,6 +4183,7 @@ const normalizeIneoRouteData = (body = {}) => {
   })).filter((stop) => stop.label && Number.isFinite(stop.lat) && Number.isFinite(stop.lng));
   return {
     routeName,
+    serviceReference: String(body.serviceReference || '').trim().toUpperCase() || null,
     lineName: String(body.lineName || '').trim() || null,
     vehicleParc: String(body.vehicleParc || '').trim() || null,
     vehicleConstraints: body.vehicleConstraints && typeof body.vehicleConstraints === 'object' ? body.vehicleConstraints : null,
@@ -4195,7 +4198,7 @@ app.post(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperation
   try {
     const courseReference = String(req.body?.courseReference || '').trim().toUpperCase();
     const routeData = normalizeIneoRouteData(req.body);
-    if (!courseReference || !routeData.routeName) return res.status(400).json({ error: 'Reference de course et nom d itineraire requis' });
+    if (!courseReference || !routeData.serviceReference || !routeData.routeName) return res.status(400).json({ error: 'Codes service et course, ainsi que le nom d itineraire, sont requis' });
     const route = await prisma.ineoRoute.create({
       data: { courseReference, ...routeData },
     });
@@ -4212,7 +4215,7 @@ app.put(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/
   try {
     const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
     const routeData = normalizeIneoRouteData(req.body);
-    if (!courseReference || !routeData.routeName) return res.status(400).json({ error: 'Reference de course et nom d itineraire requis' });
+    if (!courseReference || !routeData.serviceReference || !routeData.routeName) return res.status(400).json({ error: 'Codes service et course, ainsi que le nom d itineraire, sont requis' });
     const route = await prisma.ineoRoute.upsert({ where: { courseReference }, create: { courseReference, ...routeData }, update: routeData });
     await logIneoOperationsActivity(req, 'INEO_ROUTE_SAVED', true, { routeId: route.id, courseReference, stopCount: routeData.stops?.length || 0 });
     res.json({ route });
