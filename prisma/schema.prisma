@@ -1151,6 +1151,14 @@ model RetroStudioRequest {
   productionCompany  String?
   audiovisualProject String?
   shootDate          DateTime?
+  workTitle          String?
+  approximateShootDate String?
+  approximateShootLocation String?
+  circuit             String?
+  synopsisFileName    String?
+  synopsisFileUrl     String?
+  circuitFileName     String?
+  circuitFileUrl      String?
   leadTimeDays       Int?
   status             String   @default("RECORDED")
   validationRequired Boolean  @default(false)
