@@ -4014,12 +4014,30 @@ app.put(['/ineo/vehicle-trackers/:parc', '/api/ineo/vehicle-trackers/:parc'], re
       if (existingTracker && existingTracker.vehicleParc !== vehicleParc) {
         await transaction.ineoVehicleTracker.delete({ where: { id: existingTracker.id } });
       }
-      return transaction.ineoVehicleTracker.upsert({
+      const savedTracker = await transaction.ineoVehicleTracker.upsert({
         where: { vehicleParc },
         create: { vehicleParc, imei, deviceLabel },
         update: { imei, deviceLabel },
         include: { vehicle: true },
       });
+      const latestMissionPosition = await transaction.ineoMission.findFirst({
+        where: { vehicleParc, lastLatitude: { not: null }, lastLongitude: { not: null } },
+        orderBy: { lastPositionAt: 'desc' },
+      });
+      if (!savedTracker.lastPositionAt && latestMissionPosition?.lastPositionAt) {
+        return transaction.ineoVehicleTracker.update({
+          where: { id: savedTracker.id },
+          data: {
+            lastLatitude: latestMissionPosition.lastLatitude,
+            lastLongitude: latestMissionPosition.lastLongitude,
+            lastSpeedKmh: latestMissionPosition.lastSpeedKmh,
+            lastAccuracy: latestMissionPosition.lastAccuracy,
+            lastPositionAt: latestMissionPosition.lastPositionAt,
+          },
+          include: { vehicle: true },
+        });
+      }
+      return savedTracker;
     });
     await logIneoOperationsActivity(req, 'INEO_TRACKER_SAVED', true, { vehicleParc, imei });
     res.json({ tracker });
