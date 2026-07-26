@@ -265,6 +265,37 @@ export async function getUserNotifications(req, res, next) {
     const userEmail = String(req.user?.email || '').trim().toLowerCase();
     const userId = String(req.user?.id || '').trim();
 
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    const todayShoots = await prisma.retroStudioRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        shootDate: { gte: startOfToday, lt: startOfTomorrow }
+      },
+      select: { id: true, audiovisualProject: true, workTitle: true, productionCompany: true }
+    });
+
+    for (const shoot of todayShoots) {
+      const createdBy = `RETROSTUDIO_DDAY:${shoot.id}`;
+      const existingNotification = await prisma.notification.findFirst({ where: { createdBy } });
+      if (!existingNotification) {
+        const projectName = shoot.workTitle || shoot.audiovisualProject || shoot.productionCompany || 'un tournage RetroStudio';
+        await prisma.notification.create({
+          data: {
+            title: 'RetroStudio : le D Day est arrivé !',
+            message: `Bon tournage à l'équipe pour ${projectName}.`,
+            type: 'success',
+            priority: 'high',
+            targetedTo: 'all',
+            expiresAt: startOfTomorrow,
+            createdBy
+          }
+        });
+      }
+    }
+
     // Construire les conditions OR pour filteringles notifications visibles
     const orConditions = [
       { targetedTo: 'all' }, // Toujours visible par tous
