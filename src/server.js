@@ -4256,6 +4256,8 @@ app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAu
     const serviceReference = String(req.body?.serviceReference || '').trim().toUpperCase();
     const courseReference = String(req.body?.courseReference || '').trim().toUpperCase();
     if (!serviceReference || !courseReference) return res.status(400).json({ error: 'Code service et code course requis pour prendre le service' });
+    if (!/^RBE-\d{3}-\d{3}$/.test(serviceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
+    if (!/^\d{3}-\d{5}-\d{3,4}$/.test(courseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
     if (serviceReference !== String(result.mission.serviceReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le code service saisi ne correspond pas à votre affectation' });
     const route = await prisma.ineoRoute.findFirst({
       where: { courseReference, OR: [{ serviceReference: { equals: serviceReference, mode: 'insensitive' } }, { courseReference: { equals: serviceReference, mode: 'insensitive' } }] },
