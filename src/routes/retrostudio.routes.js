@@ -153,7 +153,9 @@ router.put('/requests/:id', requireAuth, async (req, res) => {
       data: preparedRequest.data
     });
 
-    await createValidationNotification(prisma, request, req.body?.shootDate, req.user.email || req.user.id);
+    if (existingRequest.status !== 'PENDING_VALIDATION') {
+      await createValidationNotification(prisma, request, req.body?.shootDate, req.user.email || req.user.id);
+    }
     return res.json(request);
   } catch (error) {
     console.error('RetroStudio draft update failed:', error.message);
