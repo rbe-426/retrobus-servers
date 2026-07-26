@@ -118,6 +118,28 @@ const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 4000;
 const pathRoot = process.cwd();
+const NDF_MANAGER_EMAIL = 'belaidiw91@gmail.com';
+const NDF_TRANSFER_PROOF_DIR = path.join(pathRoot, 'private_uploads', 'ndf-transfer-proofs');
+
+fs.mkdirSync(NDF_TRANSFER_PROOF_DIR, { recursive: true });
+
+const isNdfManager = (req) => String(req.user?.email || '').trim().toLowerCase() === NDF_MANAGER_EMAIL;
+const requireNdfManager = (req, res, next) => {
+  if (!isNdfManager(req)) return res.status(403).json({ error: 'Acces reserve a la gestion des NDF.' });
+  next();
+};
+
+const transferProofUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => callback(null, NDF_TRANSFER_PROOF_DIR),
+    filename: (_req, file, callback) => callback(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`)
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => {
+    const allowedTypes = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+    callback(allowedTypes.has(file.mimetype) ? null : new Error('La preuve doit etre un PDF, JPG ou PNG.'), allowedTypes.has(file.mimetype));
+  }
+});
 
 // ============================================================
 // � CONFIGURATION EMAIL - NODEMAILER
@@ -462,7 +484,11 @@ const ensureExpenseReportColumns = async () => {
   await prisma.$executeRawUnsafe(`
     ALTER TABLE "finance_expense_reports"
     ADD COLUMN IF NOT EXISTS "type" TEXT NOT NULL DEFAULT 'Note de frais avec justificatif',
-    ADD COLUMN IF NOT EXISTS "notes" TEXT;
+    ADD COLUMN IF NOT EXISTS "notes" TEXT,
+    ADD COLUMN IF NOT EXISTS "transferProofFileName" TEXT,
+    ADD COLUMN IF NOT EXISTS "transferProofStoredName" TEXT,
+    ADD COLUMN IF NOT EXISTS "transferProofUploadedAt" TIMESTAMP(3),
+    ADD COLUMN IF NOT EXISTS "transferProofUploadedBy" TEXT;
   `);
   expenseReportColumnsEnsured = true;
 };
@@ -8697,7 +8723,10 @@ app.get(['/finance/expense-reports', '/api/finance/expense-reports'], requireAut
       state.expenseReports = reports;
     }
     
-    res.json({ reports });
+    const visibleReports = isNdfManager(req)
+      ? reports
+      : reports.map(({ transferProofFileName, transferProofStoredName, transferProofUploadedAt, transferProofUploadedBy, ...report }) => report);
+    res.json({ reports: visibleReports });
   } catch (e) {
     console.warn('⚠️ Failed to load expense reports from Prisma:', e.message);
     const { eventId } = req.query;
@@ -8830,9 +8859,69 @@ app.post(['/finance/expense-reports', '/api/finance/expense-reports'], requireAu
     res.status(201).json({ report });
   }
 });
+app.post(['/finance/expense-reports/:id/transfer-proof', '/api/finance/expense-reports/:id/transfer-proof'], requireAuth, requireNdfManager, uploadLimiter, transferProofUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Une preuve de virement est obligatoire.' });
+
+  try {
+    await ensureExpenseReportColumns();
+    const report = await prisma.finance_expense_reports.findUnique({ where: { id: req.params.id } });
+    if (!report) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(404).json({ error: 'Note de frais introuvable.' });
+    }
+    if (String(report.status).toLowerCase() !== 'approved') {
+      fs.unlink(req.file.path, () => {});
+      return res.status(409).json({ error: 'La preuve ne peut etre deposee que pour une NDF acceptee.' });
+    }
+
+    if (report.transferProofStoredName) {
+      fs.unlink(path.join(NDF_TRANSFER_PROOF_DIR, report.transferProofStoredName), () => {});
+    }
+
+    const updated = await prisma.finance_expense_reports.update({
+      where: { id: report.id },
+      data: {
+        status: 'paid',
+        transferProofFileName: req.file.originalname,
+        transferProofStoredName: req.file.filename,
+        transferProofUploadedAt: new Date(),
+        transferProofUploadedBy: req.user.email,
+        updatedAt: new Date()
+      }
+    });
+    state.expenseReports = state.expenseReports.map((item) => item.id === updated.id ? updated : item);
+    debouncedSave();
+    return res.json({ report: updated });
+  } catch (error) {
+    fs.unlink(req.file.path, () => {});
+    console.error('Transfer proof upload failed:', error.message);
+    return res.status(500).json({ error: 'Impossible d enregistrer la preuve de virement.' });
+  }
+});
+app.get(['/finance/expense-reports/:id/transfer-proof', '/api/finance/expense-reports/:id/transfer-proof'], requireAuth, requireNdfManager, async (req, res) => {
+  try {
+    await ensureExpenseReportColumns();
+    const report = await prisma.finance_expense_reports.findUnique({ where: { id: req.params.id } });
+    if (!report?.transferProofStoredName || !report.transferProofFileName) {
+      return res.status(404).json({ error: 'Aucune preuve de virement disponible.' });
+    }
+    const filePath = path.join(NDF_TRANSFER_PROOF_DIR, report.transferProofStoredName);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Fichier de preuve introuvable.' });
+    return res.download(filePath, report.transferProofFileName);
+  } catch (error) {
+    console.error('Transfer proof download failed:', error.message);
+    return res.status(500).json({ error: 'Impossible de consulter la preuve de virement.' });
+  }
+});
 app.put(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'], requireAuth, async (req, res) => {
   try {
     await ensureExpenseReportColumns();
+    if (req.body.status !== undefined && !isNdfManager(req)) {
+      return res.status(403).json({ error: 'Acces reserve a la gestion des NDF.' });
+    }
+    if (String(req.body.status || '').toLowerCase() === 'paid') {
+      return res.status(400).json({ error: 'Deposez la preuve de virement avant de valider le paiement.' });
+    }
     // Filtrer les champs autorisés pour la mise à jour
     const allowedFields = ['status', 'type', 'description', 'amount', 'date', 'notes', 'statusNotes', 'approvedBy', 'attachmentUrl', 'attachmentFileName', 'attachmentType'];
     const updateData = {};

@@ -456,6 +456,10 @@ model finance_expense_reports {
   fileName             String?
   fileUrl              String?
   eventId              String?
+  transferProofFileName String?
+  transferProofStoredName String?
+  transferProofUploadedAt DateTime?
+  transferProofUploadedBy String?
 
   @@index([createdAt])
   @@index([status])
