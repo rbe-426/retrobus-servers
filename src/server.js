@@ -4066,6 +4066,8 @@ const normalizeIneoRouteData = (body = {}) => {
   return {
     routeName,
     lineName: String(body.lineName || '').trim() || null,
+    vehicleParc: String(body.vehicleParc || '').trim() || null,
+    vehicleConstraints: body.vehicleConstraints && typeof body.vehicleConstraints === 'object' ? body.vehicleConstraints : null,
     scheduledDeparture: String(body.scheduledDeparture || '').trim() || null,
     scheduledArrival: String(body.scheduledArrival || '').trim() || null,
     stops: stops.length ? stops : null,

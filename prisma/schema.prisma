@@ -418,6 +418,8 @@ model IneoRoute {
   courseReference    String   @unique
   lineName           String?
   routeName          String
+  vehicleParc        String?
+  vehicleConstraints Json?
   scheduledDeparture String?
   scheduledArrival   String?
   stops              Json?
