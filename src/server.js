@@ -3828,6 +3828,137 @@ app.post(['/mobile/vehicles/:parc/reports','/api/mobile/vehicles/:parc/reports']
   }
 });
 
+// ===== INEO RETROBUS - Exploitation conducteur et supervision =====
+const getIneoDriverContext = async (req) => {
+  const email = String(req.user?.email || '').trim().toLowerCase();
+  const member = email ? await prisma.members.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' } },
+    select: { matricule: true, email: true, firstName: true, lastName: true },
+  }) : null;
+  const identifiers = [member?.matricule, member?.email, req.user?.email, req.user?.id]
+    .filter(Boolean)
+    .map((value) => String(value).trim().toLowerCase());
+  return {
+    identifiers: [...new Set(identifiers)],
+    name: `${member?.firstName || ''} ${member?.lastName || ''}`.trim() || member?.email || req.user?.email || 'Conducteur',
+  };
+};
+
+const findIneoDriverMission = async (req, missionId) => {
+  const context = await getIneoDriverContext(req);
+  const mission = await prisma.ineoMission.findUnique({ where: { id: missionId }, include: { vehicle: true } });
+  if (!mission) return { error: 'Mission introuvable', status: 404 };
+  if (!context.identifiers.includes(String(mission.driverIdentifier).trim().toLowerCase())) {
+    return { error: 'Cette mission n’est pas affectée à votre profil conducteur', status: 403 };
+  }
+  return { mission, context };
+};
+
+app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, async (req, res) => {
+  try {
+    const status = String(req.query.status || '').toUpperCase();
+    const missions = await prisma.ineoMission.findMany({
+      where: status ? { status } : undefined,
+      include: { vehicle: true },
+      orderBy: [{ status: 'asc' }, { scheduledDeparture: 'asc' }],
+    });
+    res.json({ missions });
+  } catch (error) {
+    console.error('❌ GET /api/ineo/missions:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les missions Inéo' });
+  }
+});
+
+app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, async (req, res) => {
+  try {
+    const { serviceName, serviceReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes } = req.body || {};
+    if (!serviceName || !vehicleParc || !driverIdentifier) {
+      return res.status(400).json({ error: 'Service, véhicule et conducteur sont requis' });
+    }
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: String(vehicleParc) } });
+    if (!vehicle) return res.status(404).json({ error: 'Véhicule introuvable' });
+    const mission = await prisma.ineoMission.create({
+      data: {
+        serviceName: String(serviceName).trim(), serviceReference: serviceReference?.trim() || null,
+        vehicleParc: vehicle.parc, driverIdentifier: String(driverIdentifier).trim().toLowerCase(),
+        driverName: driverName?.trim() || null,
+        scheduledDeparture: scheduledDeparture ? new Date(scheduledDeparture) : null,
+        scheduledArrival: scheduledArrival ? new Date(scheduledArrival) : null,
+        notes: notes?.trim() || null,
+      },
+      include: { vehicle: true },
+    });
+    res.status(201).json({ mission });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/missions:', error.message);
+    res.status(500).json({ error: 'Impossible de créer la mission Inéo' });
+  }
+});
+
+app.get(['/ineo/driver/current', '/api/ineo/driver/current'], requireAuth, async (req, res) => {
+  try {
+    const context = await getIneoDriverContext(req);
+    if (!context.identifiers.length) return res.json({ mission: null });
+    const mission = await prisma.ineoMission.findFirst({
+      where: { driverIdentifier: { in: context.identifiers }, status: { in: ['PLANNED', 'ACTIVE'] } },
+      include: { vehicle: true }, orderBy: [{ status: 'desc' }, { scheduledDeparture: 'asc' }],
+    });
+    res.json({ mission, driverName: context.name });
+  } catch (error) {
+    console.error('❌ GET /api/ineo/driver/current:', error.message);
+    res.status(500).json({ error: 'Impossible de charger votre mission Inéo' });
+  }
+});
+
+app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAuth, async (req, res) => {
+  try {
+    const result = await findIneoDriverMission(req, req.params.id);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    if (result.mission.status !== 'PLANNED') return res.status(409).json({ error: 'Cette mission ne peut pas être démarrée' });
+    const mission = await prisma.ineoMission.update({ where: { id: result.mission.id }, data: { status: 'ACTIVE', actualDeparture: new Date() }, include: { vehicle: true } });
+    res.json({ mission });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/missions/:id/start:', error.message);
+    res.status(500).json({ error: 'Impossible de démarrer la mission' });
+  }
+});
+
+app.post(['/ineo/missions/:id/position', '/api/ineo/missions/:id/position'], requireAuth, async (req, res) => {
+  try {
+    const result = await findIneoDriverMission(req, req.params.id);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    if (result.mission.status !== 'ACTIVE') return res.status(409).json({ error: 'La mission doit être active pour transmettre une position' });
+    const latitude = Number(req.body?.latitude); const longitude = Number(req.body?.longitude);
+    const speedKmh = Number.isFinite(Number(req.body?.speedKmh)) ? Number(req.body.speedKmh) : null;
+    const accuracy = Number.isFinite(Number(req.body?.accuracy)) ? Number(req.body.accuracy) : null;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return res.status(400).json({ error: 'Coordonnées GPS invalides' });
+    }
+    const recordedAt = req.body?.recordedAt ? new Date(req.body.recordedAt) : new Date();
+    const [, mission] = await prisma.$transaction([
+      prisma.ineoPosition.create({ data: { missionId: result.mission.id, latitude, longitude, speedKmh, accuracy, recordedAt } }),
+      prisma.ineoMission.update({ where: { id: result.mission.id }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
+    ]);
+    res.json({ mission });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/missions/:id/position:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer la position' });
+  }
+});
+
+app.post(['/ineo/missions/:id/complete', '/api/ineo/missions/:id/complete'], requireAuth, async (req, res) => {
+  try {
+    const result = await findIneoDriverMission(req, req.params.id);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    if (result.mission.status !== 'ACTIVE') return res.status(409).json({ error: 'Cette mission n’est pas active' });
+    const mission = await prisma.ineoMission.update({ where: { id: result.mission.id }, data: { status: 'COMPLETED', actualArrival: new Date() }, include: { vehicle: true } });
+    res.json({ mission });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/missions/:id/complete:', error.message);
+    res.status(500).json({ error: 'Impossible de terminer la mission' });
+  }
+});
+
 // Maintenance - PRISMA avec fallback
 app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, async (req, res) => {
   try {

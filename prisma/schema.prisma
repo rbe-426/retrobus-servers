@@ -333,6 +333,57 @@ model Vehicle {
   vehicle_maintenance      vehicle_maintenance[]
   vehicle_service_schedule vehicle_service_schedule[]
   lifecycleEvents          VehicleLifecycleEvent[]
+  ineoMissions             IneoMission[]
+}
+
+model IneoMission {
+  id                 String             @id @default(cuid())
+  serviceName        String
+  serviceReference   String?
+  vehicleParc        String
+  driverIdentifier   String
+  driverName         String?
+  status             IneoMissionStatus @default(PLANNED)
+  scheduledDeparture DateTime?
+  scheduledArrival   DateTime?
+  actualDeparture    DateTime?
+  actualArrival      DateTime?
+  lastLatitude       Float?
+  lastLongitude      Float?
+  lastSpeedKmh       Float?
+  lastAccuracy       Float?
+  lastPositionAt     DateTime?
+  notes              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  vehicle            Vehicle            @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
+  positions          IneoPosition[]
+
+  @@index([vehicleParc])
+  @@index([driverIdentifier])
+  @@index([status])
+  @@index([scheduledDeparture])
+}
+
+model IneoPosition {
+  id         String      @id @default(cuid())
+  missionId  String
+  latitude   Float
+  longitude  Float
+  speedKmh   Float?
+  accuracy   Float?
+  recordedAt DateTime    @default(now())
+  mission    IneoMission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([missionId])
+  @@index([recordedAt])
+}
+
+enum IneoMissionStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
 }
 
 model VehicleLifecycleEvent {
