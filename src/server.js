@@ -3930,6 +3930,28 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOpera
   }
 });
 
+app.patch(['/ineo/missions/:id/driver', '/api/ineo/missions/:id/driver'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const missionId = String(req.params.id || '').trim();
+    const driverIdentifier = String(req.body?.driverIdentifier || '').trim().toLowerCase();
+    const driverName = String(req.body?.driverName || '').trim() || null;
+    if (!driverIdentifier) return res.status(400).json({ error: 'Conducteur requis' });
+    const mission = await prisma.ineoMission.findUnique({ where: { id: missionId } });
+    if (!mission) return res.status(404).json({ error: 'Mission introuvable' });
+    if (mission.status !== 'PLANNED') return res.status(409).json({ error: 'Le conducteur ne peut etre modifie que pour une mission planifiee' });
+    const updatedMission = await prisma.ineoMission.update({
+      where: { id: missionId },
+      data: { driverIdentifier, driverName },
+      include: { vehicle: true },
+    });
+    await logIneoOperationsActivity(req, 'INEO_MISSION_DRIVER_UPDATED', true, { missionId, driverIdentifier });
+    res.json({ mission: updatedMission });
+  } catch (error) {
+    console.error('PATCH /api/ineo/missions/:id/driver:', error.message);
+    res.status(500).json({ error: 'Impossible de modifier le conducteur de la mission' });
+  }
+});
+
 app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const profiles = await prisma.ineoVehicleProfile.findMany({ orderBy: { vehicleParc: 'asc' } });
