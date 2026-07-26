@@ -3854,7 +3854,41 @@ const findIneoDriverMission = async (req, missionId) => {
   return { mission, context };
 };
 
-app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, async (req, res) => {
+const isIneoOperationsUser = (req) => {
+  const identities = [req.user?.email, req.user?.id]
+    .filter(Boolean)
+    .map((value) => String(value).trim().toLowerCase());
+  return identities.includes('w.belaidi') || identities.includes('belaidiw91@gmail.com');
+};
+
+const logIneoOperationsActivity = async (req, action, success, details = {}) => {
+  try {
+    await prisma.access_logs.create({
+      data: {
+        id: randomUUID(),
+        action,
+        success,
+        ipAddress: String(req.ip || req.socket?.remoteAddress || 'unknown'),
+        userAgent: req.get('user-agent') || null,
+        performedBy: req.user?.email || 'unknown',
+        details: JSON.stringify(details),
+      },
+    });
+  } catch (error) {
+    console.error('INEO operations log failed:', error.message);
+  }
+};
+
+const requireIneoOperationsAccess = async (req, res, next) => {
+  if (!isIneoOperationsUser(req)) {
+    await logIneoOperationsActivity(req, 'INEO_OPERATIONS_ACCESS_DENIED', false, { path: req.path });
+    return res.status(403).json({ error: 'Acces reserve au poste Inéo' });
+  }
+  await logIneoOperationsActivity(req, 'INEO_OPERATIONS_ACCESS', true, { path: req.path });
+  next();
+};
+
+app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const status = String(req.query.status || '').toUpperCase();
     const missions = await prisma.ineoMission.findMany({
@@ -3869,7 +3903,7 @@ app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, async (req, res) 
   }
 });
 
-app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, async (req, res) => {
+app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const { serviceName, serviceReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes } = req.body || {};
     if (!serviceName || !vehicleParc || !driverIdentifier) {
@@ -3888,10 +3922,50 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, async (req, res)
       },
       include: { vehicle: true },
     });
+    await logIneoOperationsActivity(req, 'INEO_MISSION_CREATED', true, { missionId: mission.id, vehicleParc: mission.vehicleParc, serviceName: mission.serviceName });
     res.status(201).json({ mission });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions:', error.message);
     res.status(500).json({ error: 'Impossible de créer la mission Inéo' });
+  }
+});
+
+app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const profiles = await prisma.ineoVehicleProfile.findMany({ orderBy: { vehicleParc: 'asc' } });
+    res.json({ profiles });
+  } catch (error) {
+    console.error('GET /api/ineo/vehicle-profiles:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les profils vehicules Inéo' });
+  }
+});
+
+app.put(['/ineo/vehicle-profiles/:parc', '/api/ineo/vehicle-profiles/:parc'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const vehicleParc = String(req.params.parc || '').trim();
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: vehicleParc }, select: { parc: true } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicule introuvable' });
+    const allowedTypes = ['BUS STANDARD', 'BUS ARTICULE', 'BUS BI ARTICULE', 'BUS GABARIT REDUIT', 'VOITURES', 'DIVERS'];
+    const { vehicleType, maxSpeedKmh, lengthM, widthM, heightM, options } = req.body || {};
+    if (vehicleType && !allowedTypes.includes(vehicleType)) return res.status(400).json({ error: 'Type de vehicule invalide' });
+    const numericOrNull = (value) => value === '' || value == null ? null : Number(value);
+    const profileData = {
+      vehicleType: vehicleType || null,
+      maxSpeedKmh: numericOrNull(maxSpeedKmh),
+      lengthM: numericOrNull(lengthM),
+      widthM: numericOrNull(widthM),
+      heightM: numericOrNull(heightM),
+      options: options?.trim() || null,
+    };
+    if (Object.entries(profileData).some(([, value]) => typeof value === 'number' && (!Number.isFinite(value) || value < 0))) {
+      return res.status(400).json({ error: 'Les valeurs numeriques du profil sont invalides' });
+    }
+    const profile = await prisma.ineoVehicleProfile.upsert({ where: { vehicleParc }, create: { vehicleParc, ...profileData }, update: profileData });
+    await logIneoOperationsActivity(req, 'INEO_VEHICLE_PROFILE_SAVED', true, { vehicleParc });
+    res.json({ profile });
+  } catch (error) {
+    console.error('PUT /api/ineo/vehicle-profiles/:parc:', error.message);
+    res.status(500).json({ error: 'Impossible d enregistrer le profil vehicule Inéo' });
   }
 });
 
@@ -7044,6 +7118,7 @@ app.get(['/vehicles', '/api/vehicles'], requireAuth, async (req, res) => {
           modele: true,
           marque: true,
           immat: true,
+          energie: true,
           etat: true,
           miseEnCirculation: true,
           thumbnailImage: true,

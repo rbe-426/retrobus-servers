@@ -334,6 +334,7 @@ model Vehicle {
   vehicle_service_schedule vehicle_service_schedule[]
   lifecycleEvents          VehicleLifecycleEvent[]
   ineoMissions             IneoMission[]
+  ineoProfile              IneoVehicleProfile?
 }
 
 model IneoMission {
@@ -377,6 +378,20 @@ model IneoPosition {
 
   @@index([missionId])
   @@index([recordedAt])
+}
+
+model IneoVehicleProfile {
+  id          String   @id @default(cuid())
+  vehicleParc String   @unique
+  vehicleType String?
+  maxSpeedKmh Int?
+  lengthM     Float?
+  widthM      Float?
+  heightM     Float?
+  options     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  vehicle     Vehicle  @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
 }
 
 enum IneoMissionStatus {
