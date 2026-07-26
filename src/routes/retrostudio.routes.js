@@ -153,7 +153,7 @@ router.put('/requests/:id', requireAuth, async (req, res) => {
       data: preparedRequest.data
     });
 
-    if (existingRequest.status !== 'PENDING_VALIDATION') {
+    if (existingRequest.status === 'DRAFT' && request.status === 'PENDING_VALIDATION') {
       await createValidationNotification(prisma, request, req.body?.shootDate, req.user.email || req.user.id);
     }
     return res.json(request);
