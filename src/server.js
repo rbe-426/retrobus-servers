@@ -4041,20 +4041,45 @@ app.get(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperations
   }
 });
 
+app.get(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/:courseReference'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
+    const route = await prisma.ineoRoute.findUnique({ where: { courseReference } });
+    if (!route) return res.status(404).json({ error: 'Reference de course introuvable' });
+    res.json({ route });
+  } catch (error) {
+    console.error('GET /api/ineo/routes/reference/:courseReference:', error.message);
+    res.status(500).json({ error: 'Impossible de rechercher la reference de course' });
+  }
+});
+
+const normalizeIneoRouteData = (body = {}) => {
+  const routeName = String(body.routeName || '').trim();
+  const rawStops = Array.isArray(body.stops) ? body.stops : [];
+  const stops = rawStops.map((stop, index) => ({
+    order: index,
+    label: String(stop?.label || '').trim(),
+    scheduledTime: String(stop?.scheduledTime || '').trim() || null,
+    lat: Number(stop?.lat),
+    lng: Number(stop?.lng),
+  })).filter((stop) => stop.label && Number.isFinite(stop.lat) && Number.isFinite(stop.lng));
+  return {
+    routeName,
+    lineName: String(body.lineName || '').trim() || null,
+    scheduledDeparture: String(body.scheduledDeparture || '').trim() || null,
+    scheduledArrival: String(body.scheduledArrival || '').trim() || null,
+    stops: stops.length ? stops : null,
+    notes: String(body.notes || '').trim() || null,
+  };
+};
+
 app.post(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const courseReference = String(req.body?.courseReference || '').trim().toUpperCase();
-    const routeName = String(req.body?.routeName || '').trim();
-    if (!courseReference || !routeName) return res.status(400).json({ error: 'Reference de course et nom d itineraire requis' });
+    const routeData = normalizeIneoRouteData(req.body);
+    if (!courseReference || !routeData.routeName) return res.status(400).json({ error: 'Reference de course et nom d itineraire requis' });
     const route = await prisma.ineoRoute.create({
-      data: {
-        courseReference,
-        routeName,
-        lineName: String(req.body?.lineName || '').trim() || null,
-        origin: String(req.body?.origin || '').trim() || null,
-        destination: String(req.body?.destination || '').trim() || null,
-        notes: String(req.body?.notes || '').trim() || null,
-      },
+      data: { courseReference, ...routeData },
     });
     await logIneoOperationsActivity(req, 'INEO_ROUTE_CREATED', true, { routeId: route.id, courseReference });
     res.status(201).json({ route });
@@ -4062,6 +4087,20 @@ app.post(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperation
     if (error.code === 'P2002') return res.status(409).json({ error: 'Cette reference de course existe deja' });
     console.error('POST /api/ineo/routes:', error.message);
     res.status(500).json({ error: 'Impossible de creer l itineraire Inéo' });
+  }
+});
+
+app.put(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/:courseReference'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
+    const routeData = normalizeIneoRouteData(req.body);
+    if (!courseReference || !routeData.routeName) return res.status(400).json({ error: 'Reference de course et nom d itineraire requis' });
+    const route = await prisma.ineoRoute.upsert({ where: { courseReference }, create: { courseReference, ...routeData }, update: routeData });
+    await logIneoOperationsActivity(req, 'INEO_ROUTE_SAVED', true, { routeId: route.id, courseReference, stopCount: routeData.stops?.length || 0 });
+    res.json({ route });
+  } catch (error) {
+    console.error('PUT /api/ineo/routes/reference/:courseReference:', error.message);
+    res.status(500).json({ error: 'Impossible d enregistrer l itineraire Inéo' });
   }
 });
 

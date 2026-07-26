@@ -414,15 +414,16 @@ model IneoVehicleTracker {
 }
 
 model IneoRoute {
-  id             String   @id @default(cuid())
-  courseReference String  @unique
-  lineName       String?
-  routeName      String
-  origin         String?
-  destination    String?
-  notes          String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  courseReference    String   @unique
+  lineName           String?
+  routeName          String
+  scheduledDeparture String?
+  scheduledArrival   String?
+  stops              Json?
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   @@index([lineName])
 }
