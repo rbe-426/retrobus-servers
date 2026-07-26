@@ -3969,6 +3969,102 @@ app.put(['/ineo/vehicle-profiles/:parc', '/api/ineo/vehicle-profiles/:parc'], re
   }
 });
 
+app.get(['/ineo/vehicle-trackers', '/api/ineo/vehicle-trackers'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const trackers = await prisma.ineoVehicleTracker.findMany({ include: { vehicle: true }, orderBy: { vehicleParc: 'asc' } });
+    res.json({ trackers });
+  } catch (error) {
+    console.error('GET /api/ineo/vehicle-trackers:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les positions vehicules' });
+  }
+});
+
+app.put(['/ineo/vehicle-trackers/:parc', '/api/ineo/vehicle-trackers/:parc'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const vehicleParc = String(req.params.parc || '').trim();
+    const imei = String(req.body?.imei || '').replace(/\s+/g, '');
+    const deviceLabel = String(req.body?.deviceLabel || '').trim() || null;
+    if (!/^\d{14,17}$/.test(imei)) return res.status(400).json({ error: 'IMEI invalide: 14 a 17 chiffres attendus' });
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: vehicleParc }, select: { parc: true } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicule introuvable' });
+    const tracker = await prisma.ineoVehicleTracker.upsert({
+      where: { vehicleParc },
+      create: { vehicleParc, imei, deviceLabel },
+      update: { imei, deviceLabel },
+      include: { vehicle: true },
+    });
+    await logIneoOperationsActivity(req, 'INEO_TRACKER_SAVED', true, { vehicleParc, imei });
+    res.json({ tracker });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Cet IMEI est deja rattache a un autre vehicule' });
+    console.error('PUT /api/ineo/vehicle-trackers/:parc:', error.message);
+    res.status(500).json({ error: 'Impossible d enregistrer le rattachement IMEI' });
+  }
+});
+
+app.post(['/ineo/vehicle-trackers/:imei/position', '/api/ineo/vehicle-trackers/:imei/position'], requireAuth, async (req, res) => {
+  try {
+    const imei = String(req.params.imei || '').replace(/\s+/g, '');
+    const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { imei } });
+    if (!tracker) return res.status(404).json({ error: 'Appareil IMEI non rattache' });
+    if (!isIneoOperationsUser(req)) {
+      const context = await getIneoDriverContext(req);
+      const activeMission = await prisma.ineoMission.findFirst({ where: { vehicleParc: tracker.vehicleParc, status: 'ACTIVE', driverIdentifier: { in: context.identifiers } } });
+      if (!activeMission) return res.status(403).json({ error: 'Aucune mission active autorisee pour cet appareil' });
+    }
+    const latitude = Number(req.body?.latitude);
+    const longitude = Number(req.body?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return res.status(400).json({ error: 'Coordonnees GPS invalides' });
+    }
+    const speedKmh = Number.isFinite(Number(req.body?.speedKmh)) ? Number(req.body.speedKmh) : null;
+    const accuracy = Number.isFinite(Number(req.body?.accuracy)) ? Number(req.body.accuracy) : null;
+    const lastPositionAt = req.body?.recordedAt ? new Date(req.body.recordedAt) : new Date();
+    const updatedTracker = await prisma.ineoVehicleTracker.update({
+      where: { imei },
+      data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt },
+    });
+    res.json({ tracker: updatedTracker });
+  } catch (error) {
+    console.error('POST /api/ineo/vehicle-trackers/:imei/position:', error.message);
+    res.status(500).json({ error: 'Impossible d enregistrer la position du vehicule' });
+  }
+});
+
+app.get(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const routes = await prisma.ineoRoute.findMany({ orderBy: [{ lineName: 'asc' }, { routeName: 'asc' }] });
+    res.json({ routes });
+  } catch (error) {
+    console.error('GET /api/ineo/routes:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les itineraires Inéo' });
+  }
+});
+
+app.post(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const courseReference = String(req.body?.courseReference || '').trim().toUpperCase();
+    const routeName = String(req.body?.routeName || '').trim();
+    if (!courseReference || !routeName) return res.status(400).json({ error: 'Reference de course et nom d itineraire requis' });
+    const route = await prisma.ineoRoute.create({
+      data: {
+        courseReference,
+        routeName,
+        lineName: String(req.body?.lineName || '').trim() || null,
+        origin: String(req.body?.origin || '').trim() || null,
+        destination: String(req.body?.destination || '').trim() || null,
+        notes: String(req.body?.notes || '').trim() || null,
+      },
+    });
+    await logIneoOperationsActivity(req, 'INEO_ROUTE_CREATED', true, { routeId: route.id, courseReference });
+    res.status(201).json({ route });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Cette reference de course existe deja' });
+    console.error('POST /api/ineo/routes:', error.message);
+    res.status(500).json({ error: 'Impossible de creer l itineraire Inéo' });
+  }
+});
+
 app.get(['/ineo/driver/current', '/api/ineo/driver/current'], requireAuth, async (req, res) => {
   try {
     const context = await getIneoDriverContext(req);

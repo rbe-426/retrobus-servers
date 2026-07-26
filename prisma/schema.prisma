@@ -335,6 +335,7 @@ model Vehicle {
   lifecycleEvents          VehicleLifecycleEvent[]
   ineoMissions             IneoMission[]
   ineoProfile              IneoVehicleProfile?
+  ineoTracker              IneoVehicleTracker?
 }
 
 model IneoMission {
@@ -392,6 +393,38 @@ model IneoVehicleProfile {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   vehicle     Vehicle  @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
+}
+
+model IneoVehicleTracker {
+  id             String   @id @default(cuid())
+  vehicleParc    String   @unique
+  imei           String   @unique
+  deviceLabel    String?
+  lastLatitude   Float?
+  lastLongitude  Float?
+  lastSpeedKmh   Float?
+  lastAccuracy   Float?
+  lastPositionAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  vehicle        Vehicle  @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
+
+  @@index([imei])
+  @@index([lastPositionAt])
+}
+
+model IneoRoute {
+  id             String   @id @default(cuid())
+  courseReference String  @unique
+  lineName       String?
+  routeName      String
+  origin         String?
+  destination    String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([lineName])
 }
 
 enum IneoMissionStatus {
