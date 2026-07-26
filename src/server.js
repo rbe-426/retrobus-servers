@@ -3406,6 +3406,8 @@ app.delete(['/flashes/:id','/api/flashes/:id'], requireAuth, async (req, res) =>
 
 // ===== HOME ANNOUNCEMENTS - Annonces d'accueil persistées =====
 
+const HOME_ANNOUNCEMENT_SEVERITIES = ['INFO', 'WARNING', 'CRITICAL', 'SUCCESS'];
+
 // GET /api/home-announcements - Récupérer les annonces actives
 app.get('/api/home-announcements', async (req, res) => {
   try {
@@ -3434,6 +3436,10 @@ app.post('/api/home-announcements', requireAuth, async (req, res) => {
 
     if (!message) {
       return res.status(400).json({ error: 'Le message est requis' });
+    }
+
+    if (severity !== undefined && !HOME_ANNOUNCEMENT_SEVERITIES.includes(severity)) {
+      return res.status(400).json({ error: 'Gravité invalide' });
     }
 
     const announcement = await prisma.homeAnnouncement.create({
@@ -3488,6 +3494,10 @@ app.patch('/api/home-announcements/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { severity, title, message, dismissible, expiresAt, actions, active } = req.body;
+
+    if (severity !== undefined && !HOME_ANNOUNCEMENT_SEVERITIES.includes(severity)) {
+      return res.status(400).json({ error: 'Gravité invalide' });
+    }
 
     const updated = await prisma.homeAnnouncement.update({
       where: { id },

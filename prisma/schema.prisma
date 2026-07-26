@@ -1552,4 +1552,5 @@ enum AnnouncementSeverity {
   INFO
   WARNING
   CRITICAL
+  SUCCESS
 }
