@@ -1,0 +1,30 @@
+{
+  "name": "backup_2025-12-03T23-11-48",
+  "timestamp": "2025-12-03T23:11:48.186Z",
+  "type": "FULL_PRISMA_EXPORT",
+  "description": "Export complet de la base de données Prisma",
+  "statistics": {
+    "totalRows": 5,
+    "tablesExported": 4,
+    "uploadedFiles": 0,
+    "exportRate": "26.7%"
+  },
+  "tablesIncluded": [
+    "members",
+    "retro_request",
+    "retro_request_file",
+    "retro_request_status_log",
+    "vehicle_maintenance",
+    "usage",
+    "financial_documents",
+    "Event",
+    "Vehicle",
+    "access_logs",
+    "email_templates",
+    "finance_transactions",
+    "RetroNews",
+    "Stock",
+    "site_users"
+  ],
+  "usage": "Ce backup contient TOUTES les données pour restauration autonome"
+}

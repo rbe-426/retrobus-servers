@@ -1,0 +1,1 @@
+ALTER TYPE "AnnouncementSeverity" ADD VALUE IF NOT EXISTS 'SUCCESS';
