@@ -40,6 +40,7 @@ import changelogRoutes from './routes/changelog.routes.js';
 import lumistudioRoutes from './routes/lumistudio.routes.js';
 import processParcRoutes from './routes/processParc.routes.js';
 import retrostudioRoutes from './routes/retrostudio.routes.js';
+import bankSyncRoutes from './routes/bankSync.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
 import { createMailSession } from './services/mailService.js';
 // � Import module de calcul des KPI historiques
@@ -1768,6 +1769,9 @@ app.use('/api/retrostudio', retrostudioRoutes);
 
 // Routes Process PARC (préservation et intégration véhicules)
 app.use('/api/process-parc', processParcRoutes);
+
+// Routes Bank Sync (synchronisation bancaire GoCardless)
+app.use('/api/finance/bank-sync', bankSyncRoutes);
 
 // TODO: Ajouter d'autres routes modulaires
 // app.use('/api/members', memberRoutes);
