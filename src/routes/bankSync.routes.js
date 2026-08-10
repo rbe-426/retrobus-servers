@@ -5,11 +5,10 @@ import { PrismaClient } from '@prisma/client';
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Middleware d'authentification (à adapter selon ton système)
 const requireAuth = (req, res, next) => {
-  // TODO: Vérifier l'authentification
-  // Pour l'instant, on simule un user.id
-  req.user = { id: 'test-user' };
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
   next();
 };
 
@@ -34,16 +33,6 @@ router.post('/connect-bank', requireAuth, async (req, res) => {
     }
     
     const result = await bankSyncService.createBankLink(bankId, req.user.id);
-    
-    // TODO: Sauvegarder le requisitionId en base
-    // await prisma.bank_connections.create({
-    //   data: {
-    //     userId: req.user.id,
-    //     requisitionId: result.requisitionId,
-    //     bankId: bankId,
-    //     status: 'PENDING'
-    //   }
-    // });
     
     res.json({ 
       linkUrl: result.link,
@@ -75,19 +64,18 @@ router.get('/bank-callback', async (req, res) => {
       
       console.log(`Importing ${transactions.length} transactions from ${accountName}`);
       
-      // Sauvegarder les transactions
+      // The existing finance schema stores the transaction date and category as
+      // `date` and `category`; financial allocations are handled separately.
       const result = await prisma.finance_transactions.createMany({
-        data: transactions.map(tx => ({
+        data: transactions.filter(tx => tx.date && Number.isFinite(tx.amount)).map(tx => ({
+          id: crypto.randomUUID(),
           amount: tx.amount,
           description: tx.description,
-          transactionDate: new Date(tx.date),
-          type: tx.amount > 0 ? 'INCOME' : 'EXPENSE',
-          categoryId: null, // À catégoriser manuellement ou automatiquement
-          notes: `Importé depuis ${accountName} (${tx.currency})`,
-          createdAt: new Date(),
-          updatedAt: new Date()
+          date: new Date(tx.date),
+          type: tx.amount > 0 ? 'CREDIT' : 'DEBIT',
+          category: 'AUTRE'
         })),
-        skipDuplicates: true
+        skipDuplicates: false
       });
       
       totalImported += result.count;
