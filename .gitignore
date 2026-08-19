@@ -1,0 +1,9 @@
+node_modules
+# Keep environment variables out of version control
+.env
+.env.search-console
+
+# OAuth credentials - NEVER commit these!
+oauth_credentials.json
+
+/generated/prisma
