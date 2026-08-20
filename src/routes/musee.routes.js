@@ -23,6 +23,10 @@ const museeUsers = [
 // Log d'audit pour les connexions au Musée
 const museeAuditLogs = [];
 
+// Base de données temporaire pour les check-ins du Musée
+// TODO: Migrer vers Prisma avec une table dédiée
+const museeCheckIns = [];
+
 function logMuseeAccess(username, action, success, ip, details = {}) {
   const logEntry = {
     timestamp: new Date().toISOString(),
@@ -199,6 +203,139 @@ router.post('/change-password', async (req, res) => {
   } catch (error) {
     console.error('Erreur changement mot de passe musée:', error);
     res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * POST /api/musee/check-in
+ * Enregistrer un check-in au Musée
+ */
+router.post('/check-in', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const clientIp = req.ip || req.connection.remoteAddress;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Non autorisé' });
+  }
+
+  const token = authHeader.substring(7);
+
+  try {
+    const decoded = jwt.verify(token, MUSEE_JWT_SECRET);
+    
+    if (decoded.type !== 'musee') {
+      return res.status(401).json({ error: 'Token invalide' });
+    }
+
+    const checkIn = {
+      id: `checkin-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      userId: decoded.id,
+      username: decoded.username,
+      timestamp: new Date().toISOString(),
+      ip: clientIp
+    };
+
+    museeCheckIns.unshift(checkIn); // Ajouter au début pour avoir les plus récents en premier
+
+    // Garder seulement les 500 derniers check-ins en mémoire
+    if (museeCheckIns.length > 500) {
+      museeCheckIns.pop();
+    }
+
+    logMuseeAccess(decoded.username, 'CHECK_IN', true, clientIp);
+    
+    res.json({ 
+      message: 'Check-in enregistré avec succès',
+      checkIn: {
+        timestamp: checkIn.timestamp,
+        username: checkIn.username
+      }
+    });
+  } catch (error) {
+    console.error('Erreur check-in musée:', error);
+    logMuseeAccess('unknown', 'CHECK_IN', false, clientIp, { reason: error.message });
+    res.status(401).json({ error: 'Token invalide ou expiré' });
+  }
+});
+
+/**
+ * GET /api/musee/check-ins
+ * Récupérer l'historique des check-ins
+ */
+router.get('/check-ins', (req, res) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Non autorisé' });
+  }
+
+  const token = authHeader.substring(7);
+
+  try {
+    const decoded = jwt.verify(token, MUSEE_JWT_SECRET);
+    
+    if (decoded.type !== 'musee') {
+      return res.status(401).json({ error: 'Token invalide' });
+    }
+
+    // Filtrer les check-ins de l'utilisateur connecté (ou tous si admin)
+    const userCheckIns = decoded.role === 'admin' 
+      ? museeCheckIns 
+      : museeCheckIns.filter(ci => ci.userId === decoded.id);
+
+    res.json({ 
+      checkIns: userCheckIns.map(ci => ({
+        timestamp: ci.timestamp,
+        username: ci.username
+      }))
+    });
+  } catch (error) {
+    res.status(401).json({ error: 'Token invalide' });
+  }
+});
+
+/**
+ * GET /api/musee/stats
+ * Récupérer les statistiques de check-in
+ */
+router.get('/stats', (req, res) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Non autorisé' });
+  }
+
+  const token = authHeader.substring(7);
+
+  try {
+    const decoded = jwt.verify(token, MUSEE_JWT_SECRET);
+    
+    if (decoded.type !== 'musee') {
+      return res.status(401).json({ error: 'Token invalide' });
+    }
+
+    // Filtrer les check-ins de l'utilisateur (ou tous si admin)
+    const userCheckIns = decoded.role === 'admin' 
+      ? museeCheckIns 
+      : museeCheckIns.filter(ci => ci.userId === decoded.id);
+
+    const now = new Date();
+    const thisWeekStart = new Date(now);
+    thisWeekStart.setDate(now.getDate() - now.getDay()); // Début de la semaine (dimanche)
+    thisWeekStart.setHours(0, 0, 0, 0);
+
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const stats = {
+      totalCheckIns: userCheckIns.length,
+      thisWeek: userCheckIns.filter(ci => new Date(ci.timestamp) >= thisWeekStart).length,
+      thisMonth: userCheckIns.filter(ci => new Date(ci.timestamp) >= thisMonthStart).length,
+      lastCheckIn: userCheckIns[0]?.timestamp || null
+    };
+
+    res.json(stats);
+  } catch (error) {
+    res.status(401).json({ error: 'Token invalide' });
   }
 });
 
