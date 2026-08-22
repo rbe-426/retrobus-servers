@@ -336,6 +336,7 @@ model Vehicle {
   ineoMissions             IneoMission[]
   ineoProfile              IneoVehicleProfile?
   ineoTracker              IneoVehicleTracker?
+  museeRestorations        MuseeRestoration[]
 }
 
 model IneoMission {
@@ -419,6 +420,8 @@ model IneoRoute {
   serviceReference   String?
   lineName           String?
   routeName          String
+  origin             String?
+  destination        String?
   vehicleParc        String?
   vehicleConstraints Json?
   scheduledDeparture String?
@@ -430,6 +433,7 @@ model IneoRoute {
 
   @@index([serviceReference])
   @@index([lineName])
+  @@index([vehicleParc])
 }
 
 enum IneoMissionStatus {
@@ -1628,6 +1632,250 @@ model AdhesionRequest {
   @@index([status])
   @@index([createdAt])
   @@index([email])
+}
+
+// ============================================================================
+// LE MUSEE - Donnees operationnelles persistantes
+// ============================================================================
+
+model MuseeAuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorName String?
+  action    String
+  entity    String?
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([entity, entityId])
+}
+
+model MuseeStaffCheckIn {
+  id        String   @id @default(cuid())
+  userId    String
+  username  String
+  ipAddress String?
+  checkedInAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([checkedInAt])
+}
+
+model MuseeStockItem {
+  id          String   @id @default(cuid())
+  nom         String
+  ref         String   @unique
+  categorie   String   @default("Pièce mécanique")
+  quantite    Int      @default(0)
+  etat        String   @default("Bon")
+  emplacement String?
+  fournisseur String?
+  dateEntree  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([categorie])
+  @@index([quantite])
+}
+
+model MuseeRestoration {
+  id          String   @id @default(cuid())
+  vehicleParc String
+  responsable String?
+  dateDebut   DateTime @default(now())
+  avancement  Int      @default(0)
+  taches      Json?
+  budget      Float?
+  depenses    Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  vehicle     Vehicle  @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
+
+  @@index([vehicleParc])
+  @@index([dateDebut])
+}
+
+model MuseeDocumentation {
+  id          String   @id @default(cuid())
+  titre       String
+  type        String   @default("Manuel")
+  annee       Int?
+  auteur      String?
+  pages       Int?
+  emplacement String?
+  numerise    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type])
+  @@index([annee])
+}
+
+model MuseeStaff {
+  id            String   @id @default(cuid())
+  memberId      String?  @unique
+  nom           String
+  role          String
+  competences   Json?
+  disponibilite String?
+  telephone     String?
+  adhesion      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  planning      MuseePlanning[]
+
+  @@index([role])
+}
+
+model MuseePlanning {
+  id        String   @id @default(cuid())
+  staffId   String
+  zone      String?
+  date      DateTime
+  horaire   String?
+  tache     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  staff     MuseeStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@index([date])
+}
+
+model MuseeFloor {
+  id         String   @id @default(cuid())
+  nom        String   @unique
+  salles     Int?
+  capacite   Int?
+  superficie String?
+  theme      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model MuseeFacingZone {
+  id          String   @id @default(cuid())
+  nom         String   @unique
+  pieces      Int      @default(0)
+  rotation    String?
+  derniereMAJ DateTime?
+  priorite    String   @default("Moyenne")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([priorite])
+}
+
+model MuseeReservation {
+  id                String   @id @default(cuid())
+  nom               String
+  nbPersonnes       Int
+  motif             String   @default("Visite libre")
+  dateReservation   DateTime
+  creneauSouhaite   String?
+  email             String?
+  telephone         String?
+  statut            String   @default("CONFIRMEE")
+  commentaire       String?
+  paiementEffectue  Boolean  @default(false)
+  montantTotal      Float    @default(0)
+  modePaiement      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([dateReservation])
+  @@index([statut])
+}
+
+model MuseeVisit {
+  id               String   @id @default(cuid())
+  reservationId    String?
+  nom              String
+  nbPersonnes      Int
+  motif            String   @default("Visite libre")
+  ticketTypeId     String?
+  ticketLabel      String?
+  reductionId      String?
+  exemptionId      String?
+  montantPaye      Float    @default(0)
+  modePaiement     String?
+  paiementEffectue Boolean  @default(false)
+  checkedInAt      DateTime @default(now())
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([checkedInAt])
+  @@index([reservationId])
+}
+
+model MuseeTicketType {
+  id          String   @id @default(cuid())
+  nom         String   @unique
+  prix        Float
+  description String?
+  actif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([actif])
+}
+
+model MuseeDiscount {
+  id           String   @id @default(cuid())
+  nom          String   @unique
+  pourcentage  Int
+  justificatif String?
+  actif        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([actif])
+}
+
+model MuseeExemption {
+  id           String   @id @default(cuid())
+  nom          String   @unique
+  condition    String
+  justificatif String?
+  actif        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now())
+
+  @@index([actif])
+}
+
+model MuseeShopItem {
+  id        String   @id @default(cuid())
+  nom       String   @unique
+  categorie String?
+  prix      Float
+  stock     Int      @default(0)
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([actif])
+  @@index([stock])
+}
+
+model MuseePayment {
+  id            String   @id @default(cuid())
+  sourceType    String
+  sourceId      String
+  montant       Float
+  modePaiement  String
+  statut        String   @default("ENCAISSE")
+  reference     String?
+  encaisseLe    DateTime @default(now())
+  encaissePar   String?
+  createdAt     DateTime @default(now())
+
+  @@index([sourceType, sourceId])
+  @@index([encaisseLe])
 }
 
 // ============================================================================
