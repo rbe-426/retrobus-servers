@@ -1012,6 +1012,32 @@ const ADMIN_ACCESS_ROLES = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER',
 
 const hasAdminAccessRole = (role) => ADMIN_ACCESS_ROLES.includes(String(role || '').toUpperCase());
 
+const DOSSIER_ACCESS_ROLES = ['PRESIDENT', 'VICE_PRESIDENT'];
+
+const requireMemberDossierAccess = async (req, res, next) => {
+  if (!req.user?.email) return res.status(401).json({ error: 'Non authentifié' });
+
+  try {
+    const actor = await prisma.members.findFirst({
+      where: { email: { equals: String(req.user.email), mode: 'insensitive' } },
+      select: { id: true, firstName: true, lastName: true, role: true },
+    });
+    const role = String(actor?.role || req.user.role || '').toUpperCase();
+    if (!DOSSIER_ACCESS_ROLES.includes(role)) {
+      return res.status(403).json({ error: 'Accès réservé au président et au vice-président' });
+    }
+
+    req.memberDossierActor = {
+      id: actor?.id || req.user.id || req.user.email,
+      name: actor ? `${actor.firstName} ${actor.lastName}`.trim() : req.user.email,
+    };
+    next();
+  } catch (error) {
+    console.error('❌ Member dossier access check failed:', error.message);
+    res.status(500).json({ error: 'Impossible de vérifier les droits du dossier' });
+  }
+};
+
 const isAdminRequest = async (req) => {
   const email = req.user?.email;
   if (!email) return false;
@@ -7149,6 +7175,101 @@ app.get('/api/documents/:id/download', requireAuth, (req, res) => {
 });
 
 // MEMBER DOCUMENTS - NEW ENDPOINTS FOR ADHESION BULLETINS
+// MEMBER DOSSIER - Restricted to President and Vice-President
+const MEMBER_DOSSIER_SECTIONS = {
+  memberships: { model: 'memberDossierMembership', entityType: 'MEMBERSHIP', fields: ['category', 'status', 'startedAt', 'endedAt', 'notes'] },
+  trainings: { model: 'memberTraining', entityType: 'TRAINING', fields: ['title', 'organization', 'completedAt', 'expiresAt', 'status', 'documentId', 'notes'] },
+  authorizations: { model: 'memberAuthorization', entityType: 'AUTHORIZATION', fields: ['type', 'obtainedAt', 'expiresAt', 'status', 'documentId', 'notes'] },
+  activities: { model: 'memberActivity', entityType: 'ACTIVITY', fields: ['type', 'title', 'occurredAt', 'hours', 'description'] },
+  events: { model: 'memberDossierEvent', entityType: 'DOSSIER_EVENT', fields: ['category', 'description', 'status', 'visibility', 'occurredAt'] },
+};
+
+const memberDossierAudit = (memberId, entityType, entityId, action, oldValue, newValue, actor) => (
+  prisma.memberDossierAuditLog.create({
+    data: { memberId, entityType, entityId, action, oldValue, newValue, actorId: actor.id, actorName: actor.name },
+  })
+);
+
+app.get('/api/members/:memberId/dossier', requireAuth, requireMemberDossierAccess, async (req, res) => {
+  try {
+    const dossier = await prisma.members.findUnique({
+      where: { id: req.params.memberId },
+      select: {
+        id: true, firstName: true, lastName: true, email: true, memberNumber: true,
+        membershipType: true, membershipStatus: true, membershipStartDate: true, membershipEndDate: true,
+        Document: { orderBy: { uploadedAt: 'desc' } },
+        dossierMemberships: { orderBy: { startedAt: 'desc' } },
+        dossierTrainings: { orderBy: { completedAt: 'desc' } },
+        dossierAuthorizations: { orderBy: { obtainedAt: 'desc' } },
+        dossierActivities: { orderBy: { occurredAt: 'desc' } },
+        dossierEvents: { orderBy: { occurredAt: 'desc' }, include: { attachments: true } },
+        dossierAuditLogs: { orderBy: { createdAt: 'desc' }, take: 100 },
+      },
+    });
+    if (!dossier) return res.status(404).json({ error: 'Membre introuvable' });
+    res.json({ dossier });
+  } catch (error) {
+    console.error('❌ Member dossier fetch failed:', error.message);
+    res.status(500).json({ error: 'Impossible de charger le dossier' });
+  }
+});
+
+app.post('/api/members/:memberId/dossier/:section', requireAuth, requireMemberDossierAccess, async (req, res) => {
+  try {
+    const section = MEMBER_DOSSIER_SECTIONS[req.params.section];
+    if (!section) return res.status(404).json({ error: 'Section de dossier inconnue' });
+    const member = await prisma.members.findUnique({ where: { id: req.params.memberId }, select: { id: true } });
+    if (!member) return res.status(404).json({ error: 'Membre introuvable' });
+    const data = Object.fromEntries(section.fields.filter((field) => Object.prototype.hasOwnProperty.call(req.body || {}, field)).map((field) => [field, req.body[field]]));
+    if (req.params.section === 'events') {
+      data.authorId = req.memberDossierActor.id;
+      data.authorName = req.memberDossierActor.name;
+    }
+    const record = await prisma[section.model].create({ data: { ...data, memberId: member.id } });
+    await memberDossierAudit(member.id, section.entityType, record.id, 'CREATE', null, record, req.memberDossierActor);
+    res.status(201).json({ record });
+  } catch (error) {
+    console.error('❌ Member dossier create failed:', error.message);
+    res.status(500).json({ error: 'Impossible de créer l’élément du dossier' });
+  }
+});
+
+app.put('/api/members/:memberId/dossier/:section/:recordId', requireAuth, requireMemberDossierAccess, async (req, res) => {
+  try {
+    const section = MEMBER_DOSSIER_SECTIONS[req.params.section];
+    if (!section) return res.status(404).json({ error: 'Section de dossier inconnue' });
+    const existing = await prisma[section.model].findFirst({ where: { id: req.params.recordId, memberId: req.params.memberId } });
+    if (!existing) return res.status(404).json({ error: 'Élément du dossier introuvable' });
+    const data = Object.fromEntries(section.fields.filter((field) => Object.prototype.hasOwnProperty.call(req.body || {}, field)).map((field) => [field, req.body[field]]));
+    const record = await prisma[section.model].update({ where: { id: existing.id }, data });
+    await memberDossierAudit(req.params.memberId, section.entityType, record.id, 'UPDATE', existing, record, req.memberDossierActor);
+    res.json({ record });
+  } catch (error) {
+    console.error('❌ Member dossier update failed:', error.message);
+    res.status(500).json({ error: 'Impossible de modifier l’élément du dossier' });
+  }
+});
+
+app.post('/api/members/:memberId/dossier/documents', requireAuth, requireMemberDossierAccess, async (req, res) => {
+  try {
+    const { fileName, fileType, fileData, expiryDate } = req.body || {};
+    if (!fileName || !fileData) return res.status(400).json({ error: 'Nom et contenu du fichier requis' });
+    const document = await prisma.document.create({
+      data: {
+        id: uid(), memberId: req.params.memberId, fileName, filePath: fileData,
+        fileSize: Math.ceil((fileData.length * 3) / 4), mimeType: fileType || 'application/octet-stream',
+        type: 'OTHER', status: 'APPROVED', expiryDate: expiryDate ? new Date(expiryDate) : null,
+        reviewedBy: req.memberDossierActor.name, reviewedAt: new Date(),
+      },
+    });
+    await memberDossierAudit(req.params.memberId, 'DOCUMENT', document.id, 'CREATE', null, { fileName: document.fileName }, req.memberDossierActor);
+    res.status(201).json({ document });
+  } catch (error) {
+    console.error('❌ Member dossier document upload failed:', error.message);
+    res.status(500).json({ error: 'Impossible d’ajouter le document' });
+  }
+});
+
 // GET /api/members/:memberId/documents - Fetch all documents for a member
 app.get('/api/members/:memberId/documents', requireAuth, async (req, res) => {
   try {

@@ -751,7 +751,130 @@ model members {
   updatedAt           DateTime
   createdBy           String?
   Document            Document[]
+  dossierMemberships  MemberDossierMembership[]
+  dossierTrainings    MemberTraining[]
+  dossierAuthorizations MemberAuthorization[]
+  dossierActivities   MemberActivity[]
+  dossierEvents       MemberDossierEvent[]
+  dossierAuditLogs    MemberDossierAuditLog[]
   site_users          site_users?
+}
+
+model MemberDossierMembership {
+  id          String   @id @default(cuid())
+  memberId    String
+  category    String
+  status      String   @default("ACTIVE")
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  member      members  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, startedAt])
+  @@index([status])
+}
+
+model MemberTraining {
+  id          String   @id @default(cuid())
+  memberId    String
+  title       String
+  organization String?
+  completedAt DateTime?
+  expiresAt   DateTime?
+  status      String   @default("VALID")
+  documentId  String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  member      members  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, completedAt])
+  @@index([expiresAt])
+  @@index([status])
+}
+
+model MemberAuthorization {
+  id          String   @id @default(cuid())
+  memberId    String
+  type        String
+  obtainedAt  DateTime?
+  expiresAt   DateTime?
+  status      String   @default("VALID")
+  documentId  String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  member      members  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, obtainedAt])
+  @@index([expiresAt])
+  @@index([status])
+}
+
+model MemberActivity {
+  id          String   @id @default(cuid())
+  memberId    String
+  type        String
+  title       String
+  occurredAt  DateTime @default(now())
+  hours       Float?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  member      members  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, occurredAt])
+  @@index([type])
+}
+
+model MemberDossierEvent {
+  id          String                        @id @default(cuid())
+  memberId    String
+  category    String
+  description String
+  status      String                        @default("OPEN")
+  visibility  String                        @default("RESTRICTED")
+  occurredAt  DateTime                      @default(now())
+  authorId    String
+  authorName  String?
+  createdAt   DateTime                      @default(now())
+  updatedAt   DateTime                      @updatedAt
+  member      members                       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  attachments MemberDossierEventAttachment[]
+
+  @@index([memberId, occurredAt])
+  @@index([category])
+  @@index([status])
+}
+
+model MemberDossierEventAttachment {
+  id          String              @id @default(cuid())
+  eventId     String
+  documentId  String
+  createdAt   DateTime            @default(now())
+  event       MemberDossierEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@index([documentId])
+}
+
+model MemberDossierAuditLog {
+  id          String   @id @default(cuid())
+  memberId    String
+  entityType  String
+  entityId    String?
+  action      String
+  oldValue    Json?
+  newValue    Json?
+  actorId     String
+  actorName   String?
+  createdAt   DateTime @default(now())
+  member      members  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, createdAt])
+  @@index([entityType, entityId])
 }
 
 model notification_preferences {
