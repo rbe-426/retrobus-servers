@@ -4015,6 +4015,73 @@ app.patch(['/ineo/missions/:id/driver', '/api/ineo/missions/:id/driver'], requir
   }
 });
 
+app.patch(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const missionId = String(req.params.id || '').trim();
+    const mission = await prisma.ineoMission.findUnique({ where: { id: missionId } });
+    if (!mission) return res.status(404).json({ error: 'Mission introuvable' });
+    if (!['PLANNED', 'ACTIVE'].includes(mission.status)) return res.status(409).json({ error: 'Seuls les services planifiés ou en cours peuvent être modifiés' });
+
+    const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes } = req.body || {};
+    const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
+    const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
+    if (!serviceName || !vehicleParc || !driverIdentifier || !normalizedServiceReference || !normalizedCourseReference) {
+      return res.status(400).json({ error: 'Service, codes service et course, véhicule et conducteur sont requis' });
+    }
+    if (!/^RBE-\d{3}-\d{3}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
+    if (!/^\d{3}-\d{5}-\d{3,4}$/.test(normalizedCourseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
+    const [vehicle, route] = await Promise.all([
+      prisma.vehicle.findUnique({ where: { parc: String(vehicleParc).trim() } }),
+      prisma.ineoRoute.findFirst({ where: { courseReference: normalizedCourseReference, serviceReference: { equals: normalizedServiceReference, mode: 'insensitive' } } }),
+    ]);
+    if (!vehicle) return res.status(404).json({ error: 'Véhicule introuvable' });
+    if (!route) return res.status(400).json({ error: 'Le code course doit être configuré et rattaché au code service indiqué' });
+
+    const updatedMission = await prisma.ineoMission.update({
+      where: { id: missionId },
+      data: {
+        serviceName: String(serviceName).trim(),
+        serviceReference: normalizedServiceReference,
+        courseReference: normalizedCourseReference,
+        vehicleParc: vehicle.parc,
+        driverIdentifier: String(driverIdentifier).trim().toLowerCase(),
+        driverName: String(driverName || '').trim() || null,
+        scheduledDeparture: scheduledDeparture ? new Date(scheduledDeparture) : null,
+        scheduledArrival: scheduledArrival ? new Date(scheduledArrival) : null,
+        notes: String(notes || '').trim() || null,
+      },
+      include: { vehicle: true },
+    });
+    await logIneoOperationsActivity(req, 'INEO_MISSION_UPDATED', true, { missionId, status: mission.status, vehicleParc: vehicle.parc, driverIdentifier: updatedMission.driverIdentifier });
+    res.json({ mission: updatedMission });
+  } catch (error) {
+    console.error('PATCH /api/ineo/missions/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de modifier le service Inéo' });
+  }
+});
+
+app.delete(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const missionId = String(req.params.id || '').trim();
+    const mission = await prisma.ineoMission.findUnique({ where: { id: missionId } });
+    if (!mission) return res.status(404).json({ error: 'Mission introuvable' });
+    if (mission.status === 'PLANNED') {
+      await prisma.ineoMission.delete({ where: { id: missionId } });
+      await logIneoOperationsActivity(req, 'INEO_MISSION_DELETED', true, { missionId });
+      return res.json({ action: 'DELETED' });
+    }
+    if (mission.status === 'ACTIVE') {
+      const cancelledMission = await prisma.ineoMission.update({ where: { id: missionId }, data: { status: 'CANCELLED', actualArrival: new Date() }, include: { vehicle: true } });
+      await logIneoOperationsActivity(req, 'INEO_MISSION_CANCELLED', true, { missionId });
+      return res.json({ action: 'CANCELLED', mission: cancelledMission });
+    }
+    return res.status(409).json({ error: 'Un service terminé ou déjà annulé ne peut pas être supprimé' });
+  } catch (error) {
+    console.error('DELETE /api/ineo/missions/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer le service Inéo' });
+  }
+});
+
 app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const profiles = await prisma.ineoVehicleProfile.findMany({ orderBy: { vehicleParc: 'asc' } });
