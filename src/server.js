@@ -3960,15 +3960,23 @@ app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperat
 
 app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
-    const { serviceName, serviceReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes } = req.body || {};
-    if (!serviceName || !vehicleParc || !driverIdentifier) {
-      return res.status(400).json({ error: 'Service, véhicule et conducteur sont requis' });
+    const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes } = req.body || {};
+    const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
+    const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
+    if (!serviceName || !vehicleParc || !driverIdentifier || !normalizedServiceReference || !normalizedCourseReference) {
+      return res.status(400).json({ error: 'Service, codes service et course, véhicule et conducteur sont requis' });
     }
+    if (!/^RBE-\d{3}-\d{3}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
+    if (!/^\d{3}-\d{5}-\d{3,4}$/.test(normalizedCourseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
     const vehicle = await prisma.vehicle.findUnique({ where: { parc: String(vehicleParc) } });
     if (!vehicle) return res.status(404).json({ error: 'Véhicule introuvable' });
+    const route = await prisma.ineoRoute.findFirst({
+      where: { courseReference: normalizedCourseReference, serviceReference: { equals: normalizedServiceReference, mode: 'insensitive' } },
+    });
+    if (!route) return res.status(400).json({ error: 'Le code course doit être configuré et rattaché au code service indiqué' });
     const mission = await prisma.ineoMission.create({
       data: {
-        serviceName: String(serviceName).trim(), serviceReference: serviceReference?.trim() || null,
+        serviceName: String(serviceName).trim(), serviceReference: normalizedServiceReference, courseReference: normalizedCourseReference,
         vehicleParc: vehicle.parc, driverIdentifier: String(driverIdentifier).trim().toLowerCase(),
         driverName: driverName?.trim() || null,
         scheduledDeparture: scheduledDeparture ? new Date(scheduledDeparture) : null,
@@ -3977,7 +3985,7 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOpera
       },
       include: { vehicle: true },
     });
-    await logIneoOperationsActivity(req, 'INEO_MISSION_CREATED', true, { missionId: mission.id, vehicleParc: mission.vehicleParc, serviceName: mission.serviceName });
+    await logIneoOperationsActivity(req, 'INEO_MISSION_CREATED', true, { missionId: mission.id, vehicleParc: mission.vehicleParc, serviceName: mission.serviceName, serviceReference: normalizedServiceReference, courseReference: normalizedCourseReference });
     res.status(201).json({ mission });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions:', error.message);
@@ -4391,7 +4399,7 @@ app.get(['/ineo/driver/current', '/api/ineo/driver/current'], requireAuth, async
     const now = Date.now();
     const mission = activeMission || plannedMissions.sort((left, right) => Math.abs(new Date(left.scheduledDeparture || 0).getTime() - now) - Math.abs(new Date(right.scheduledDeparture || 0).getTime() - now))[0] || null;
     const route = mission ? await prisma.ineoRoute.findFirst({
-      where: { OR: [{ serviceReference: { equals: mission.serviceReference || '', mode: 'insensitive' } }, { courseReference: { equals: mission.serviceReference || '', mode: 'insensitive' } }] },
+      where: { courseReference: { equals: mission.courseReference || '', mode: 'insensitive' } },
       orderBy: { updatedAt: 'desc' },
     }) : null;
     res.json({ mission, route, driverName: context.name });
@@ -4412,8 +4420,9 @@ app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAu
     if (!/^RBE-\d{3}-\d{3}$/.test(serviceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
     if (!/^\d{3}-\d{5}-\d{3,4}$/.test(courseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
     if (serviceReference !== String(result.mission.serviceReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le code service saisi ne correspond pas à votre affectation' });
+    if (courseReference !== String(result.mission.courseReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le code course saisi ne correspond pas à votre affectation' });
     const route = await prisma.ineoRoute.findFirst({
-      where: { courseReference, OR: [{ serviceReference: { equals: serviceReference, mode: 'insensitive' } }, { courseReference: { equals: serviceReference, mode: 'insensitive' } }] },
+      where: { courseReference, serviceReference: { equals: serviceReference, mode: 'insensitive' } },
     });
     if (!route) return res.status(403).json({ error: 'Le code course ne correspond pas au code service affecté' });
     const mission = await prisma.ineoMission.update({ where: { id: result.mission.id }, data: { status: 'ACTIVE', actualDeparture: new Date() }, include: { vehicle: true } });

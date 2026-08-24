@@ -343,6 +343,7 @@ model IneoMission {
   id                 String             @id @default(cuid())
   serviceName        String
   serviceReference   String?
+  courseReference    String?
   vehicleParc        String
   driverIdentifier   String
   driverName         String?
