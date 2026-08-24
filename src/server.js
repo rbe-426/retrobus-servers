@@ -4420,12 +4420,17 @@ app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAu
     if (!/^RBE-\d{3}-\d{3}$/.test(serviceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
     if (!/^\d{3}-\d{5}-\d{3,4}$/.test(courseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
     if (serviceReference !== String(result.mission.serviceReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le code service saisi ne correspond pas à votre affectation' });
-    if (courseReference !== String(result.mission.courseReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le code course saisi ne correspond pas à votre affectation' });
+    const assignedCourseReference = String(result.mission.courseReference || '').trim().toUpperCase();
+    if (assignedCourseReference && courseReference !== assignedCourseReference) return res.status(403).json({ error: 'Le code course saisi ne correspond pas à votre affectation' });
     const route = await prisma.ineoRoute.findFirst({
       where: { courseReference, serviceReference: { equals: serviceReference, mode: 'insensitive' } },
     });
     if (!route) return res.status(403).json({ error: 'Le code course ne correspond pas au code service affecté' });
-    const mission = await prisma.ineoMission.update({ where: { id: result.mission.id }, data: { status: 'ACTIVE', actualDeparture: new Date() }, include: { vehicle: true } });
+    const mission = await prisma.ineoMission.update({
+      where: { id: result.mission.id },
+      data: { status: 'ACTIVE', actualDeparture: new Date(), courseReference: assignedCourseReference || courseReference },
+      include: { vehicle: true },
+    });
     res.json({ mission, route });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions/:id/start:', error.message);
