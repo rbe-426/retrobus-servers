@@ -4563,6 +4563,154 @@ app.post(['/ineo/missions/:id/complete', '/api/ineo/missions/:id/complete'], req
   }
 });
 
+// ===== INEO RETROBUS - Flash conducteur (édition, diffusion, accusés de réception) =====
+const ineoFlashMetersBetween = (latA, lngA, latB, lngB) => {
+  const toRad = (value) => value * Math.PI / 180;
+  const earthRadius = 6371000;
+  const dLat = toRad(latB - latA);
+  const dLng = toRad(lngB - lngA);
+  const haversine = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(latA)) * Math.cos(toRad(latB)) * Math.sin(dLng / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+};
+
+app.get(['/ineo/flashes', '/api/ineo/flashes'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const flashes = await prisma.ineoFlash.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { acknowledgements: { orderBy: { acknowledgedAt: 'desc' } } },
+    });
+    res.json({ flashes });
+  } catch (error) {
+    console.error('❌ GET /api/ineo/flashes:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les flashs Inéo' });
+  }
+});
+
+app.post(['/ineo/flashes', '/api/ineo/flashes'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const { message, scheduleMode, scheduledAt, locationLabel, locationLat, locationLng, radiusMeters, active } = req.body || {};
+    if (!String(message || '').trim()) return res.status(400).json({ error: 'Le message du flash est requis' });
+    const mode = ['IMMEDIATE', 'AT_TIME', 'AT_LOCATION', 'ON_SERVICE_START'].includes(scheduleMode) ? scheduleMode : 'IMMEDIATE';
+    if (mode === 'AT_TIME' && !scheduledAt) return res.status(400).json({ error: 'Une heure de diffusion est requise' });
+    if (mode === 'AT_LOCATION' && (!Number.isFinite(Number(locationLat)) || !Number.isFinite(Number(locationLng)))) {
+      return res.status(400).json({ error: 'Un lieu géocodé est requis pour ce mode de diffusion' });
+    }
+    const flash = await prisma.ineoFlash.create({
+      data: {
+        message: String(message).trim(),
+        scheduleMode: mode,
+        scheduledAt: mode === 'AT_TIME' && scheduledAt ? new Date(scheduledAt) : null,
+        locationLabel: mode === 'AT_LOCATION' ? (locationLabel || null) : null,
+        locationLat: mode === 'AT_LOCATION' ? Number(locationLat) : null,
+        locationLng: mode === 'AT_LOCATION' ? Number(locationLng) : null,
+        radiusMeters: mode === 'AT_LOCATION' ? (Number(radiusMeters) || 200) : null,
+        active: active !== false,
+        createdBy: req.user?.email || null,
+      },
+      include: { acknowledgements: true },
+    });
+    await logIneoOperationsActivity(req, 'INEO_FLASH_CREATED', true, { flashId: flash.id });
+    res.status(201).json({ flash });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/flashes:', error.message);
+    res.status(500).json({ error: 'Impossible de créer le flash Inéo' });
+  }
+});
+
+app.patch(['/ineo/flashes/:id', '/api/ineo/flashes/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const existing = await prisma.ineoFlash.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Flash introuvable' });
+    const { message, scheduleMode, scheduledAt, locationLabel, locationLat, locationLng, radiusMeters, active } = req.body || {};
+    const mode = ['IMMEDIATE', 'AT_TIME', 'AT_LOCATION', 'ON_SERVICE_START'].includes(scheduleMode) ? scheduleMode : existing.scheduleMode;
+    const flash = await prisma.ineoFlash.update({
+      where: { id: existing.id },
+      data: {
+        message: message != null ? String(message).trim() : existing.message,
+        scheduleMode: mode,
+        scheduledAt: mode === 'AT_TIME' ? (scheduledAt ? new Date(scheduledAt) : existing.scheduledAt) : null,
+        locationLabel: mode === 'AT_LOCATION' ? (locationLabel ?? existing.locationLabel) : null,
+        locationLat: mode === 'AT_LOCATION' ? (locationLat != null ? Number(locationLat) : existing.locationLat) : null,
+        locationLng: mode === 'AT_LOCATION' ? (locationLng != null ? Number(locationLng) : existing.locationLng) : null,
+        radiusMeters: mode === 'AT_LOCATION' ? (radiusMeters != null ? Number(radiusMeters) : (existing.radiusMeters || 200)) : null,
+        active: active != null ? Boolean(active) : existing.active,
+      },
+      include: { acknowledgements: { orderBy: { acknowledgedAt: 'desc' } } },
+    });
+    await logIneoOperationsActivity(req, 'INEO_FLASH_UPDATED', true, { flashId: flash.id });
+    res.json({ flash });
+  } catch (error) {
+    console.error('❌ PATCH /api/ineo/flashes/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de modifier le flash Inéo' });
+  }
+});
+
+app.delete(['/ineo/flashes/:id', '/api/ineo/flashes/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    await prisma.ineoFlash.delete({ where: { id: req.params.id } });
+    await logIneoOperationsActivity(req, 'INEO_FLASH_DELETED', true, { flashId: req.params.id });
+    res.json({ action: 'DELETED' });
+  } catch (error) {
+    console.error('❌ DELETE /api/ineo/flashes/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer le flash Inéo' });
+  }
+});
+
+app.get(['/ineo/driver/flashes', '/api/ineo/driver/flashes'], requireAuth, async (req, res) => {
+  try {
+    const context = await getIneoDriverContext(req);
+    const driverIdentifier = context.identifiers[0] || null;
+    if (!driverIdentifier) return res.json({ flashes: [] });
+    const latitude = Number(req.query.lat);
+    const longitude = Number(req.query.lng);
+    const hasPosition = Number.isFinite(latitude) && Number.isFinite(longitude);
+    const activeMission = await prisma.ineoMission.findFirst({ where: { driverIdentifier: { in: context.identifiers }, status: 'ACTIVE' } });
+    const candidates = await prisma.ineoFlash.findMany({
+      where: { active: true, NOT: { acknowledgements: { some: { driverIdentifier } } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    const now = Date.now();
+    const eligible = candidates.filter((flash) => {
+      if (flash.scheduleMode === 'IMMEDIATE') return true;
+      if (flash.scheduleMode === 'AT_TIME') return flash.scheduledAt && new Date(flash.scheduledAt).getTime() <= now;
+      if (flash.scheduleMode === 'ON_SERVICE_START') return Boolean(activeMission);
+      if (flash.scheduleMode === 'AT_LOCATION') {
+        if (!hasPosition || flash.locationLat == null || flash.locationLng == null) return false;
+        return ineoFlashMetersBetween(latitude, longitude, flash.locationLat, flash.locationLng) <= (flash.radiusMeters || 200);
+      }
+      return false;
+    }).map((flash) => ({
+      id: flash.id,
+      message: flash.message,
+      scheduleMode: flash.scheduleMode,
+      broadcastAt: flash.scheduledAt || flash.createdAt,
+    }));
+    res.json({ flashes: eligible, missionId: activeMission?.id || null });
+  } catch (error) {
+    console.error('❌ GET /api/ineo/driver/flashes:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les flashs' });
+  }
+});
+
+app.post(['/ineo/driver/flashes/:id/ack', '/api/ineo/driver/flashes/:id/ack'], requireAuth, async (req, res) => {
+  try {
+    const context = await getIneoDriverContext(req);
+    const driverIdentifier = context.identifiers[0];
+    if (!driverIdentifier) return res.status(403).json({ error: 'Profil conducteur introuvable' });
+    const flash = await prisma.ineoFlash.findUnique({ where: { id: req.params.id } });
+    if (!flash) return res.status(404).json({ error: 'Flash introuvable' });
+    await prisma.ineoFlashAck.upsert({
+      where: { flashId_driverIdentifier: { flashId: flash.id, driverIdentifier } },
+      update: { acknowledgedAt: new Date(), missionId: req.body?.missionId || null, driverName: context.name },
+      create: { flashId: flash.id, driverIdentifier, driverName: context.name, missionId: req.body?.missionId || null },
+    });
+    res.json({ acknowledged: true });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/driver/flashes/:id/ack:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer la validation' });
+  }
+});
+
 // Maintenance - PRISMA avec fallback
 app.get(['/vehicles/:parc/maintenance','/api/vehicles/:parc/maintenance'], requireAuth, async (req, res) => {
   try {

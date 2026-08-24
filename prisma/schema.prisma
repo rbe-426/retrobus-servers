@@ -477,6 +477,39 @@ model IneoRoute {
   @@index([vehicleParc])
 }
 
+model IneoFlash {
+  id               String         @id @default(cuid())
+  message          String
+  scheduleMode     String         @default("IMMEDIATE") // IMMEDIATE | AT_TIME | AT_LOCATION | ON_SERVICE_START
+  scheduledAt      DateTime?
+  locationLabel    String?
+  locationLat      Float?
+  locationLng      Float?
+  radiusMeters     Float?
+  active           Boolean        @default(true)
+  createdBy        String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  acknowledgements IneoFlashAck[]
+
+  @@index([active])
+  @@index([scheduleMode])
+}
+
+model IneoFlashAck {
+  id               String    @id @default(cuid())
+  flashId          String
+  driverIdentifier String
+  driverName       String?
+  missionId        String?
+  acknowledgedAt   DateTime  @default(now())
+  flash            IneoFlash @relation(fields: [flashId], references: [id], onDelete: Cascade)
+
+  @@unique([flashId, driverIdentifier])
+  @@index([flashId])
+  @@index([driverIdentifier])
+}
+
 enum IneoMissionStatus {
   PLANNED
   ACTIVE
