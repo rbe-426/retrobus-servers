@@ -4453,6 +4453,27 @@ app.put(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/
   }
 });
 
+app.delete(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/:courseReference'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
+    const route = await prisma.ineoRoute.findUnique({ where: { courseReference } });
+    if (!route) return res.status(404).json({ error: 'Trajet introuvable' });
+    const affectedMission = await prisma.ineoMission.findFirst({
+      where: { courseReference, status: { in: ['PLANNED', 'ACTIVE'] } },
+      select: { id: true, serviceName: true, status: true },
+    });
+    if (affectedMission) {
+      return res.status(409).json({ error: `Ce code course est utilisé par le service « ${affectedMission.serviceName} ». Retirez ou modifiez cette affectation avant de supprimer le trajet.` });
+    }
+    await prisma.ineoRoute.delete({ where: { id: route.id } });
+    await logIneoOperationsActivity(req, 'INEO_ROUTE_DELETED', true, { routeId: route.id, courseReference });
+    res.json({ action: 'DELETED' });
+  } catch (error) {
+    console.error('DELETE /api/ineo/routes/reference/:courseReference:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer le trajet Inéo' });
+  }
+});
+
 app.get(['/ineo/driver/current', '/api/ineo/driver/current'], requireAuth, async (req, res) => {
   try {
     const context = await getIneoDriverContext(req);
