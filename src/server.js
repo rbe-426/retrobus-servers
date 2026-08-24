@@ -3905,6 +3905,17 @@ const isIneoOperationsUser = (req) => {
   return identities.includes('w.belaidi') || identities.includes('belaidiw91@gmail.com');
 };
 
+const isIneoTrackerDeviceRequest = (req) => {
+  const configuredToken = String(process.env.INEO_TRACKER_TOKEN || '');
+  const suppliedToken = String(req.get('x-ineo-tracker-token') || '');
+  return Boolean(configuredToken) && suppliedToken === configuredToken;
+};
+
+const requireIneoTrackerAuthentication = (req, res, next) => {
+  if (isIneoTrackerDeviceRequest(req)) return next();
+  return requireAuth(req, res, next);
+};
+
 const logIneoOperationsActivity = async (req, action, success, details = {}) => {
   try {
     await prisma.access_logs.create({
@@ -4092,12 +4103,12 @@ app.put(['/ineo/vehicle-trackers/:parc', '/api/ineo/vehicle-trackers/:parc'], re
   }
 });
 
-app.post(['/ineo/vehicle-trackers/:imei/position', '/api/ineo/vehicle-trackers/:imei/position'], requireAuth, async (req, res) => {
+app.post(['/ineo/vehicle-trackers/:imei/position', '/api/ineo/vehicle-trackers/:imei/position'], requireIneoTrackerAuthentication, async (req, res) => {
   try {
     const imei = String(req.params.imei || '').replace(/\s+/g, '');
     const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { imei } });
     if (!tracker) return res.status(404).json({ error: 'Appareil IMEI non rattache' });
-    if (!isIneoOperationsUser(req)) {
+    if (!isIneoTrackerDeviceRequest(req) && !isIneoOperationsUser(req)) {
       const context = await getIneoDriverContext(req);
       const activeMission = await prisma.ineoMission.findFirst({ where: { vehicleParc: tracker.vehicleParc, status: 'ACTIVE', driverIdentifier: { in: context.identifiers } } });
       if (!activeMission) return res.status(403).json({ error: 'Aucune mission active autorisee pour cet appareil' });
@@ -4118,6 +4129,104 @@ app.post(['/ineo/vehicle-trackers/:imei/position', '/api/ineo/vehicle-trackers/:
   } catch (error) {
     console.error('POST /api/ineo/vehicle-trackers/:imei/position:', error.message);
     res.status(500).json({ error: 'Impossible d enregistrer la position du vehicule' });
+  }
+});
+
+const createIneoFreeTrackingCode = () => {
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `URBEX-${day}-${suffix}`;
+};
+
+const calculateIneoDistanceMeters = (latitudeA, longitudeA, latitudeB, longitudeB) => {
+  const earthRadiusMeters = 6371000;
+  const toRadians = (value) => value * Math.PI / 180;
+  const latitudeDelta = toRadians(latitudeB - latitudeA);
+  const longitudeDelta = toRadians(longitudeB - longitudeA);
+  const originLatitude = toRadians(latitudeA);
+  const destinationLatitude = toRadians(latitudeB);
+  const haversine = Math.sin(latitudeDelta / 2) ** 2 + Math.cos(originLatitude) * Math.cos(destinationLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+};
+
+app.post(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const trackerId = String(req.body?.trackerId || '').trim();
+    const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { id: trackerId } });
+    if (!tracker) return res.status(404).json({ error: 'Appareil Urbex introuvable' });
+
+    let courseCode = createIneoFreeTrackingCode();
+    while (await prisma.ineoFreeTrackingSession.findUnique({ where: { courseCode } })) courseCode = createIneoFreeTrackingCode();
+    const session = await prisma.ineoFreeTrackingSession.create({
+      data: { courseCode, trackerId: tracker.id, vehicleParc: tracker.vehicleParc },
+    });
+    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_CREATED', true, { sessionId: session.id, trackerId, vehicleParc: tracker.vehicleParc });
+    res.status(201).json({ session, tracker });
+  } catch (error) {
+    console.error('POST /api/ineo/free-tracking-sessions:', error.message);
+    res.status(500).json({ error: 'Impossible de créer le traçage libre' });
+  }
+});
+
+app.post(['/ineo/free-tracking-sessions/code/:courseCode/start', '/api/ineo/free-tracking-sessions/code/:courseCode/start'], requireAuth, async (req, res) => {
+  try {
+    const courseCode = String(req.params.courseCode || '').trim().toUpperCase();
+    const session = await prisma.ineoFreeTrackingSession.findUnique({ where: { courseCode } });
+    if (!session) return res.status(404).json({ error: 'Code course introuvable' });
+    if (session.status === 'COMPLETED') return res.status(409).json({ error: 'Ce traçage libre est déjà terminé' });
+    const context = await getIneoDriverContext(req);
+    if (session.driverIdentifier && !context.identifiers.includes(session.driverIdentifier)) return res.status(403).json({ error: 'Ce code course est déjà utilisé par un autre conducteur' });
+    const updatedSession = await prisma.ineoFreeTrackingSession.update({
+      where: { id: session.id },
+      data: { status: 'ACTIVE', driverIdentifier: session.driverIdentifier || context.identifiers[0], driverName: session.driverName || context.name, startedAt: session.startedAt || new Date() },
+    });
+    const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { id: session.trackerId } });
+    res.json({ session: updatedSession, tracker });
+  } catch (error) {
+    console.error('POST /api/ineo/free-tracking-sessions/code/:courseCode/start:', error.message);
+    res.status(500).json({ error: 'Impossible d’activer le traçage libre' });
+  }
+});
+
+app.post(['/ineo/free-tracking-sessions/:id/positions', '/api/ineo/free-tracking-sessions/:id/positions'], requireAuth, async (req, res) => {
+  try {
+    const session = await prisma.ineoFreeTrackingSession.findUnique({ where: { id: req.params.id } });
+    if (!session) return res.status(404).json({ error: 'Traçage libre introuvable' });
+    if (session.status !== 'ACTIVE') return res.status(409).json({ error: 'Le traçage libre doit être actif' });
+    const context = await getIneoDriverContext(req);
+    if (!session.driverIdentifier || !context.identifiers.includes(session.driverIdentifier)) return res.status(403).json({ error: 'Ce traçage libre ne vous est pas attribué' });
+    const latitude = Number(req.body?.latitude);
+    const longitude = Number(req.body?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return res.status(400).json({ error: 'Coordonnées GPS invalides' });
+    const speedKmh = Number.isFinite(Number(req.body?.speedKmh)) ? Number(req.body.speedKmh) : null;
+    const accuracy = Number.isFinite(Number(req.body?.accuracy)) ? Number(req.body.accuracy) : null;
+    const recordedAt = req.body?.recordedAt ? new Date(req.body.recordedAt) : new Date();
+    const distanceM = session.lastLatitude == null || session.lastLongitude == null ? 0 : calculateIneoDistanceMeters(session.lastLatitude, session.lastLongitude, latitude, longitude);
+    const distanceMeters = session.distanceMeters + distanceM;
+    const maxSpeedKmh = Math.max(session.maxSpeedKmh || 0, speedKmh || 0);
+    const [position, updatedSession] = await prisma.$transaction([
+      prisma.ineoFreeTrackingPosition.create({ data: { sessionId: session.id, latitude, longitude, speedKmh, accuracy, distanceM, recordedAt } }),
+      prisma.ineoFreeTrackingSession.update({ where: { id: session.id }, data: { distanceMeters, maxSpeedKmh, lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastRecordedAt: recordedAt } }),
+      prisma.ineoVehicleTracker.update({ where: { id: session.trackerId }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
+    ]);
+    res.json({ position, session: updatedSession });
+  } catch (error) {
+    console.error('POST /api/ineo/free-tracking-sessions/:id/positions:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer la position libre' });
+  }
+});
+
+app.post(['/ineo/free-tracking-sessions/:id/complete', '/api/ineo/free-tracking-sessions/:id/complete'], requireAuth, async (req, res) => {
+  try {
+    const session = await prisma.ineoFreeTrackingSession.findUnique({ where: { id: req.params.id } });
+    if (!session) return res.status(404).json({ error: 'Traçage libre introuvable' });
+    const context = await getIneoDriverContext(req);
+    if (!isIneoOperationsUser(req) && (!session.driverIdentifier || !context.identifiers.includes(session.driverIdentifier))) return res.status(403).json({ error: 'Ce traçage libre ne vous est pas attribué' });
+    const updatedSession = await prisma.ineoFreeTrackingSession.update({ where: { id: session.id }, data: { status: 'COMPLETED', endedAt: new Date() } });
+    res.json({ session: updatedSession });
+  } catch (error) {
+    console.error('POST /api/ineo/free-tracking-sessions/:id/complete:', error.message);
+    res.status(500).json({ error: 'Impossible de terminer le traçage libre' });
   }
 });
 

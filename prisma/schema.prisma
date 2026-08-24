@@ -414,6 +414,46 @@ model IneoVehicleTracker {
   @@index([lastPositionAt])
 }
 
+model IneoFreeTrackingSession {
+  id               String                     @id @default(cuid())
+  courseCode       String                     @unique
+  trackerId        String
+  vehicleParc      String
+  status           String                     @default("PENDING")
+  driverIdentifier String?
+  driverName       String?
+  startedAt        DateTime?
+  endedAt          DateTime?
+  distanceMeters   Float                      @default(0)
+  maxSpeedKmh      Float                      @default(0)
+  lastLatitude     Float?
+  lastLongitude    Float?
+  lastSpeedKmh     Float?
+  lastRecordedAt   DateTime?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  positions        IneoFreeTrackingPosition[]
+
+  @@index([trackerId])
+  @@index([vehicleParc])
+  @@index([status])
+}
+
+model IneoFreeTrackingPosition {
+  id          String                  @id @default(cuid())
+  sessionId   String
+  latitude    Float
+  longitude   Float
+  speedKmh    Float?
+  accuracy    Float?
+  distanceM   Float                   @default(0)
+  recordedAt  DateTime
+  createdAt   DateTime                @default(now())
+  session     IneoFreeTrackingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, recordedAt])
+}
+
 model IneoRoute {
   id                 String   @id @default(cuid())
   courseReference    String   @unique
