@@ -4286,19 +4286,36 @@ const calculateIneoDistanceMeters = (latitudeA, longitudeA, latitudeB, longitude
 app.post(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const trackerId = String(req.body?.trackerId || '').trim();
+    const driverIdentifier = String(req.body?.driverIdentifier || '').trim().toLowerCase();
+    const driverName = String(req.body?.driverName || '').trim() || null;
+    if (!driverIdentifier) return res.status(400).json({ error: 'Conducteur requis pour créer le traçage libre' });
     const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { id: trackerId } });
     if (!tracker) return res.status(404).json({ error: 'Appareil Urbex introuvable' });
 
     let courseCode = createIneoFreeTrackingCode();
     while (await prisma.ineoFreeTrackingSession.findUnique({ where: { courseCode } })) courseCode = createIneoFreeTrackingCode();
     const session = await prisma.ineoFreeTrackingSession.create({
-      data: { courseCode, trackerId: tracker.id, vehicleParc: tracker.vehicleParc },
+      data: { serviceReference: 'RBE-999-999', courseCode, trackerId: tracker.id, vehicleParc: tracker.vehicleParc, driverIdentifier, driverName },
     });
-    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_CREATED', true, { sessionId: session.id, trackerId, vehicleParc: tracker.vehicleParc });
+    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_CREATED', true, { sessionId: session.id, trackerId, vehicleParc: tracker.vehicleParc, driverIdentifier });
     res.status(201).json({ session, tracker });
   } catch (error) {
     console.error('POST /api/ineo/free-tracking-sessions:', error.message);
     res.status(500).json({ error: 'Impossible de créer le traçage libre' });
+  }
+});
+
+app.get(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const sessions = await prisma.ineoFreeTrackingSession.findMany({
+      include: { positions: { orderBy: { recordedAt: 'asc' } } },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+    });
+    res.json({ sessions });
+  } catch (error) {
+    console.error('GET /api/ineo/free-tracking-sessions:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les traçages libres' });
   }
 });
 
@@ -4309,10 +4326,11 @@ app.post(['/ineo/free-tracking-sessions/code/:courseCode/start', '/api/ineo/free
     if (!session) return res.status(404).json({ error: 'Code course introuvable' });
     if (session.status === 'COMPLETED') return res.status(409).json({ error: 'Ce traçage libre est déjà terminé' });
     const context = await getIneoDriverContext(req);
-    if (session.driverIdentifier && !context.identifiers.includes(session.driverIdentifier)) return res.status(403).json({ error: 'Ce code course est déjà utilisé par un autre conducteur' });
+    if (!session.driverIdentifier) return res.status(409).json({ error: 'Ce traçage libre doit être affecté à un conducteur avant son démarrage' });
+    if (!context.identifiers.includes(session.driverIdentifier)) return res.status(403).json({ error: 'Ce code course est affecté à un autre conducteur' });
     const updatedSession = await prisma.ineoFreeTrackingSession.update({
       where: { id: session.id },
-      data: { status: 'ACTIVE', driverIdentifier: session.driverIdentifier || context.identifiers[0], driverName: session.driverName || context.name, startedAt: session.startedAt || new Date() },
+      data: { status: 'ACTIVE', driverIdentifier: session.driverIdentifier, driverName: session.driverName || context.name, startedAt: session.startedAt || new Date() },
     });
     const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { id: session.trackerId } });
     res.json({ session: updatedSession, tracker });
