@@ -4264,9 +4264,12 @@ app.post(['/ineo/vehicle-trackers/:imei/position', '/api/ineo/vehicle-trackers/:
 });
 
 const createIneoFreeTrackingCode = () => {
-  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `URBEX-${day}-${suffix}`;
+  const now = new Date();
+  const year = String(now.getFullYear()).slice(-2);
+  const yearStart = new Date(now.getFullYear(), 0, 0);
+  const dayOfYear = String(Math.floor((now - yearStart) / 86400000)).padStart(3, '0');
+  const suffix = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `999-${year}${dayOfYear}-${suffix}`;
 };
 
 const calculateIneoDistanceMeters = (latitudeA, longitudeA, latitudeB, longitudeB) => {
