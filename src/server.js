@@ -4642,7 +4642,8 @@ app.get(['/ineo/driver/current', '/api/ineo/driver/current'], requireAuth, async
       where: { courseReference: { equals: mission.courseReference || '', mode: 'insensitive' } },
       orderBy: { updatedAt: 'desc' },
     }) : null;
-    res.json({ mission, route, driverName: context.name });
+    const freeTrackingSession = mission ? await findIneoFreeTrackingSession(mission.courseReference) : null;
+    res.json({ mission, route, freeTracking: freeTrackingSession ? { stopByStop: freeTrackingSession.stopByStop } : null, driverName: context.name });
   } catch (error) {
     console.error('❌ GET /api/ineo/driver/current:', error.message);
     res.status(500).json({ error: 'Impossible de charger votre mission Inéo' });
