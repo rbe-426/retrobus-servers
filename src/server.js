@@ -4337,14 +4337,40 @@ const calculateIneoDistanceMeters = (latitudeA, longitudeA, latitudeB, longitude
   return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 };
 
+const recordIneoFreeTrackingStop = async (session, { latitude, longitude, speedKmh, recordedAt }) => {
+  const previousStop = await prisma.ineoFreeTrackingStop.findFirst({
+    where: { sessionId: session.id },
+    orderBy: { sequence: 'desc' },
+  });
+  const distanceMeters = previousStop
+    ? calculateIneoDistanceMeters(previousStop.latitude, previousStop.longitude, latitude, longitude)
+    : 0;
+  const durationSeconds = previousStop
+    ? Math.max(0, Math.round((recordedAt.getTime() - previousStop.recordedAt.getTime()) / 1000))
+    : 0;
+  return prisma.ineoFreeTrackingStop.create({
+    data: {
+      sessionId: session.id,
+      sequence: (previousStop?.sequence || 0) + 1,
+      latitude,
+      longitude,
+      speedKmh,
+      distanceMeters,
+      durationSeconds,
+      recordedAt,
+    },
+  });
+};
+
 app.post(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     let courseCode = createIneoFreeTrackingCode();
     while (await prisma.ineoFreeTrackingSession.findUnique({ where: { courseCode } })) courseCode = createIneoFreeTrackingCode();
+    const stopByStop = Boolean(req.body?.stopByStop);
     const session = await prisma.ineoFreeTrackingSession.create({
-      data: { serviceReference: 'RBE-999-999', courseCode },
+      data: { serviceReference: 'RBE-999-999', courseCode, stopByStop },
     });
-    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_CODE_CREATED', true, { sessionId: session.id, courseCode });
+    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_CODE_CREATED', true, { sessionId: session.id, courseCode, stopByStop });
     res.status(201).json({ session });
   } catch (error) {
     console.error('POST /api/ineo/free-tracking-sessions:', error.message);
@@ -4355,7 +4381,7 @@ app.post(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], r
 app.get(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
     const sessions = await prisma.ineoFreeTrackingSession.findMany({
-      include: { positions: { orderBy: { recordedAt: 'asc' } } },
+      include: { positions: { orderBy: { recordedAt: 'asc' } }, stops: { orderBy: { sequence: 'asc' } } },
       orderBy: { createdAt: 'desc' },
       take: 25,
     });
