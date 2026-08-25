@@ -4277,6 +4277,20 @@ const findIneoFreeTrackingSession = (courseReference) => prisma.ineoFreeTracking
   where: { courseCode: String(courseReference || '').trim().toUpperCase() },
 });
 
+const validateIneoFreeTrackingRoute = async (courseReference, serviceReference, isFreeTracking) => {
+  if (!isFreeTracking) return;
+  if (serviceReference !== 'RBE-999-999') {
+    const error = new Error('Un code course libre utilise obligatoirement le code service RBE-999-999.');
+    error.status = 400;
+    throw error;
+  }
+  if (!await findIneoFreeTrackingSession(courseReference)) {
+    const error = new Error('Ce code n’est pas rattaché à une course libre.');
+    error.status = 400;
+    throw error;
+  }
+};
+
 const attachIneoFreeTrackingAssignment = async (courseReference, serviceReference, vehicleParc, driverIdentifier, driverName) => {
   if (serviceReference !== 'RBE-999-999') return null;
   const session = await findIneoFreeTrackingSession(courseReference);
@@ -4522,6 +4536,7 @@ app.post(['/ineo/routes', '/api/ineo/routes'], requireAuth, requireIneoOperation
     const courseReference = String(req.body?.courseReference || '').trim().toUpperCase();
     const routeData = normalizeIneoRouteData(req.body);
     if (!courseReference || !routeData.serviceReference || !routeData.routeName) return res.status(400).json({ error: 'Codes service et course, ainsi que le nom d itineraire, sont requis' });
+    await validateIneoFreeTrackingRoute(courseReference, routeData.serviceReference, Boolean(req.body?.isFreeTracking));
     const route = await prisma.ineoRoute.create({
       data: { courseReference, ...routeData },
     });
@@ -4539,6 +4554,7 @@ app.put(['/ineo/routes/reference/:courseReference', '/api/ineo/routes/reference/
     const courseReference = String(req.params.courseReference || '').trim().toUpperCase();
     const routeData = normalizeIneoRouteData(req.body);
     if (!courseReference || !routeData.serviceReference || !routeData.routeName) return res.status(400).json({ error: 'Codes service et course, ainsi que le nom d itineraire, sont requis' });
+    await validateIneoFreeTrackingRoute(courseReference, routeData.serviceReference, Boolean(req.body?.isFreeTracking));
     const route = await prisma.ineoRoute.upsert({ where: { courseReference }, create: { courseReference, ...routeData }, update: routeData });
     await logIneoOperationsActivity(req, 'INEO_ROUTE_SAVED', true, { routeId: route.id, courseReference, stopCount: routeData.stops?.length || 0 });
     res.json({ route });

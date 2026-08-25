@@ -1,0 +1,3 @@
+ALTER TABLE "IneoFreeTrackingSession"
+ALTER COLUMN "trackerId" DROP NOT NULL,
+ALTER COLUMN "vehicleParc" DROP NOT NULL;
