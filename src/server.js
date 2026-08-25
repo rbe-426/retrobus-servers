@@ -4311,6 +4311,21 @@ const attachIneoFreeTrackingAssignment = async (courseReference, serviceReferenc
   });
 };
 
+const syncIneoFreeTrackingPosition = async (mission, { latitude, longitude, speedKmh, accuracy, recordedAt }) => {
+  const session = await findIneoFreeTrackingSession(mission.courseReference);
+  if (!session || session.status !== 'ACTIVE' || !session.trackerId) return null;
+  const distanceM = session.lastLatitude == null || session.lastLongitude == null
+    ? 0
+    : calculateIneoDistanceMeters(session.lastLatitude, session.lastLongitude, latitude, longitude);
+  const distanceMeters = session.distanceMeters + distanceM;
+  const maxSpeedKmh = Math.max(session.maxSpeedKmh || 0, speedKmh || 0);
+  const [position, updatedSession] = await prisma.$transaction([
+    prisma.ineoFreeTrackingPosition.create({ data: { sessionId: session.id, latitude, longitude, speedKmh, accuracy, distanceM, recordedAt } }),
+    prisma.ineoFreeTrackingSession.update({ where: { id: session.id }, data: { distanceMeters, maxSpeedKmh, lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastRecordedAt: recordedAt } }),
+  ]);
+  return { position, session: updatedSession };
+};
+
 const calculateIneoDistanceMeters = (latitudeA, longitudeA, latitudeB, longitudeB) => {
   const earthRadiusMeters = 6371000;
   const toRadians = (value) => value * Math.PI / 180;
@@ -4630,6 +4645,13 @@ app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAu
       data: { status: 'ACTIVE', actualDeparture: new Date(), courseReference: assignedCourseReference || courseReference },
       include: { vehicle: true },
     });
+    const freeTrackingSession = await findIneoFreeTrackingSession(mission.courseReference);
+    if (freeTrackingSession) {
+      await prisma.ineoFreeTrackingSession.update({
+        where: { id: freeTrackingSession.id },
+        data: { status: 'ACTIVE', startedAt: freeTrackingSession.startedAt || new Date() },
+      });
+    }
     res.json({ mission, route });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions/:id/start:', error.message);
@@ -4654,7 +4676,8 @@ app.post(['/ineo/missions/:id/position', '/api/ineo/missions/:id/position'], req
       prisma.ineoMission.update({ where: { id: result.mission.id }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
       prisma.ineoVehicleTracker.updateMany({ where: { vehicleParc: result.mission.vehicleParc }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
     ]);
-    res.json({ mission });
+    const freeTracking = await syncIneoFreeTrackingPosition(mission, { latitude, longitude, speedKmh, accuracy, recordedAt });
+    res.json({ mission, freeTracking });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions/:id/position:', error.message);
     res.status(500).json({ error: 'Impossible d’enregistrer la position' });
@@ -4667,7 +4690,11 @@ app.post(['/ineo/missions/:id/complete', '/api/ineo/missions/:id/complete'], req
     if (result.error) return res.status(result.status).json({ error: result.error });
     if (result.mission.status !== 'ACTIVE') return res.status(409).json({ error: 'Cette mission n’est pas active' });
     const mission = await prisma.ineoMission.update({ where: { id: result.mission.id }, data: { status: 'COMPLETED', actualArrival: new Date() }, include: { vehicle: true } });
-    res.json({ mission });
+    const freeTrackingSession = await findIneoFreeTrackingSession(mission.courseReference);
+    const freeTracking = freeTrackingSession?.status === 'ACTIVE'
+      ? await prisma.ineoFreeTrackingSession.update({ where: { id: freeTrackingSession.id }, data: { status: 'COMPLETED', endedAt: new Date() } })
+      : null;
+    res.json({ mission, freeTracking });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions/:id/complete:', error.message);
     res.status(500).json({ error: 'Impossible de terminer la mission' });
