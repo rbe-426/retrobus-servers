@@ -4710,6 +4710,31 @@ app.post(['/ineo/missions/:id/position', '/api/ineo/missions/:id/position'], req
   }
 });
 
+app.post(['/ineo/missions/:id/stops', '/api/ineo/missions/:id/stops'], requireAuth, async (req, res) => {
+  try {
+    const result = await findIneoDriverMission(req, req.params.id);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    if (result.mission.status !== 'ACTIVE') return res.status(409).json({ error: 'La mission doit être active pour marquer un arrêt' });
+    const session = await findIneoFreeTrackingSession(result.mission.courseReference);
+    if (!session?.stopByStop || session.status !== 'ACTIVE') return res.status(409).json({ error: 'Le mode Stop by Stop n’est pas activé pour cette course' });
+    const latitude = Number(result.mission.lastLatitude);
+    const longitude = Number(result.mission.lastLongitude);
+    const speedKmh = Number(result.mission.lastSpeedKmh);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return res.status(409).json({ error: 'Attendez la première position GPS avant de marquer un arrêt' });
+    if (Number.isFinite(speedKmh) && speedKmh > 3) return res.status(409).json({ error: 'Le véhicule doit être immobilisé pour marquer un arrêt' });
+    const stop = await recordIneoFreeTrackingStop(session, {
+      latitude,
+      longitude,
+      speedKmh: Number.isFinite(speedKmh) ? speedKmh : null,
+      recordedAt: new Date(),
+    });
+    res.status(201).json({ stop });
+  } catch (error) {
+    console.error('POST /api/ineo/missions/:id/stops:', error.message);
+    res.status(500).json({ error: 'Impossible de marquer l’arrêt' });
+  }
+});
+
 app.post(['/ineo/missions/:id/complete', '/api/ineo/missions/:id/complete'], requireAuth, async (req, res) => {
   try {
     const result = await findIneoDriverMission(req, req.params.id);
