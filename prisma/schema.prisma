@@ -383,6 +383,19 @@ model IneoPosition {
   @@index([recordedAt])
 }
 
+model IneoDriverProfile {
+  id                    String   @id @default(cuid())
+  driverIdentifier      String   @unique
+  hasCategoryDLicense   Boolean  @default(false)
+  hasDriverCard         Boolean  @default(false)
+  hasValidFimo          Boolean  @default(false)
+  hasTachographCard     Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([hasCategoryDLicense])
+}
+
 model IneoVehicleProfile {
   id          String   @id @default(cuid())
   vehicleParc String   @unique

@@ -3943,6 +3943,56 @@ const requireIneoOperationsAccess = async (req, res, next) => {
   next();
 };
 
+const getIneoAssignmentIssue = async (driverIdentifier, allowExpiredFimo = false) => {
+  const identifier = String(driverIdentifier || '').trim().toLowerCase();
+  const profile = await prisma.ineoDriverProfile.findUnique({ where: { driverIdentifier: identifier } });
+  if (!profile?.hasCategoryDLicense) return { status: 409, code: 'INEO_DRIVER_NOT_ELIGIBLE', error: 'Ce conducteur ne détient pas le permis D et ne peut pas être affecté.' };
+  if (!profile.hasDriverCard) return { status: 409, code: 'INEO_DRIVER_NOT_ELIGIBLE', error: 'La carte conducteur est obligatoire pour cette affectation.' };
+  if (!profile.hasValidFimo && !allowExpiredFimo) return { status: 409, code: 'INEO_FIMO_INVALID', error: 'La FIMO de ce conducteur n’est plus valable. Seules les courses à vide peuvent être affectées.' };
+  return null;
+};
+
+app.get(['/ineo/driver-profiles', '/api/ineo/driver-profiles'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const [profiles, missions] = await Promise.all([
+      prisma.ineoDriverProfile.findMany({ orderBy: { driverIdentifier: 'asc' } }),
+      prisma.ineoMission.findMany({ select: { driverIdentifier: true, scheduledDeparture: true, scheduledArrival: true, actualDeparture: true, actualArrival: true } }),
+    ]);
+    const profileStats = profiles.map((profile) => {
+      const driverMissions = missions.filter((mission) => mission.driverIdentifier === profile.driverIdentifier);
+      const durationHours = (start, end) => start && end ? Math.max(0, new Date(end).getTime() - new Date(start).getTime()) / 3600000 : 0;
+      return {
+        ...profile,
+        theoreticalDrivingHours: driverMissions.reduce((total, mission) => total + durationHours(mission.scheduledDeparture, mission.scheduledArrival), 0),
+        actualDrivingHours: driverMissions.reduce((total, mission) => total + durationHours(mission.actualDeparture, mission.actualArrival), 0),
+      };
+    });
+    res.json({ profiles: profileStats });
+  } catch (error) {
+    console.error('GET /api/ineo/driver-profiles:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les profils conducteurs Inéo' });
+  }
+});
+
+app.put(['/ineo/driver-profiles/:identifier', '/api/ineo/driver-profiles/:identifier'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const driverIdentifier = String(req.params.identifier || '').trim().toLowerCase();
+    if (!driverIdentifier) return res.status(400).json({ error: 'Identifiant conducteur requis' });
+    const profileData = {
+      hasCategoryDLicense: Boolean(req.body?.hasCategoryDLicense),
+      hasDriverCard: Boolean(req.body?.hasDriverCard),
+      hasValidFimo: Boolean(req.body?.hasValidFimo),
+      hasTachographCard: Boolean(req.body?.hasTachographCard),
+    };
+    const profile = await prisma.ineoDriverProfile.upsert({ where: { driverIdentifier }, create: { driverIdentifier, ...profileData }, update: profileData });
+    await logIneoOperationsActivity(req, 'INEO_DRIVER_PROFILE_SAVED', true, { driverIdentifier });
+    res.json({ profile });
+  } catch (error) {
+    console.error('PUT /api/ineo/driver-profiles:', error.message);
+    res.status(500).json({ error: 'Impossible d enregistrer le profil conducteur Inéo' });
+  }
+});
+
 app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const status = String(req.query.status || '').toUpperCase();
@@ -3960,7 +4010,7 @@ app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperat
 
 app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
-    const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes } = req.body || {};
+    const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes, allowExpiredFimo } = req.body || {};
     const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
     const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
     if (!serviceName || !vehicleParc || !driverIdentifier || !normalizedServiceReference || !normalizedCourseReference) {
@@ -3968,6 +4018,8 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOpera
     }
     if (!/^RBE-\d{3}-\d{3}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
     if (!/^\d{3}-\d{5}-\d{3,4}$/.test(normalizedCourseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
+    const assignmentIssue = await getIneoAssignmentIssue(driverIdentifier, Boolean(allowExpiredFimo));
+    if (assignmentIssue) return res.status(assignmentIssue.status).json(assignmentIssue);
     const vehicle = await prisma.vehicle.findUnique({ where: { parc: String(vehicleParc) } });
     if (!vehicle) return res.status(404).json({ error: 'Véhicule introuvable' });
     const route = await prisma.ineoRoute.findFirst({
@@ -3998,6 +4050,8 @@ app.patch(['/ineo/missions/:id/driver', '/api/ineo/missions/:id/driver'], requir
     const missionId = String(req.params.id || '').trim();
     const driverIdentifier = String(req.body?.driverIdentifier || '').trim().toLowerCase();
     const driverName = String(req.body?.driverName || '').trim() || null;
+    const assignmentIssue = await getIneoAssignmentIssue(driverIdentifier, Boolean(req.body?.allowExpiredFimo));
+    if (assignmentIssue) return res.status(assignmentIssue.status).json(assignmentIssue);
     if (!driverIdentifier) return res.status(400).json({ error: 'Conducteur requis' });
     const mission = await prisma.ineoMission.findUnique({ where: { id: missionId } });
     if (!mission) return res.status(404).json({ error: 'Mission introuvable' });
@@ -4022,7 +4076,7 @@ app.patch(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, require
     if (!mission) return res.status(404).json({ error: 'Mission introuvable' });
     if (!['PLANNED', 'ACTIVE'].includes(mission.status)) return res.status(409).json({ error: 'Seuls les services planifiés ou en cours peuvent être modifiés' });
 
-    const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes } = req.body || {};
+    const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes, allowExpiredFimo } = req.body || {};
     const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
     const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
     if (!serviceName || !vehicleParc || !driverIdentifier || !normalizedServiceReference || !normalizedCourseReference) {
@@ -4030,6 +4084,8 @@ app.patch(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, require
     }
     if (!/^RBE-\d{3}-\d{3}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
     if (!/^\d{3}-\d{5}-\d{3,4}$/.test(normalizedCourseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
+    const assignmentIssue = await getIneoAssignmentIssue(driverIdentifier, Boolean(allowExpiredFimo));
+    if (assignmentIssue) return res.status(assignmentIssue.status).json(assignmentIssue);
     const [vehicle, route] = await Promise.all([
       prisma.vehicle.findUnique({ where: { parc: String(vehicleParc).trim() } }),
       prisma.ineoRoute.findFirst({ where: { courseReference: normalizedCourseReference, serviceReference: { equals: normalizedServiceReference, mode: 'insensitive' } } }),
