@@ -442,7 +442,7 @@ const coerceVehicleValue = (key, value) => {
     try {
       return JSON.stringify(value);
     } catch (error) {
-      console.warn(`⚠️  Impossible de sérialiser ${key}:`, error.message);
+      console.warn(`Erreur de serialisation ${key}:`, error.message);
       return null;
     }
   }
@@ -459,7 +459,6 @@ const buildPrismaVehicleUpdateData = (payload = {}) => {
   });
   return data;
 };
-
 let vehicleLifecycleTableEnsured = false;
 const ensureVehicleLifecycleTable = async () => {
   if (vehicleLifecycleTableEnsured || !prisma) return;
@@ -4026,6 +4025,7 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOpera
       where: { courseReference: normalizedCourseReference, serviceReference: { equals: normalizedServiceReference, mode: 'insensitive' } },
     });
     if (!route) return res.status(400).json({ error: 'Le code course doit être configuré et rattaché au code service indiqué' });
+    await attachIneoFreeTrackingAssignment(normalizedCourseReference, normalizedServiceReference, vehicle.parc, String(driverIdentifier).trim().toLowerCase(), driverName?.trim() || null);
     const mission = await prisma.ineoMission.create({
       data: {
         serviceName: String(serviceName).trim(), serviceReference: normalizedServiceReference, courseReference: normalizedCourseReference,
@@ -4092,6 +4092,7 @@ app.patch(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, require
     ]);
     if (!vehicle) return res.status(404).json({ error: 'Véhicule introuvable' });
     if (!route) return res.status(400).json({ error: 'Le code course doit être configuré et rattaché au code service indiqué' });
+    await attachIneoFreeTrackingAssignment(normalizedCourseReference, normalizedServiceReference, vehicle.parc, String(driverIdentifier).trim().toLowerCase(), String(driverName || '').trim() || null);
 
     const updatedMission = await prisma.ineoMission.update({
       where: { id: missionId },
@@ -4272,6 +4273,30 @@ const createIneoFreeTrackingCode = () => {
   return `999-${year}${dayOfYear}-${suffix}`;
 };
 
+const findIneoFreeTrackingSession = (courseReference) => prisma.ineoFreeTrackingSession.findUnique({
+  where: { courseCode: String(courseReference || '').trim().toUpperCase() },
+});
+
+const attachIneoFreeTrackingAssignment = async (courseReference, serviceReference, vehicleParc, driverIdentifier, driverName) => {
+  if (serviceReference !== 'RBE-999-999') return null;
+  const session = await findIneoFreeTrackingSession(courseReference);
+  if (!session) {
+    const error = new Error('Ce code n’est pas rattaché à une course libre.');
+    error.status = 400;
+    throw error;
+  }
+  const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { vehicleParc } });
+  if (!tracker) {
+    const error = new Error('Une course libre doit être affectée à un véhicule disposant d’un IMEI rattaché.');
+    error.status = 400;
+    throw error;
+  }
+  return prisma.ineoFreeTrackingSession.update({
+    where: { id: session.id },
+    data: { trackerId: tracker.id, vehicleParc, driverIdentifier, driverName: driverName || null },
+  });
+};
+
 const calculateIneoDistanceMeters = (latitudeA, longitudeA, latitudeB, longitudeB) => {
   const earthRadiusMeters = 6371000;
   const toRadians = (value) => value * Math.PI / 180;
@@ -4285,20 +4310,13 @@ const calculateIneoDistanceMeters = (latitudeA, longitudeA, latitudeB, longitude
 
 app.post(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
-    const trackerId = String(req.body?.trackerId || '').trim();
-    const driverIdentifier = String(req.body?.driverIdentifier || '').trim().toLowerCase();
-    const driverName = String(req.body?.driverName || '').trim() || null;
-    if (!driverIdentifier) return res.status(400).json({ error: 'Conducteur requis pour créer le traçage libre' });
-    const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { id: trackerId } });
-    if (!tracker) return res.status(404).json({ error: 'Appareil Urbex introuvable' });
-
     let courseCode = createIneoFreeTrackingCode();
     while (await prisma.ineoFreeTrackingSession.findUnique({ where: { courseCode } })) courseCode = createIneoFreeTrackingCode();
     const session = await prisma.ineoFreeTrackingSession.create({
-      data: { serviceReference: 'RBE-999-999', courseCode, trackerId: tracker.id, vehicleParc: tracker.vehicleParc, driverIdentifier, driverName },
+      data: { serviceReference: 'RBE-999-999', courseCode },
     });
-    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_CREATED', true, { sessionId: session.id, trackerId, vehicleParc: tracker.vehicleParc, driverIdentifier });
-    res.status(201).json({ session, tracker });
+    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_CODE_CREATED', true, { sessionId: session.id, courseCode });
+    res.status(201).json({ session });
   } catch (error) {
     console.error('POST /api/ineo/free-tracking-sessions:', error.message);
     res.status(500).json({ error: 'Impossible de créer le traçage libre' });
@@ -14922,4 +14940,15 @@ process.on('SIGTERM', async () => {
   }
   await safeDisconnectPrisma();
   process.exit(0);
+});
+
+app.delete(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const deleted = await prisma.ineoFreeTrackingSession.deleteMany();
+    await logIneoOperationsActivity(req, 'INEO_FREE_TRACKING_PURGED', true, { count: deleted.count });
+    res.json({ deleted: deleted.count });
+  } catch (error) {
+    console.error('DELETE /api/ineo/free-tracking-sessions:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer les courses libres' });
+  }
 });

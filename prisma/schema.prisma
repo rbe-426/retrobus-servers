@@ -432,8 +432,8 @@ model IneoFreeTrackingSession {
   id               String                     @id @default(cuid())
   serviceReference String                     @default("RBE-999-999")
   courseCode       String                     @unique
-  trackerId        String
-  vehicleParc      String
+  trackerId        String?
+  vehicleParc      String?
   status           String                     @default("PENDING")
   driverIdentifier String?
   driverName       String?
