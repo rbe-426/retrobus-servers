@@ -132,8 +132,10 @@ const PORT = process.env.PORT || 4000;
 const pathRoot = process.cwd();
 const NDF_MANAGER_EMAIL = 'belaidiw91@gmail.com';
 const NDF_TRANSFER_PROOF_DIR = path.join(pathRoot, 'private_uploads', 'ndf-transfer-proofs');
+const PROCEDURE_DOCUMENT_DIR = path.join(pathRoot, 'uploads', 'procedures');
 
 fs.mkdirSync(NDF_TRANSFER_PROOF_DIR, { recursive: true });
+fs.mkdirSync(PROCEDURE_DOCUMENT_DIR, { recursive: true });
 
 const isNdfManager = (req) => String(req.user?.email || '').trim().toLowerCase() === NDF_MANAGER_EMAIL;
 const requireNdfManager = (req, res, next) => {
@@ -3941,6 +3943,54 @@ const requireIneoOperationsAccess = async (req, res, next) => {
   await logIneoOperationsActivity(req, 'INEO_OPERATIONS_ACCESS', true, { path: req.path });
   next();
 };
+
+const PROCEDURE_CATEGORIES = new Set(['vehicules', 'commerciales', 'tournage-safe', 'securite']);
+const requireProcedurePublisher = (req, res, next) => {
+  if (!isIneoOperationsUser(req)) return res.status(403).json({ error: 'La publication des procedures est reservee a w.belaidi.' });
+  next();
+};
+
+app.get(['/procedures/documents', '/api/procedures/documents'], requireAuth, async (req, res) => {
+  try {
+    const categoryId = String(req.query.categoryId || '').trim();
+    if (categoryId && !PROCEDURE_CATEGORIES.has(categoryId)) return res.status(400).json({ error: 'Categorie de procedures invalide.' });
+    const documents = await prisma.procedureDocument.findMany({ where: categoryId ? { categoryId } : {}, orderBy: { uploadedAt: 'desc' } });
+    res.json({ documents, canPublish: isIneoOperationsUser(req) });
+  } catch (error) {
+    console.error('GET /api/procedures/documents:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les procedures.' });
+  }
+});
+
+app.post(['/procedures/documents', '/api/procedures/documents'], requireAuth, requireProcedurePublisher, uploadLimiter, procedureDocumentUpload.single('file'), async (req, res) => {
+  try {
+    const categoryId = String(req.body?.categoryId || '').trim();
+    const title = String(req.body?.title || '').trim();
+    const description = String(req.body?.description || '').trim();
+    if (!PROCEDURE_CATEGORIES.has(categoryId) || !title || !req.file) return res.status(400).json({ error: 'Categorie, titre et fichier PDF sont requis.' });
+    const document = await prisma.procedureDocument.create({
+      data: { categoryId, title, description: description || null, fileName: req.file.originalname, filePath: `/uploads/procedures/${req.file.filename}`, fileSize: req.file.size, uploadedBy: req.user?.email || 'w.belaidi' },
+    });
+    res.status(201).json({ document });
+  } catch (error) {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    console.error('POST /api/procedures/documents:', error.message);
+    res.status(500).json({ error: 'Impossible de publier la procedure.' });
+  }
+});
+
+app.delete(['/procedures/documents/:id', '/api/procedures/documents/:id'], requireAuth, requireProcedurePublisher, async (req, res) => {
+  try {
+    const document = await prisma.procedureDocument.findUnique({ where: { id: req.params.id } });
+    if (!document) return res.status(404).json({ error: 'Procedure introuvable.' });
+    await prisma.procedureDocument.delete({ where: { id: document.id } });
+    fs.unlink(path.join(pathRoot, document.filePath.replace(/^\//, '')), () => {});
+    res.json({ action: 'DELETED' });
+  } catch (error) {
+    console.error('DELETE /api/procedures/documents/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer la procedure.' });
+  }
+});
 
 const getIneoAssignmentIssue = async (driverIdentifier, allowExpiredFimo = false) => {
   const identifier = String(driverIdentifier || '').trim().toLowerCase();
@@ -15046,4 +15096,13 @@ app.delete(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'],
     console.error('DELETE /api/ineo/free-tracking-sessions:', error.message);
     res.status(500).json({ error: 'Impossible de supprimer les courses libres' });
   }
+});
+
+const procedureDocumentUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => callback(null, PROCEDURE_DOCUMENT_DIR),
+    filename: (_req, _file, callback) => callback(null, `${randomUUID()}.pdf`),
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => callback(file.mimetype === 'application/pdf' ? null : new Error('Seuls les fichiers PDF sont acceptés.'), file.mimetype === 'application/pdf'),
 });

@@ -74,6 +74,21 @@ model Document {
   @@index([type])
 }
 
+model ProcedureDocument {
+  id          String   @id @default(cuid())
+  categoryId  String
+  title       String
+  description String?
+  fileName    String
+  filePath    String
+  fileSize    Int
+  uploadedBy  String
+  uploadedAt  DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([categoryId, uploadedAt])
+}
+
 model Event {
   id                String              @id
   title             String
