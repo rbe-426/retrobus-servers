@@ -155,6 +155,15 @@ const transferProofUpload = multer({
   }
 });
 
+const procedureDocumentUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => callback(null, PROCEDURE_DOCUMENT_DIR),
+    filename: (_req, _file, callback) => callback(null, `${randomUUID()}.pdf`),
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => callback(file.mimetype === 'application/pdf' ? null : new Error('Seuls les fichiers PDF sont acceptés.'), file.mimetype === 'application/pdf'),
+});
+
 // ============================================================
 // � CONFIGURATION EMAIL - NODEMAILER
 // ============================================================
@@ -15096,13 +15105,4 @@ app.delete(['/ineo/free-tracking-sessions', '/api/ineo/free-tracking-sessions'],
     console.error('DELETE /api/ineo/free-tracking-sessions:', error.message);
     res.status(500).json({ error: 'Impossible de supprimer les courses libres' });
   }
-});
-
-const procedureDocumentUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, callback) => callback(null, PROCEDURE_DOCUMENT_DIR),
-    filename: (_req, _file, callback) => callback(null, `${randomUUID()}.pdf`),
-  }),
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req, file, callback) => callback(file.mimetype === 'application/pdf' ? null : new Error('Seuls les fichiers PDF sont acceptés.'), file.mimetype === 'application/pdf'),
 });
