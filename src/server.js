@@ -4894,6 +4894,27 @@ app.patch(['/ineo/flashes/:id', '/api/ineo/flashes/:id'], requireAuth, requireIn
   }
 });
 
+app.post(['/ineo/flashes/:id/rebroadcast', '/api/ineo/flashes/:id/rebroadcast'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const sourceFlash = await prisma.ineoFlash.findUnique({ where: { id: req.params.id } });
+    if (!sourceFlash) return res.status(404).json({ error: 'Flash introuvable' });
+    const flash = await prisma.ineoFlash.create({
+      data: {
+        message: sourceFlash.message,
+        scheduleMode: 'IMMEDIATE',
+        active: true,
+        createdBy: req.user?.email || null,
+      },
+      include: { acknowledgements: true },
+    });
+    await logIneoOperationsActivity(req, 'INEO_FLASH_REBROADCAST', true, { sourceFlashId: sourceFlash.id, flashId: flash.id });
+    res.status(201).json({ flash });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/flashes/:id/rebroadcast:', error.message);
+    res.status(500).json({ error: 'Impossible de rediffuser le flash Inéo' });
+  }
+});
+
 app.delete(['/ineo/flashes/:id', '/api/ineo/flashes/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     await prisma.ineoFlash.delete({ where: { id: req.params.id } });
@@ -4915,7 +4936,7 @@ app.get(['/ineo/driver/flashes', '/api/ineo/driver/flashes'], requireAuth, async
     const hasPosition = Number.isFinite(latitude) && Number.isFinite(longitude);
     const activeMission = await prisma.ineoMission.findFirst({ where: { driverIdentifier: { in: context.identifiers }, status: 'ACTIVE' } });
     const candidates = await prisma.ineoFlash.findMany({
-      where: { active: true, NOT: { acknowledgements: { some: { driverIdentifier } } } },
+      where: { active: true, NOT: { acknowledgements: { some: { driverIdentifier: { in: context.identifiers } } } } },
       orderBy: { createdAt: 'asc' },
     });
     const now = Date.now();
