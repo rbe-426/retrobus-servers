@@ -1792,7 +1792,7 @@ app.use('/api/museum', museumRoutes);
 
 const museumWorkspaceSections = new Set([
   'restorations', 'docs', 'events', 'facing', 'floor', 'staff', 'planning',
-  'visitors', 'reservations', 'tickets', 'shop-items', 'reductions', 'exonerations', 'museum-finance',
+  'visitors', 'reservations', 'tickets', 'shop-items', 'reductions', 'exonerations', 'museum-finance', 'layout',
 ]);
 
 const requireMuseumWorkspaceSection = (req, res, next) => {
