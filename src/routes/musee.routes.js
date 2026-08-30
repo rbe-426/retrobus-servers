@@ -5,7 +5,7 @@ import bcrypt from 'bcrypt';
 const router = express.Router();
 
 // Secret JWT spécifique pour Le Musée (différent du système principal)
-const MUSEE_JWT_SECRET = process.env.MUSEE_JWT_SECRET || 'musee-secret-key-change-in-production-' + Date.now();
+const MUSEE_JWT_SECRET = process.env.MUSEE_JWT_SECRET || 'local-dev-musee-secret';
 
 // Base de données temporaire en mémoire pour les utilisateurs du Musée
 // TODO: Migrer vers Prisma avec une table dédiée

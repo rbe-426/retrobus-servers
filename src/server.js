@@ -1790,6 +1790,76 @@ app.use('/api/ticketing', ticketingRoutes);
 // Routes musée (gestion des collections et modules)
 app.use('/api/museum', museumRoutes);
 
+const museumWorkspaceSections = new Set([
+  'restorations', 'docs', 'events', 'facing', 'floor', 'staff', 'planning',
+  'visitors', 'reservations', 'tickets', 'shop-items', 'reductions', 'exonerations', 'museum-finance',
+]);
+
+const requireMuseumWorkspaceSection = (req, res, next) => {
+  if (!museumWorkspaceSections.has(req.params.section)) {
+    return res.status(404).json({ error: 'Section Musée introuvable' });
+  }
+  next();
+};
+
+app.get('/api/museum/workspace/:section', requireAuth, requireMuseumWorkspaceSection, async (req, res) => {
+  try {
+    const records = await prisma.museumWorkspaceRecord.findMany({
+      where: { section: req.params.section },
+      orderBy: { updatedAt: 'desc' },
+    });
+    res.json({ records: records.map((record) => ({ id: record.id, ...record.data })) });
+  } catch (error) {
+    console.error('❌ GET /api/museum/workspace:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les données du Musée' });
+  }
+});
+
+app.post('/api/museum/workspace/:section', requireAuth, requireMuseumWorkspaceSection, async (req, res) => {
+  try {
+    if (!req.body?.data || typeof req.body.data !== 'object' || Array.isArray(req.body.data)) {
+      return res.status(400).json({ error: 'Données Musée invalides' });
+    }
+    const record = await prisma.museumWorkspaceRecord.create({
+      data: { section: req.params.section, data: req.body.data },
+    });
+    res.status(201).json({ record: { id: record.id, ...record.data } });
+  } catch (error) {
+    console.error('❌ POST /api/museum/workspace:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer les données du Musée' });
+  }
+});
+
+app.patch('/api/museum/workspace/:section/:id', requireAuth, requireMuseumWorkspaceSection, async (req, res) => {
+  try {
+    if (!req.body?.data || typeof req.body.data !== 'object' || Array.isArray(req.body.data)) {
+      return res.status(400).json({ error: 'Données Musée invalides' });
+    }
+    const existing = await prisma.museumWorkspaceRecord.findFirst({ where: { id: req.params.id, section: req.params.section } });
+    if (!existing) return res.status(404).json({ error: 'Enregistrement Musée introuvable' });
+    const record = await prisma.museumWorkspaceRecord.update({
+      where: { id: existing.id },
+      data: { data: req.body.data },
+    });
+    res.json({ record: { id: record.id, ...record.data } });
+  } catch (error) {
+    console.error('❌ PATCH /api/museum/workspace:', error.message);
+    res.status(500).json({ error: 'Impossible de modifier les données du Musée' });
+  }
+});
+
+app.delete('/api/museum/workspace/:section/:id', requireAuth, requireMuseumWorkspaceSection, async (req, res) => {
+  try {
+    const existing = await prisma.museumWorkspaceRecord.findFirst({ where: { id: req.params.id, section: req.params.section } });
+    if (!existing) return res.status(404).json({ error: 'Enregistrement Musée introuvable' });
+    await prisma.museumWorkspaceRecord.delete({ where: { id: existing.id } });
+    res.json({ action: 'DELETED' });
+  } catch (error) {
+    console.error('❌ DELETE /api/museum/workspace:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer les données du Musée' });
+  }
+});
+
 // Routes RétroMail (gestion des emails Infomaniak)
 app.use('/api/mail', mailRoutes);
 

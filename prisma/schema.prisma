@@ -89,6 +89,16 @@ model ProcedureDocument {
   @@index([categoryId, uploadedAt])
 }
 
+model MuseumWorkspaceRecord {
+  id        String   @id @default(cuid())
+  section   String
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([section, updatedAt])
+}
+
 model Event {
   id                String              @id
   title             String
