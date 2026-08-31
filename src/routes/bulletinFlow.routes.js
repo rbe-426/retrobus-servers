@@ -927,6 +927,14 @@ router.post('/cleanup', async (req, res) => {
 // Nettoyage automatique toutes les 6 heures
 setInterval(() => {
   cleanupExpiredTokens().catch((error) => {
+    const message = error?.message || String(error);
+    const databaseUnavailable = /Can't reach database server|connection reset|ECONNRESET|ECONNREFUSED|ETIMEDOUT/i.test(message);
+
+    if (databaseUnavailable) {
+      console.warn('⚠️ Bulletin-flow cleanup skipped: database temporarily unavailable; retrying at the next scheduled run.');
+      return;
+    }
+
     console.error('❌ Error during scheduled bulletin-flow cleanup:', error);
   });
 }, 6 * 60 * 60 * 1000);
