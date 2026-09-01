@@ -299,9 +299,29 @@ const persistStateToDisk = () => {
 };
 
 let stateSaveTimer = null;
+const persistBankBalance = async () => {
+  const existing = await prisma.finance_balances.findFirst();
+  if (existing) {
+    await prisma.finance_balances.update({
+      where: { id: existing.id },
+      data: { balance: state.bankBalance }
+    });
+    return;
+  }
+
+  await prisma.finance_balances.create({
+    data: { id: uid(), balance: state.bankBalance }
+  });
+};
+
 const debouncedSave = () => {
   if (stateSaveTimer) clearTimeout(stateSaveTimer);
-  stateSaveTimer = setTimeout(persistStateToDisk, 750);
+  stateSaveTimer = setTimeout(() => {
+    persistStateToDisk();
+    persistBankBalance().catch((error) => {
+      console.error('⚠️ Impossible de persister le solde bancaire:', error.message);
+    });
+  }, 750);
 };
 
 const normalizeExtrasValue = (extras) => {
@@ -11426,14 +11446,20 @@ app.get('/newsletter/export', requireAuth, (req, res) => {
   }
 });
 
-// FINANCE API ALIASES - for frontend compatibility
-// /api/finance/balance -> /api/finance/bank-balance
-app.get('/api/finance/balance', (req, res) => {
-  res.json({ balance: state.bankBalance });
+// FINANCE API ALIASES - source Prisma commune avec /bank-balance
+app.get('/api/finance/balance', requireAuth, async (req, res) => {
+  try {
+    const storedBalance = await prisma.finance_balances.findFirst();
+    if (storedBalance) state.bankBalance = storedBalance.balance;
+    res.json({ balance: state.bankBalance });
+  } catch (error) {
+    console.error('❌ Erreur lecture solde bancaire:', error.message);
+    res.status(500).json({ error: 'Impossible de charger le solde bancaire' });
+  }
 });
 
-// PUT /api/finance/balance - Update balance
-app.put('/api/finance/balance', (req, res) => {
+// PUT /api/finance/balance - Met à jour le solde de rapprochement bancaire.
+app.put('/api/finance/balance', requireAuth, async (req, res) => {
   try {
     const { balance, reason } = req.body;
     
@@ -11442,6 +11468,25 @@ app.put('/api/finance/balance', (req, res) => {
     }
 
     state.bankBalance = parseFloat(balance);
+    const previous = await prisma.finance_balances.findFirst();
+    if (previous) {
+      await prisma.finance_balances.update({
+        where: { id: previous.id },
+        data: { balance: state.bankBalance }
+      });
+    } else {
+      await prisma.finance_balances.create({
+        data: { id: uid(), balance: state.bankBalance }
+      });
+    }
+    await prisma.finance_balance_history.create({
+      data: {
+        id: uid(),
+        oldBalance: previous?.balance ?? 0,
+        newBalance: state.bankBalance,
+        reason: reason || 'Mise à jour manuelle du solde bancaire'
+      }
+    });
     console.log(`✅ Solde mis à jour: ${balance} (raison: ${reason || 'non spécifiée'})`);
     
     res.json({ 
