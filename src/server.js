@@ -11458,6 +11458,19 @@ app.get('/api/finance/balance', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/finance/balance/history', requireAuth, async (req, res) => {
+  try {
+    const history = await prisma.finance_balance_history.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    });
+    res.json({ history });
+  } catch (error) {
+    console.error('❌ Erreur lecture historique des soldes:', error.message);
+    res.status(500).json({ error: 'Impossible de charger l’historique des soldes' });
+  }
+});
+
 // PUT /api/finance/balance - Met à jour le solde de rapprochement bancaire.
 app.put('/api/finance/balance', requireAuth, async (req, res) => {
   try {
