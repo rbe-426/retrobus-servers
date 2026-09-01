@@ -1257,10 +1257,27 @@ model Debt {
   createdBy   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime
+  cashPayments debt_cash_payments[]
 
   @@index([type])
   @@index([status])
   @@index([dueDate])
+}
+
+model debt_cash_payments {
+  id        String   @id
+  debtId    String
+  amount    Float
+  date      DateTime @default(now())
+  description String
+  notes     String?
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  debt      Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  @@index([date])
+  @@index([debtId])
 }
 
 // ============================================

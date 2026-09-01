@@ -9508,6 +9508,17 @@ const normalizeTransactionDescription = (value) => String(value || '')
   .trim()
   .toUpperCase();
 
+const isDebtPaymentTransaction = (debt, transaction) => {
+  const isDebit = transaction.type === 'DEBIT';
+  const isDebt = debt.type === 'DETTE';
+  const isOverpayment = debt.debtNature === 'TROP_PERCU';
+
+  // A normal debt is paid by an outgoing debit; a normal receivable by an incoming credit.
+  return isOverpayment
+    ? (isDebt ? !isDebit : isDebit)
+    : (isDebt ? isDebit : !isDebit);
+};
+
 app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
   try {
     const txId = uid();
@@ -9859,6 +9870,22 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
     
     console.log(`🔗 Liaison transaction ${req.params.id} -> ${linkedDocumentType} ${linkedDocumentNumber}`);
 
+    let targetDebt = null;
+    if (linkedDocumentType === 'DETTE' || linkedDocumentType === 'CRÉANCE') {
+      targetDebt = await prisma.debt.findUnique({ where: { id: linkedDocumentId } });
+      if (!targetDebt) return res.status(404).json({ error: 'Dette ou créance introuvable.' });
+
+      const transactionToLink = await prisma.finance_transactions.findUnique({ where: { id: req.params.id } });
+      if (!transactionToLink) return res.status(404).json({ error: 'Transaction introuvable.' });
+      if (!isDebtPaymentTransaction(targetDebt, transactionToLink)) {
+        return res.status(400).json({
+          error: targetDebt.type === 'CRÉANCE'
+            ? 'Une créance ne peut être réglée que par un crédit entrant.'
+            : 'Une dette ne peut être réglée que par un débit sortant.'
+        });
+      }
+    }
+
     // Récupérer la transaction actuelle pour savoir si elle était déjà liée à une dette
     const currentTx = await prisma.finance_transactions.findUnique({ where: { id: req.params.id } });
     if (currentTx && currentTx.linkedDocumentId && (currentTx.linkedDocumentType === 'DETTE' || currentTx.linkedDocumentType === 'CRÉANCE')) {
@@ -9913,7 +9940,7 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
     // Si la nouvelle liaison est une dette, mettre à jour intelligemment
     if (linkedDocumentType === 'DETTE' || linkedDocumentType === 'CRÉANCE') {
       try {
-        const newDebt = await prisma.debt.findUnique({ where: { id: linkedDocumentId } });
+        const newDebt = targetDebt;
         if (newDebt) {
           const txAmount = Math.abs(Number(updated.amount || 0));
           const isDebit = updated.type === 'DEBIT';
