@@ -9501,6 +9501,13 @@ app.get(['/finance/transactions', '/api/finance/transactions'], requireAuth, asy
   }
 });
 
+const normalizeTransactionDescription = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .toUpperCase();
+
 app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
   try {
     const txId = uid();
@@ -9513,6 +9520,29 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
       category: req.body.category || '',
       date: req.body.date ? new Date(req.body.date) : new Date()
     };
+
+    const transactionDayStart = new Date(txData.date);
+    transactionDayStart.setUTCHours(0, 0, 0, 0);
+    const transactionDayEnd = new Date(transactionDayStart);
+    transactionDayEnd.setUTCDate(transactionDayEnd.getUTCDate() + 1);
+    const existingCandidates = await prisma.finance_transactions.findMany({
+      where: {
+        type: txData.type,
+        amount: txData.amount,
+        date: { gte: transactionDayStart, lt: transactionDayEnd }
+      },
+      select: { id: true, description: true }
+    });
+    const existingTransaction = existingCandidates.find((candidate) => (
+      normalizeTransactionDescription(candidate.description) === normalizeTransactionDescription(txData.description)
+    ));
+    if (existingTransaction) {
+      return res.json({
+        duplicate: true,
+        id: existingTransaction.id,
+        message: 'Transaction déjà importée'
+      });
+    }
 
     // Si lié à une dette, enrichir les champs de liaison
     let linkedDebt = null;
@@ -9580,12 +9610,7 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
     };
     state.transactions.unshift(tx);
     
-    // Mettre à jour le solde bancaire
-    if (tx.type === 'CREDIT') {
-      state.bankBalance += Number(tx.amount || 0);
-    } else if (tx.type === 'DEBIT') {
-      state.bankBalance -= Number(tx.amount || 0);
-    }
+    // Le solde bancaire est un rapprochement BNP explicite, indépendant des imports historiques.
     debouncedSave();
     
     console.log('✅ Transaction créée dans Prisma:', txId, '| Nouveau solde:', state.bankBalance);
@@ -9645,10 +9670,7 @@ app.put(['/finance/transactions/:id', '/api/finance/transactions/:id'], requireA
     const tx = { ...oldTx, ...updateData, date: updated.date.toISOString(), updatedAt: new Date().toISOString() };
     state.transactions = state.transactions.map(t => t.id === req.params.id ? tx : t);
     
-    // Mettre à jour le solde bancaire si le montant a changé
-    const oldAmount = oldTx.type === 'CREDIT' ? oldTx.amount : (oldTx.type === 'DEBIT' ? -oldTx.amount : 0);
-    const newAmount = tx.type === 'CREDIT' ? tx.amount : (tx.type === 'DEBIT' ? -tx.amount : 0);
-    state.bankBalance += (newAmount - oldAmount);
+    // La correction d'une écriture ne modifie pas le solde de rapprochement BNP.
     debouncedSave();
     
     console.log('✅ Transaction modifiée dans Prisma:', tx.id);
@@ -9732,12 +9754,7 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
     // Delete from memory
     state.transactions = state.transactions.filter(t => t.id !== req.params.id);
     
-    // Mettre à jour le solde bancaire
-    if (tx.type === 'CREDIT') {
-      state.bankBalance -= Number(tx.amount || 0);
-    } else if (tx.type === 'DEBIT') {
-      state.bankBalance += Number(tx.amount || 0);
-    }
+    // La suppression d'une écriture ne modifie pas le solde de rapprochement BNP.
     debouncedSave();
     
     console.log('✅ Transaction supprimée de Prisma:', req.params.id);
