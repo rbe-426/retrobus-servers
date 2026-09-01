@@ -9529,15 +9529,11 @@ const normalizeTransactionDescription = (value) => String(value || '')
   .trim()
   .toUpperCase();
 
-const isDebtPaymentTransaction = (debt, transaction) => {
+const doesTransactionIncreaseDebt = (debt, transaction) => {
   const isDebit = transaction.type === 'DEBIT';
   const isDebt = debt.type === 'DETTE';
-  const isOverpayment = debt.debtNature === 'TROP_PERCU';
 
-  // A normal debt is paid by an outgoing debit; a normal receivable by an incoming credit.
-  return isOverpayment
-    ? (isDebt ? !isDebit : isDebit)
-    : (isDebt ? isDebit : !isDebit);
+  return (isDebt && !isDebit) || (!isDebt && isDebit);
 };
 
 app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, async (req, res) => {
@@ -9593,24 +9589,8 @@ app.post(['/finance/transactions', '/api/finance/transactions'], requireAuth, as
     // Mettre à jour la dette liée si besoin
     if (linkedDebt) {
       const txAmount = Math.abs(txData.amount || 0);
-      const isDebit = txData.type === 'DEBIT'; // Utiliser le champ type
-      const isDette = linkedDebt.type === 'DETTE';
-      const isTropPercu = linkedDebt.debtNature === 'TROP_PERCU';
-      
-      // Logique intelligente selon le type de dette et de transaction :
-      // DETTE_NORMALE: DETTE + DEBIT → amount++, DETTE + CREDIT → paidAmount++
-      // TROP_PERCU: DETTE + CREDIT → amount++ (on a reçu trop), DETTE + DEBIT → paidAmount++ (on rembourse)
-      
       const updateData = { updatedAt: new Date() };
-      let shouldIncreaseAmount;
-      
-      if (isTropPercu) {
-        // Logique inversée pour trop-perçu
-        shouldIncreaseAmount = (isDette && !isDebit) || (!isDette && isDebit);
-      } else {
-        // Logique normale
-        shouldIncreaseAmount = (isDette && isDebit) || (!isDette && !isDebit);
-      }
+      const shouldIncreaseAmount = doesTransactionIncreaseDebt(linkedDebt, txData);
       
       if (shouldIncreaseAmount) {
         // Transaction crée/augmente la dette/créance
@@ -9747,18 +9727,8 @@ app.delete(['/finance/transactions/:id', '/api/finance/transactions/:id'], requi
         const debt = await prisma.debt.findUnique({ where: { id: tx.linkedDocumentId } });
         if (debt) {
           const txAmount = Math.abs(Number(tx.amount || 0));
-          const isDebit = tx.type === 'DEBIT';
-          const isDette = debt.type === 'DETTE';
-          const isTropPercu = debt.debtNature === 'TROP_PERCU';
-          
           const updateData = { updatedAt: new Date() };
-          let hadIncreasedAmount;
-          
-          if (isTropPercu) {
-            hadIncreasedAmount = (isDette && !isDebit) || (!isDette && isDebit);
-          } else {
-            hadIncreasedAmount = (isDette && isDebit) || (!isDette && !isDebit);
-          }
+          const hadIncreasedAmount = doesTransactionIncreaseDebt(debt, tx);
           
           if (hadIncreasedAmount) {
             // Transaction avait augmenté amount → on reverse
@@ -9898,13 +9868,6 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
 
       const transactionToLink = await prisma.finance_transactions.findUnique({ where: { id: req.params.id } });
       if (!transactionToLink) return res.status(404).json({ error: 'Transaction introuvable.' });
-      if (!isDebtPaymentTransaction(targetDebt, transactionToLink)) {
-        return res.status(400).json({
-          error: targetDebt.type === 'CRÉANCE'
-            ? 'Une créance ne peut être réglée que par un crédit entrant.'
-            : 'Une dette ne peut être réglée que par un débit sortant.'
-        });
-      }
     }
 
     // Récupérer la transaction actuelle pour savoir si elle était déjà liée à une dette
@@ -9915,18 +9878,8 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
         const oldDebt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
         if (oldDebt) {
           const txAmount = Math.abs(Number(currentTx.amount || 0));
-          const isDebit = currentTx.type === 'DEBIT';
-          const isDette = oldDebt.type === 'DETTE';
-          const isTropPercu = oldDebt.debtNature === 'TROP_PERCU';
-          
           const updateData = { updatedAt: new Date() };
-          let hadIncreasedAmount;
-          
-          if (isTropPercu) {
-            hadIncreasedAmount = (isDette && !isDebit) || (!isDette && isDebit);
-          } else {
-            hadIncreasedAmount = (isDette && isDebit) || (!isDette && !isDebit);
-          }
+          const hadIncreasedAmount = doesTransactionIncreaseDebt(oldDebt, currentTx);
           
           if (hadIncreasedAmount) {
             // Transaction avait augmenté amount → on reverse
@@ -9964,18 +9917,8 @@ app.post(['/finance/transactions/:id/link', '/api/finance/transactions/:id/link'
         const newDebt = targetDebt;
         if (newDebt) {
           const txAmount = Math.abs(Number(updated.amount || 0));
-          const isDebit = updated.type === 'DEBIT';
-          const isDette = newDebt.type === 'DETTE';
-          const isTropPercu = newDebt.debtNature === 'TROP_PERCU';
-          
           const updateData = { updatedAt: new Date() };
-          let shouldIncreaseAmount;
-          
-          if (isTropPercu) {
-            shouldIncreaseAmount = (isDette && !isDebit) || (!isDette && isDebit);
-          } else {
-            shouldIncreaseAmount = (isDette && isDebit) || (!isDette && !isDebit);
-          }
+          const shouldIncreaseAmount = doesTransactionIncreaseDebt(newDebt, updated);
           
           if (shouldIncreaseAmount) {
             // Transaction crée/augmente la dette/créance
@@ -10032,18 +9975,8 @@ app.delete(['/finance/transactions/:id/link', '/api/finance/transactions/:id/lin
         const debt = await prisma.debt.findUnique({ where: { id: currentTx.linkedDocumentId } });
         if (debt) {
           const txAmount = Math.abs(Number(currentTx.amount || 0));
-          const isDebit = currentTx.type === 'DEBIT';
-          const isDette = debt.type === 'DETTE';
-          const isTropPercu = debt.debtNature === 'TROP_PERCU';
-          
           const updateData = { updatedAt: new Date() };
-          let hadIncreasedAmount;
-          
-          if (isTropPercu) {
-            hadIncreasedAmount = (isDette && !isDebit) || (!isDette && isDebit);
-          } else {
-            hadIncreasedAmount = (isDette && isDebit) || (!isDette && !isDebit);
-          }
+          const hadIncreasedAmount = doesTransactionIncreaseDebt(debt, currentTx);
           
           if (hadIncreasedAmount) {
             // Transaction avait augmenté amount → on reverse
@@ -10534,19 +10467,10 @@ app.post(['/finance/debts/recalculate', '/api/finance/debts/recalculate'], requi
       // Recalculer amount et paidAmount selon la logique intelligente
       let newAmount = 0;
       let newPaidAmount = 0;
-      const isDette = debt.type === 'DETTE';
-      const isTropPercu = debt.debtNature === 'TROP_PERCU';
       
       for (const tx of linkedTx) {
         const txAmount = Math.abs(tx.amount || 0);
-        const isDebit = tx.type === 'DEBIT';
-        
-        let shouldIncreaseAmount;
-        if (isTropPercu) {
-          shouldIncreaseAmount = (isDette && !isDebit) || (!isDette && isDebit);
-        } else {
-          shouldIncreaseAmount = (isDette && isDebit) || (!isDette && !isDebit);
-        }
+        const shouldIncreaseAmount = doesTransactionIncreaseDebt(debt, tx);
         
         if (shouldIncreaseAmount) {
           // Transaction crée/augmente la dette/créance
