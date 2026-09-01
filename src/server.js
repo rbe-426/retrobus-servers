@@ -129,14 +129,14 @@ const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 4000;
 const pathRoot = process.cwd();
-const NDF_MANAGER_EMAIL = 'belaidiw91@gmail.com';
+const NDF_MANAGER_ROLES = new Set(['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER']);
 const NDF_TRANSFER_PROOF_DIR = path.join(pathRoot, 'private_uploads', 'ndf-transfer-proofs');
 const PROCEDURE_DOCUMENT_DIR = path.join(pathRoot, 'uploads', 'procedures');
 
 fs.mkdirSync(NDF_TRANSFER_PROOF_DIR, { recursive: true });
 fs.mkdirSync(PROCEDURE_DOCUMENT_DIR, { recursive: true });
 
-const isNdfManager = (req) => String(req.user?.email || '').trim().toLowerCase() === NDF_MANAGER_EMAIL;
+const isNdfManager = (req) => NDF_MANAGER_ROLES.has(String(req.user?.role || '').trim().toUpperCase());
 const requireNdfManager = (req, res, next) => {
   if (!isNdfManager(req)) return res.status(403).json({ error: 'Acces reserve a la gestion des NDF.' });
   next();
