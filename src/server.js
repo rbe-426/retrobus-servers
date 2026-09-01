@@ -534,6 +534,27 @@ const ensureExpenseReportColumns = async () => {
   expenseReportColumnsEnsured = true;
 };
 
+let debtCashPaymentsTableEnsured = false;
+const ensureDebtCashPaymentsTable = async () => {
+  if (debtCashPaymentsTableEnsured || !prisma) return;
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "debt_cash_payments" (
+      "id" TEXT PRIMARY KEY,
+      "debtId" TEXT NOT NULL REFERENCES "Debt"("id") ON DELETE CASCADE,
+      "amount" DOUBLE PRECISION NOT NULL CHECK ("amount" > 0),
+      "date" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "description" TEXT NOT NULL,
+      "notes" TEXT,
+      "createdBy" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "debt_cash_payments_debtId_idx" ON "debt_cash_payments"("debtId");');
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "debt_cash_payments_date_idx" ON "debt_cash_payments"("date");');
+  debtCashPaymentsTableEnsured = true;
+};
+
 const nextLifecycleVehicleState = (eventType, severity, immobilizing) => {
   if (eventType === 'reforme') return { etat: 'reforme', isPublic: false };
   if (immobilizing || severity === 'critique') return { etat: 'immobilise' };
@@ -10459,6 +10480,7 @@ app.delete(['/finance/expense-reports/:id', '/api/finance/expense-reports/:id'],
 // ============================================
 app.get(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) => {
   try {
+    await ensureDebtCashPaymentsTable();
     const debts = await prisma.debt.findMany({
       orderBy: { createdAt: 'desc' }
     });
@@ -10470,12 +10492,19 @@ app.get(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) 
         orderBy: { date: 'desc' },
         select: { id: true, amount: true, date: true, description: true, type: true }
       });
+      const cashPayments = await prisma.$queryRaw`
+        SELECT "id", "amount", "date", "description", "notes", "createdBy", "createdAt"
+        FROM "debt_cash_payments"
+        WHERE "debtId" = ${debt.id}
+        ORDER BY "date" DESC, "createdAt" DESC
+      `;
       return {
         ...debt,
         paidAmount: debt.paidAmount || 0,
         remainingAmount: Math.max(0, debt.amount - (debt.paidAmount || 0)),
         progressPercent: debt.amount > 0 ? Math.min(100, Math.round(((debt.paidAmount || 0) / debt.amount) * 100)) : 0,
-        linkedTransactions: linkedTx
+        linkedTransactions: linkedTx,
+        cashPayments
       };
     }));
     res.json({ debts: enrichedDebts });
@@ -10489,6 +10518,7 @@ app.get(['/finance/debts', '/api/finance/debts'], requireAuth, async (req, res) 
 app.post(['/finance/debts/recalculate', '/api/finance/debts/recalculate'], requireAuth, async (req, res) => {
   try {
     console.log('🔄 Recalcul de toutes les dettes...');
+    await ensureDebtCashPaymentsTable();
     
     const debts = await prisma.debt.findMany();
     let updated = 0;
@@ -10526,6 +10556,13 @@ app.post(['/finance/debts/recalculate', '/api/finance/debts/recalculate'], requi
           newPaidAmount += txAmount;
         }
       }
+
+      const cashPayments = await prisma.$queryRaw`
+        SELECT COALESCE(SUM("amount"), 0) AS "total"
+        FROM "debt_cash_payments"
+        WHERE "debtId" = ${debt.id}
+      `;
+      newPaidAmount += Number(cashPayments[0]?.total || 0);
       
       // Calculer le statut
       const newStatus = newAmount > 0 && newPaidAmount >= newAmount ? 'PAYÉE' : debt.status === 'ANNULÉE' ? 'ANNULÉE' : 'EN_COURS';
@@ -10550,6 +10587,92 @@ app.post(['/finance/debts/recalculate', '/api/finance/debts/recalculate'], requi
   } catch (e) {
     console.error('❌ Erreur recalcul dettes:', e.message);
     res.status(500).json({ error: 'Erreur recalcul dettes', details: e.message });
+  }
+});
+
+// POST /api/finance/debts/:id/cash-payments - Règlement effectué hors du compte bancaire de l'association
+app.post(['/finance/debts/:id/cash-payments', '/api/finance/debts/:id/cash-payments'], requireAuth, async (req, res) => {
+  try {
+    await ensureDebtCashPaymentsTable();
+    const amount = Number(req.body.amount);
+    const description = String(req.body.description || 'Règlement hors compte').trim();
+    const date = req.body.date ? new Date(req.body.date) : new Date();
+
+    if (!Number.isFinite(amount) || amount <= 0 || !description || Number.isNaN(date.getTime())) {
+      return res.status(400).json({ error: 'Montant positif, libellé et date valide requis.' });
+    }
+
+    const result = await prisma.$transaction(async (transaction) => {
+      const debt = await transaction.debt.findUnique({ where: { id: req.params.id } });
+      if (!debt) throw new Error('NOT_FOUND');
+      if (debt.status === 'ANNULÉE') throw new Error('CANCELLED');
+
+      const remainingAmount = Math.max(0, debt.amount - debt.paidAmount);
+      if (amount > remainingAmount + 0.001) throw new Error('EXCEEDS_REMAINING');
+
+      const paidAmount = debt.paidAmount + amount;
+      const updatedDebt = await transaction.debt.update({
+        where: { id: debt.id },
+        data: { paidAmount, status: paidAmount >= debt.amount ? 'PAYÉE' : 'EN_COURS', updatedAt: new Date() }
+      });
+      const cashPayment = {
+        id: `cash_payment_${randomUUID()}`,
+        debtId: debt.id,
+        amount,
+        date,
+        description,
+        notes: req.body.notes ? String(req.body.notes).trim() : null,
+        createdBy: req.userId || null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      await transaction.$executeRaw`
+        INSERT INTO "debt_cash_payments" ("id", "debtId", "amount", "date", "description", "notes", "createdBy", "createdAt", "updatedAt")
+        VALUES (${cashPayment.id}, ${cashPayment.debtId}, ${cashPayment.amount}, ${cashPayment.date}, ${cashPayment.description}, ${cashPayment.notes}, ${cashPayment.createdBy}, ${cashPayment.createdAt}, ${cashPayment.updatedAt})
+      `;
+      return { cashPayment, debt: updatedDebt };
+    });
+
+    res.status(201).json(result);
+  } catch (e) {
+    const errors = {
+      NOT_FOUND: [404, 'Dette ou créance introuvable.'],
+      CANCELLED: [400, 'Une dette annulée ne peut pas recevoir de règlement.'],
+      EXCEEDS_REMAINING: [400, 'Le règlement dépasse le montant restant.']
+    };
+    const [status, error] = errors[e.message] || [500, 'Erreur lors de l’enregistrement du règlement hors compte.'];
+    if (status === 500) console.error('❌ POST cash payment error:', e.message);
+    res.status(status).json({ error });
+  }
+});
+
+// DELETE /api/finance/debts/:id/cash-payments/:paymentId - Annule un règlement hors compte
+app.delete(['/finance/debts/:id/cash-payments/:paymentId', '/api/finance/debts/:id/cash-payments/:paymentId'], requireAuth, async (req, res) => {
+  try {
+    await ensureDebtCashPaymentsTable();
+    const result = await prisma.$transaction(async (transaction) => {
+      const payments = await transaction.$queryRaw`
+        SELECT "id", "amount" FROM "debt_cash_payments"
+        WHERE "id" = ${req.params.paymentId} AND "debtId" = ${req.params.id}
+      `;
+      const payment = payments[0];
+      if (!payment) throw new Error('NOT_FOUND');
+
+      const debt = await transaction.debt.findUnique({ where: { id: req.params.id } });
+      if (!debt) throw new Error('NOT_FOUND');
+      const paidAmount = Math.max(0, debt.paidAmount - Number(payment.amount));
+      const updatedDebt = await transaction.debt.update({
+        where: { id: debt.id },
+        data: { paidAmount, status: debt.status === 'ANNULÉE' ? 'ANNULÉE' : (paidAmount >= debt.amount ? 'PAYÉE' : 'EN_COURS'), updatedAt: new Date() }
+      });
+      await transaction.$executeRaw`DELETE FROM "debt_cash_payments" WHERE "id" = ${payment.id}`;
+      return updatedDebt;
+    });
+    res.json({ debt: result });
+  } catch (e) {
+    if (e.message === 'NOT_FOUND') return res.status(404).json({ error: 'Règlement hors compte introuvable.' });
+    console.error('❌ DELETE cash payment error:', e.message);
+    res.status(500).json({ error: 'Erreur lors de l’annulation du règlement hors compte.' });
   }
 });
 
