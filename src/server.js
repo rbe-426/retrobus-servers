@@ -40,7 +40,6 @@ import changelogRoutes from './routes/changelog.routes.js';
 import lumistudioRoutes from './routes/lumistudio.routes.js';
 import processParcRoutes from './routes/processParc.routes.js';
 import retrostudioRoutes from './routes/retrostudio.routes.js';
-import bankSyncRoutes from './routes/bankSync.routes.js';
 import museeRoutes from './routes/musee.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
 import { createMailSession } from './services/mailService.js';
@@ -1886,9 +1885,6 @@ app.use('/api/retrostudio', retrostudioRoutes);
 
 // Routes Process PARC (préservation et intégration véhicules)
 app.use('/api/process-parc', processParcRoutes);
-
-// Routes Bank Sync (synchronisation bancaire GoCardless)
-app.use('/api/finance/bank-sync', bankSyncRoutes);
 
 // Routes Le Musée (authentification séparée et sécurisée)
 app.use('/api/musee', museeRoutes);
@@ -9338,25 +9334,25 @@ app.post('/finance/scheduled-expenses/:id/execute', requireAuth, async (req, res
   }
 });
 
-// ─── Import relevé bancaire PDF ──────────────────────────────────────────────
-import { parseBankStatementPDF } from './lib/bankStatementParser.js';
+// ─── Import relevé bancaire structuré ────────────────────────────────────────
+import { parseBankStatementFile } from './lib/bankStatementImportParser.js';
 const bankStatementUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 app.post(
   ['/finance/import-bank-statement', '/api/finance/import-bank-statement'],
   requireAuth,
-  bankStatementUpload.single('pdf'),
+  bankStatementUpload.single('statement'),
   async (req, res) => {
     try {
-      if (!req.file) return res.status(400).json({ error: 'Aucun fichier PDF reçu' });
-      if (!req.file.mimetype.includes('pdf') && !req.file.originalname?.endsWith('.pdf')) {
-        return res.status(400).json({ error: 'Le fichier doit être un PDF' });
+      if (!req.file) return res.status(400).json({ error: 'Aucun relevé reçu' });
+      if (!/\.(ofx|csv|xls|xlsx)$/i.test(req.file.originalname || '')) {
+        return res.status(400).json({ error: 'Utilisez un relevé OFX, CSV, XLS ou XLSX.' });
       }
-      const result = await parseBankStatementPDF(req.file.buffer);
+      const result = await parseBankStatementFile(req.file);
       res.json(result);
     } catch (e) {
       console.error('❌ POST /finance/import-bank-statement error:', e.message);
-      res.status(500).json({ error: 'Impossible de lire le PDF : ' + e.message });
+      res.status(400).json({ error: 'Impossible de lire le relevé : ' + e.message });
     }
   }
 );
