@@ -1,4 +1,4 @@
-// 🗑️ Script pour remettre à zéro toutes les données financières SAUF l'échéancier
+// 🗑️ Script pour remettre à zéro toutes les données financières
 // Usage: node reset-finances.js
 
 import { PrismaClient } from '@prisma/client';
@@ -25,18 +25,27 @@ async function resetFinances() {
     console.log('🗑️ Suppression des transactions (Transaction - ancienne table)...');
     const deletedTransactions = await prisma.transaction.deleteMany();
     console.log(`   ✅ ${deletedTransactions.count} entrées supprimées\n`);
+
+    // 4. Supprimer les paiements et opérations programmées
+    console.log('🗑️ Suppression des paiements programmés...');
+    const deletedScheduledPayments = await prisma.scheduled_operation_payments.deleteMany();
+    console.log(`   ✅ ${deletedScheduledPayments.count} entrées supprimées\n`);
+
+    console.log('🗑️ Suppression des opérations programmées...');
+    const deletedScheduledOperations = await prisma.scheduled_operations.deleteMany();
+    console.log(`   ✅ ${deletedScheduledOperations.count} entrées supprimées\n`);
     
-    // 4. Supprimer les dettes
+    // 5. Supprimer les dettes
     console.log('🗑️ Suppression des dettes et créances...');
     const deletedDebts = await prisma.debt.deleteMany();
     console.log(`   ✅ ${deletedDebts.count} entrées supprimées\n`);
     
-    // 5. Supprimer les rapports de dépenses
+    // 6. Supprimer les rapports de dépenses
     console.log('🗑️ Suppression des rapports de dépenses...');
     const deletedExpenseReports = await prisma.finance_expense_reports.deleteMany();
     console.log(`   ✅ ${deletedExpenseReports.count} entrées supprimées\n`);
     
-    // 6. Supprimer les simulations (d'abord les items, puis les scénarios)
+    // 7. Supprimer les simulations (d'abord les items, puis les scénarios)
     console.log('🗑️ Suppression des items de simulation de dépenses...');
     const deletedSimExpenseItems = await prisma.finance_simulation_expense_items.deleteMany();
     console.log(`   ✅ ${deletedSimExpenseItems.count} entrées supprimées\n`);
@@ -49,12 +58,12 @@ async function resetFinances() {
     const deletedSimScenarios = await prisma.finance_simulation_scenarios.deleteMany();
     console.log(`   ✅ ${deletedSimScenarios.count} entrées supprimées\n`);
     
-    // 7. Supprimer les catégories financières
+    // 8. Supprimer les catégories financières
     console.log('🗑️ Suppression des catégories financières...');
     const deletedCategories = await prisma.finance_categories.deleteMany();
     console.log(`   ✅ ${deletedCategories.count} entrées supprimées\n`);
     
-    // 8. Supprimer les balances
+    // 9. Supprimer les balances
     console.log('🗑️ Suppression de l\'historique des balances...');
     const deletedBalanceHistory = await prisma.finance_balance_history.deleteMany();
     console.log(`   ✅ ${deletedBalanceHistory.count} entrées supprimées\n`);
@@ -63,7 +72,7 @@ async function resetFinances() {
     const deletedBalances = await prisma.finance_balances.deleteMany();
     console.log(`   ✅ ${deletedBalances.count} entrées supprimées\n`);
     
-    // 9. Supprimer les documents financiers (devis/factures)
+    // 10. Supprimer les documents financiers (devis/factures)
     console.log('🗑️ Suppression des lignes de devis...');
     const deletedDevisLines = await prisma.devisLine.deleteMany();
     console.log(`   ✅ ${deletedDevisLines.count} entrées supprimées\n`);
@@ -76,7 +85,7 @@ async function resetFinances() {
     const deletedFinancialDocs = await prisma.financial_documents.deleteMany();
     console.log(`   ✅ ${deletedFinancialDocs.count} entrées supprimées\n`);
     
-    // 10. Supprimer les subventions (d'abord les dépenses, puis les campagnes)
+    // 11. Supprimer les subventions (d'abord les dépenses, puis les campagnes)
     console.log('🗑️ Suppression des dépenses de subvention...');
     const deletedSubventionExpenses = await prisma.subventionExpense.deleteMany();
     console.log(`   ✅ ${deletedSubventionExpenses.count} entrées supprimées\n`);
@@ -85,15 +94,15 @@ async function resetFinances() {
     const deletedSubventionCampaigns = await prisma.subventionCampaign.deleteMany();
     console.log(`   ✅ ${deletedSubventionCampaigns.count} entrées supprimées\n`);
     
-    // ✅ VÉRIFICATION : L'échéancier est préservé
+    // ✅ VÉRIFICATION : l'échéancier est aussi vide
     const scheduledOpsCount = await prisma.scheduled_operations.count();
     const scheduledPaymentsCount = await prisma.scheduled_operation_payments.count();
-    console.log('✅ ÉCHÉANCIER PRÉSERVÉ:');
+    console.log('✅ ÉCHÉANCIER RÉINITIALISÉ:');
     console.log(`   📅 ${scheduledOpsCount} opérations planifiées`);
     console.log(`   💰 ${scheduledPaymentsCount} paiements planifiés\n`);
     
     console.log('🎉 Remise à zéro terminée avec succès !');
-    console.log('📊 Toutes les données financières ont été supprimées SAUF l\'échéancier.');
+    console.log('📊 Toutes les données financières ont été supprimées.');
     
   } catch (error) {
     console.error('❌ Erreur lors de la remise à zéro:', error);
