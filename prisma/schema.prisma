@@ -89,6 +89,16 @@ model ProcedureDocument {
   @@index([categoryId, uploadedAt])
 }
 
+model ProcedureDocumentView {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String
+  viewedAt   DateTime @default(now())
+
+  @@unique([documentId, userId])
+  @@index([userId, viewedAt])
+}
+
 model MuseumWorkspaceRecord {
   id        String   @id @default(cuid())
   section   String

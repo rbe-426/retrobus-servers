@@ -1089,26 +1089,38 @@ const requireMemberDossierAccess = async (req, res, next) => {
 };
 
 const isAdminRequest = async (req) => {
-  const email = req.user?.email;
-  if (!email) return false;
+  const sessionRoles = [req.user?.role, ...(Array.isArray(req.user?.roles) ? req.user.roles : [])];
+  if (sessionRoles.some(hasAdminAccessRole)) return true;
+
+  const identifiers = [req.user?.email, req.user?.id, req.user?.matricule, req.user?.username]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  if (!identifiers.length) return false;
 
   try {
     const dbMember = await prisma.members.findFirst({
       where: {
-        email: {
-          equals: String(email),
-          mode: 'insensitive',
-        },
+        OR: identifiers.flatMap((identifier) => [
+          { email: { equals: identifier, mode: 'insensitive' } },
+          { matricule: { equals: identifier, mode: 'insensitive' } },
+          { id: identifier }
+        ])
       },
       select: { role: true },
     });
 
-    if (dbMember?.role === 'ADMIN') return true;
+    if (hasAdminAccessRole(dbMember?.role)) return true;
   } catch (error) {
     console.warn('⚠️ isAdminRequest DB lookup failed:', error.message);
   }
 
-  return !!state.members.find((m) => String(m.email || '').toLowerCase() === String(email).toLowerCase() && m.role === 'ADMIN');
+  return state.members.some((member) => {
+    const memberIdentifiers = [member.email, member.matricule, member.username, member.id]
+      .filter(Boolean)
+      .map((value) => String(value).trim().toLowerCase());
+    return identifiers.some((identifier) => memberIdentifiers.includes(identifier.toLowerCase())) && hasAdminAccessRole(member.role);
+  });
 };
 
 const isTrafficContextRequest = async (req) => {
@@ -4061,24 +4073,46 @@ const requireIneoOperationsAccess = async (req, res, next) => {
 };
 
 const PROCEDURE_CATEGORIES = new Set(['vehicules', 'commerciales', 'tournage-safe', 'securite']);
-const requireProcedurePublisher = (req, res, next) => {
-  if (!isIneoOperationsUser(req)) return res.status(403).json({ error: 'La publication des procedures est reservee a w.belaidi.' });
-  next();
+let procedureDocumentViewsTableEnsured = false;
+const ensureProcedureDocumentViewsTable = async () => {
+  if (procedureDocumentViewsTableEnsured) return;
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "ProcedureDocumentView" (
+      "id" TEXT PRIMARY KEY,
+      "documentId" TEXT NOT NULL,
+      "userId" TEXT NOT NULL,
+      "viewedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "ProcedureDocumentView_documentId_userId_key" UNIQUE ("documentId", "userId")
+    );
+  `);
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ProcedureDocumentView_userId_viewedAt_idx" ON "ProcedureDocumentView"("userId", "viewedAt");');
+  procedureDocumentViewsTableEnsured = true;
 };
+const getProcedureViewerId = (req) => String(req.user?.id || req.user?.email || '').trim();
 
 app.get(['/procedures/documents', '/api/procedures/documents'], requireAuth, async (req, res) => {
   try {
     const categoryId = String(req.query.categoryId || '').trim();
     if (categoryId && !PROCEDURE_CATEGORIES.has(categoryId)) return res.status(400).json({ error: 'Categorie de procedures invalide.' });
+    await ensureProcedureDocumentViewsTable();
     const documents = await prisma.procedureDocument.findMany({ where: categoryId ? { categoryId } : {}, orderBy: { uploadedAt: 'desc' } });
-    res.json({ documents, canPublish: isIneoOperationsUser(req) });
+    const viewerId = getProcedureViewerId(req);
+    const views = viewerId ? await prisma.$queryRaw`
+      SELECT "documentId", "viewedAt" FROM "ProcedureDocumentView" WHERE "userId" = ${viewerId}
+    ` : [];
+    const viewsByDocument = new Map(views.map((view) => [view.documentId, view.viewedAt]));
+    const documentsWithStatus = documents.map((document) => ({
+      ...document,
+      hasUnreadUpdate: !viewsByDocument.get(document.id) || new Date(viewsByDocument.get(document.id)) < document.updatedAt
+    }));
+    res.json({ documents: documentsWithStatus, canPublish: await isAdminRequest(req) });
   } catch (error) {
     console.error('GET /api/procedures/documents:', error.message);
     res.status(500).json({ error: 'Impossible de charger les procedures.' });
   }
 });
 
-app.post(['/procedures/documents', '/api/procedures/documents'], requireAuth, requireProcedurePublisher, uploadLimiter, procedureDocumentUpload.single('file'), async (req, res) => {
+app.post(['/procedures/documents', '/api/procedures/documents'], requireAuth, requireAdmin, uploadLimiter, procedureDocumentUpload.single('file'), async (req, res) => {
   try {
     const categoryId = String(req.body?.categoryId || '').trim();
     const title = String(req.body?.title || '').trim();
@@ -4095,7 +4129,50 @@ app.post(['/procedures/documents', '/api/procedures/documents'], requireAuth, re
   }
 });
 
-app.delete(['/procedures/documents/:id', '/api/procedures/documents/:id'], requireAuth, requireProcedurePublisher, async (req, res) => {
+app.put(['/procedures/documents/:id', '/api/procedures/documents/:id'], requireAuth, requireAdmin, uploadLimiter, procedureDocumentUpload.single('file'), async (req, res) => {
+  try {
+    const document = await prisma.procedureDocument.findUnique({ where: { id: req.params.id } });
+    if (!document) return res.status(404).json({ error: 'Procedure introuvable.' });
+    if (!req.file || req.file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'Un fichier PDF est requis.' });
+
+    const updatedDocument = await prisma.procedureDocument.update({
+      where: { id: document.id },
+      data: {
+        fileName: req.file.originalname,
+        filePath: `/uploads/procedures/${req.file.filename}`,
+        fileSize: req.file.size,
+        uploadedBy: req.user?.email || req.user?.id || 'admin'
+      }
+    });
+    fs.unlink(path.join(pathRoot, document.filePath.replace(/^\//, '')), () => {});
+    res.json({ document: { ...updatedDocument, hasUnreadUpdate: false } });
+  } catch (error) {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    console.error('PUT /api/procedures/documents/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de mettre a jour la procedure.' });
+  }
+});
+
+app.post(['/procedures/documents/:id/view', '/api/procedures/documents/:id/view'], requireAuth, async (req, res) => {
+  try {
+    const viewerId = getProcedureViewerId(req);
+    if (!viewerId) return res.status(400).json({ error: 'Utilisateur introuvable.' });
+    const document = await prisma.procedureDocument.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!document) return res.status(404).json({ error: 'Procedure introuvable.' });
+    await ensureProcedureDocumentViewsTable();
+    await prisma.$executeRaw`
+      INSERT INTO "ProcedureDocumentView" ("id", "documentId", "userId", "viewedAt")
+      VALUES (${randomUUID()}, ${document.id}, ${viewerId}, ${new Date()})
+      ON CONFLICT ("documentId", "userId") DO UPDATE SET "viewedAt" = EXCLUDED."viewedAt"
+    `;
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/procedures/documents/:id/view:', error.message);
+    res.status(500).json({ error: 'Impossible d enregistrer la consultation.' });
+  }
+});
+
+app.delete(['/procedures/documents/:id', '/api/procedures/documents/:id'], requireAuth, requireAdmin, async (req, res) => {
   try {
     const document = await prisma.procedureDocument.findUnique({ where: { id: req.params.id } });
     if (!document) return res.status(404).json({ error: 'Procedure introuvable.' });
