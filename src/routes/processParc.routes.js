@@ -133,6 +133,32 @@ const parseDateOrNull = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const RESTORED_PUBLIC_920_PROFILE = Object.freeze({
+  description: "Ce véhicule est un exemple emblématique de la gamme Citaro de première génération. Mis en service commercial en juillet 2001, il représente l'évolution technologique des transports urbains du début des années 2000. Équipé d'une climatisation complète et accessible aux personnes à mobilité réduite.",
+  history: "Le Mercedes-Benz Citaro est un autobus urbain produit par Daimler AG depuis 1997. Ce modèle a révolutionné les transports publics européens avec son design moderne et ses innovations techniques. Notre exemplaire FG-920-RE a été commandé par Cars Bridet à Wissous pour le réseau du Palladin et mis en service en juillet 2001. Au cours de sa carrière, il a porté successivement les numéros 592, 720, X, puis 920. Il a assuré la desserte Le Palladin jusqu'en août 2014. Après plusieurs années de service fidèle, il est passé brièvement par Brétigny en 2018, puis a rejoint Transdev STRAV à Limeil-Brévannes, avant d'être exploité par Cars Sœur. En mai 2025, ce véhicule historique a trouvé sa place au sein de la collection de l'association RétroBus Essonne, où il témoigne de l'évolution du transport public francilien au début du XXIe siècle.",
+  caracteristiques: JSON.stringify([
+    { label: 'Numéros de flotte', value: '592 / 720 / X / 920' },
+    { label: 'Constructeur', value: 'Mercedes-Benz' },
+    { label: 'Modèle', value: 'Citaro' },
+    { label: 'Immatriculation', value: 'FG-920-RE' },
+    { label: 'Mise en circulation', value: 'juillet 2001' },
+    { label: 'Longueur', value: '11,95 m' },
+    { label: 'Places assises', value: '32' },
+    { label: 'Places debout', value: '64' },
+    { label: 'UFR', value: '1' },
+    { label: 'Statut', value: 'Préservé' },
+    { label: 'Préservé par', value: 'Association RétroBus Essonne' },
+    { label: 'Énergie', value: 'Diesel' },
+    { label: 'Norme Euro', value: 'Euro II' },
+    { label: 'Moteur', value: 'Mercedes-Benz OM906hLA - 279 ch' },
+    { label: 'Boîte de vitesses', value: 'Automatique ZF5HP-502C' },
+    { label: 'Nombre de portes', value: '2' },
+    { label: 'Livrée', value: 'Grise' },
+    { label: 'Girouette', value: 'Duhamel LED Oranges + Pastilles Vertes' },
+    { label: 'Climatisation', value: 'Complète' }
+  ])
+});
+
 const buildVehicleCaracteristiques = (project, report) => {
   const vehicle = project.tcInfos?.vehicle || {};
   return [
@@ -165,6 +191,28 @@ const buildVehicleCaracteristiques = (project, report) => {
 
 const upsertInternalVehicleFromProcessParc = async (project, report) => {
   if (!report.moveToOverview || !project.internalFleetNumber) return null;
+
+  const existingVehicle = await prisma.vehicle.findUnique({
+    where: { parc: project.internalFleetNumber }
+  });
+
+  if (existingVehicle?.isPublic) {
+    return existingVehicle;
+  }
+
+  const is920OverwrittenByProcessParc = existingVehicle?.parc === '920'
+    && /^Véhicule intégré depuis le Process PARC\b/.test(existingVehicle.description || '');
+
+  if (is920OverwrittenByProcessParc) {
+    return prisma.vehicle.update({
+      where: { parc: '920' },
+      data: {
+        ...RESTORED_PUBLIC_920_PROFILE,
+        isPublic: true,
+        updatedAt: new Date()
+      }
+    });
+  }
 
   const vehicle = project.tcInfos?.vehicle || {};
   const caracteristiques = buildVehicleCaracteristiques(project, report);
