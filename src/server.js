@@ -38,7 +38,7 @@ import emailTemplateRoutes from './routes/emailTemplate.routes.js';
 import teamRoutes from './routes/team.routes.js';
 import changelogRoutes from './routes/changelog.routes.js';
 import lumistudioRoutes from './routes/lumistudio.routes.js';
-import processParcRoutes from './routes/processParc.routes.js';
+import processParcRoutes, { restorePublic920IfOverwrittenByProcessParc } from './routes/processParc.routes.js';
 import retrostudioRoutes from './routes/retrostudio.routes.js';
 import museeRoutes from './routes/musee.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
@@ -14123,6 +14123,14 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, async () => {
+  try {
+    if (await restorePublic920IfOverwrittenByProcessParc()) {
+      console.log('✅ Fiche publique du véhicule 920 restaurée après un écrasement Process PARC');
+    }
+  } catch (e) {
+    console.warn('⚠️ Impossible de vérifier la fiche publique du véhicule 920:', e.message);
+  }
+
   // Load users from Prisma into state.members at startup
   try {
     const prismaMembers = await prisma.members.findMany();

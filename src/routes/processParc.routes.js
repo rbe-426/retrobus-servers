@@ -159,6 +159,26 @@ const RESTORED_PUBLIC_920_PROFILE = Object.freeze({
   ])
 });
 
+export const restorePublic920IfOverwrittenByProcessParc = async () => {
+  const existingVehicle = await prisma.vehicle.findUnique({
+    where: { parc: '920' }
+  });
+  const is920OverwrittenByProcessParc = existingVehicle && !existingVehicle.isPublic
+    && /^Véhicule intégré depuis le Process PARC\b/.test(existingVehicle.description || '');
+
+  if (!is920OverwrittenByProcessParc) return false;
+
+  await prisma.vehicle.update({
+    where: { parc: '920' },
+    data: {
+      ...RESTORED_PUBLIC_920_PROFILE,
+      isPublic: true,
+      updatedAt: new Date()
+    }
+  });
+  return true;
+};
+
 const buildVehicleCaracteristiques = (project, report) => {
   const vehicle = project.tcInfos?.vehicle || {};
   return [
@@ -200,18 +220,8 @@ const upsertInternalVehicleFromProcessParc = async (project, report) => {
     return existingVehicle;
   }
 
-  const is920OverwrittenByProcessParc = existingVehicle?.parc === '920'
-    && /^Véhicule intégré depuis le Process PARC\b/.test(existingVehicle.description || '');
-
-  if (is920OverwrittenByProcessParc) {
-    return prisma.vehicle.update({
-      where: { parc: '920' },
-      data: {
-        ...RESTORED_PUBLIC_920_PROFILE,
-        isPublic: true,
-        updatedAt: new Date()
-      }
-    });
+  if (await restorePublic920IfOverwrittenByProcessParc()) {
+    return prisma.vehicle.findUnique({ where: { parc: '920' } });
   }
 
   const vehicle = project.tcInfos?.vehicle || {};
