@@ -167,6 +167,7 @@ const procedureDocumentUpload = multer({
 // � CONFIGURATION EMAIL - NODEMAILER
 // ============================================================
 let transporter = null;
+const CONTACT_RECIPIENT_EMAIL = process.env.CONTACT_RECIPIENT_EMAIL || 'association.rbe@gmail.com';
 
 const initMailer = () => {
   const emailUser = process.env.EMAIL_USER || 'association.rbe@gmail.com';
@@ -3358,18 +3359,46 @@ app.post('/public/contact', async (req, res) => {
       }
     };
 
-    // 1. Envoyer notification à l'association (depuis noreply)
+    // 1. Envoyer notification à l'association. La session RétroMail peut être
+    // absente après un redémarrage, donc SMTP prend le relais dans ce cas.
     try {
-      await sendTemplatedEmail(
+      const notificationSent = await sendTemplatedEmail(
         'contact_form_notification',
-        'association.rbe@gmail.com',
+        CONTACT_RECIPIENT_EMAIL,
         templateData,
         'RétroBus Essonne - Contact'
       );
+
+      if (!notificationSent) {
+        if (!transporter) {
+          throw new Error('Le service email n est pas configure');
+        }
+
+        await transporter.sendMail({
+          from: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'association.rbe@gmail.com',
+          to: CONTACT_RECIPIENT_EMAIL,
+          replyTo: email,
+          subject: `[Formulaire Contact] ${subject}`,
+          text: [
+            'Nouveau message de contact depuis le site RétroBus Essonne.',
+            '',
+            `Nom : ${name}`,
+            `Email : ${email}`,
+            `Date : ${messageDate}`,
+            '',
+            `Sujet : ${subject}`,
+            '',
+            message
+          ].join('\n')
+        });
+      }
+
       console.log('✅ Email de notification envoyé à l\'association');
     } catch (emailError) {
       console.error('❌ Erreur envoi email notification:', emailError.message);
-      // Continue even if notification fails
+      return res.status(503).json({
+        error: 'Le message a ete enregistre, mais sa notification par email est indisponible. Reessayez plus tard.'
+      });
     }
 
     // 2. Envoyer confirmation à l'expéditeur (depuis noreply)
