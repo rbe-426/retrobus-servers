@@ -6410,6 +6410,13 @@ const formatRetroNewsForFrontend = (prismaNews) => {
   
   // Transform media URLs from relative to absolute
   let media = prismaNews.media;
+  if (typeof media === 'string') {
+    try {
+      media = JSON.parse(media);
+    } catch {
+      media = [];
+    }
+  }
   if (Array.isArray(media)) {
     media = media.map(item => {
       if (item && item.url && item.url.startsWith('/uploads')) {
@@ -6446,7 +6453,7 @@ const formatRetroNewsForFrontend = (prismaNews) => {
 // ============================================
 
 // ✅ GET /api/retro-news - Fetch all news
-app.get('/api/retro-news', async (req, res) => {
+app.get('/api/retro-news', requireAuth, async (req, res) => {
   try {
     const news = await prisma.retroNews.findMany({
       orderBy: [
@@ -6465,7 +6472,7 @@ app.get('/api/retro-news', async (req, res) => {
 });
 
 // ✅ POST /api/retro-news - Create new news
-app.post(['/api/retro-news'], requireAuth, async (req, res) => {
+app.post(['/api/retro-news'], requireAuth, requireAdmin, async (req, res) => {
   try {
     const newsData = normalizeRetroNewsForPrisma(req.body, req.user?.id || req.user?.email);
     
@@ -6488,7 +6495,7 @@ app.post(['/api/retro-news'], requireAuth, async (req, res) => {
 });
 
 // ✅ PUT /api/retro-news/:id - Update news
-app.put(['/api/retro-news/:id'], requireAuth, async (req, res) => {
+app.put(['/api/retro-news/:id'], requireAuth, requireAdmin, async (req, res) => {
   try {
     const newsId = req.params.id;
     const newsData = normalizeRetroNewsForPrisma(req.body, req.user?.id || req.user?.email);
@@ -6520,7 +6527,7 @@ app.put(['/api/retro-news/:id'], requireAuth, async (req, res) => {
 });
 
 // ✅ DELETE /api/retro-news/:id - Delete news
-app.delete(['/api/retro-news/:id'], requireAuth, async (req, res) => {
+app.delete(['/api/retro-news/:id'], requireAuth, requireAdmin, async (req, res) => {
   try {
     const newsId = req.params.id;
     
@@ -6541,6 +6548,145 @@ app.delete(['/api/retro-news/:id'], requireAuth, async (req, res) => {
     console.error('❌ DELETE /api/retro-news error:', e.message);
     res.status(500).json({ error: 'Failed to delete news: ' + e.message });
   }
+});
+
+// ============================================
+// PUBLIC NEWS - Separate editorial content for the external website
+// ============================================
+
+const publicNewsSlug = (title) => String(title || 'actualite')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '') || 'actualite';
+
+const normalizePublicNewsForPrisma = (data, userId, slug) => ({
+  id: data.id || randomUUID(),
+  slug,
+  title: String(data.title || 'Sans titre').trim(),
+  excerpt: data.excerpt ? String(data.excerpt).trim() : null,
+  content: String(data.content || '').trim(),
+  imageUrl: data.imageUrl ? String(data.imageUrl).trim() : null,
+  media: data.media || null,
+  featured: Boolean(data.featured),
+  published: Boolean(data.published !== undefined ? data.published : data.status === 'published'),
+  author: String(data.author || userId || 'anonyme').trim(),
+  createdBy: data.createdBy || userId,
+  publishedAt: data.publishedAt || (Boolean(data.published) ? new Date() : null),
+  updatedAt: new Date()
+});
+
+const formatPublicNewsForFrontend = (news) => formatRetroNewsForFrontend({ ...news, showOnExternal: true, polls: null });
+
+const uniquePublicNewsSlug = async (title, currentId) => {
+  const base = publicNewsSlug(title);
+  let slug = base;
+  let suffix = 2;
+  while (true) {
+    const existing = await prisma.publicNews.findUnique({ where: { slug } });
+    if (!existing || existing.id === currentId) return slug;
+    slug = `${base}-${suffix++}`;
+  }
+};
+
+app.get('/api/public-news', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const news = await prisma.publicNews.findMany({ orderBy: [{ featured: 'desc' }, { publishedAt: 'desc' }, { createdAt: 'desc' }] });
+    res.json(news.map(formatPublicNewsForFrontend));
+  } catch (error) {
+    console.error('GET /api/public-news failed:', error.message);
+    res.status(500).json({ error: 'Failed to fetch public news' });
+  }
+});
+
+app.get(['/public/news', '/public/news/:slug'], async (req, res) => {
+  try {
+    const where = req.params.slug ? { slug: req.params.slug, published: true } : { published: true };
+    if (req.params.slug) {
+      const article = await prisma.publicNews.findFirst({ where });
+      return article ? res.json(formatPublicNewsForFrontend(article)) : res.status(404).json({ error: 'News not found' });
+    }
+    const news = await prisma.publicNews.findMany({ where, orderBy: [{ featured: 'desc' }, { publishedAt: 'desc' }, { createdAt: 'desc' }], take: 100 });
+    res.json(news.map(formatPublicNewsForFrontend));
+  } catch (error) {
+    console.error('GET /public/news failed:', error.message);
+    res.status(500).json({ error: 'Failed to fetch public news' });
+  }
+});
+
+app.post('/api/public-news', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const slug = await uniquePublicNewsSlug(req.body.title);
+    const article = await prisma.publicNews.create({ data: normalizePublicNewsForPrisma(req.body, req.user?.id || req.user?.email, slug) });
+    res.status(201).json(formatPublicNewsForFrontend(article));
+  } catch (error) {
+    console.error('POST /api/public-news failed:', error.message);
+    res.status(500).json({ error: 'Failed to create public news' });
+  }
+});
+
+app.put('/api/public-news/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const slug = await uniquePublicNewsSlug(req.body.title, req.params.id);
+    const data = normalizePublicNewsForPrisma(req.body, req.user?.id || req.user?.email, slug);
+    delete data.id;
+    delete data.createdBy;
+    const article = await prisma.publicNews.update({ where: { id: req.params.id }, data });
+    res.json(formatPublicNewsForFrontend(article));
+  } catch (error) {
+    res.status(error.code === 'P2025' ? 404 : 500).json({ error: 'Failed to update public news' });
+  }
+});
+
+app.delete('/api/public-news/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await prisma.publicNews.delete({ where: { id: req.params.id } });
+    res.json({ ok: true, id: req.params.id });
+  } catch (error) {
+    res.status(error.code === 'P2025' ? 404 : 500).json({ error: 'Failed to delete public news' });
+  }
+});
+
+const publicNewsMediaStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const uploadDir = path.join(pathRoot, 'uploads', 'public-news');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`);
+  }
+});
+
+const publicNewsMediaUpload = multer({
+  storage: publicNewsMediaStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm', 'application/pdf'];
+    cb(allowedTypes.includes(file.mimetype) ? null : new Error('Type de fichier non supporté pour une actualité publique.'), allowedTypes.includes(file.mimetype));
+  }
+});
+
+app.post('/api/public-news/media/upload', requireAuth, requireAdmin, uploadLimiter, publicNewsMediaUpload.single('media'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier uploadé' });
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const finalProtocol = protocol === 'https' || req.get('host')?.includes('railway.app') ? 'https' : protocol;
+  const apiBaseUrl = process.env.VITE_API_URL || process.env.PUBLIC_API_BASE || `${finalProtocol}://${req.get('host')}`;
+  const relativePath = `/uploads/public-news/${req.file.filename}`;
+  const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : req.file.mimetype.startsWith('image/') ? 'image' : 'file';
+  res.status(201).json({
+    success: true,
+    media: {
+      type: mediaType,
+      url: apiBaseUrl + relativePath,
+      caption: req.body.caption || '',
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size
+    }
+  });
 });
 
 // ============================================
@@ -6591,7 +6737,7 @@ const retroNewsMediaUpload = multer({
 });
 
 // POST /api/retro-news/media/upload - Upload media (photos/videos)
-app.post('/api/retro-news/media/upload', requireAuth, uploadLimiter, retroNewsMediaUpload.single('media'), async (req, res) => {
+app.post('/api/retro-news/media/upload', requireAuth, requireAdmin, uploadLimiter, retroNewsMediaUpload.single('media'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Aucun fichier uploadé' });

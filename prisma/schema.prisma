@@ -235,6 +235,27 @@ model RetroNews {
   @@index([createdAt])
 }
 
+model PublicNews {
+  id          String   @id
+  slug        String   @unique
+  title       String
+  excerpt     String?
+  content     String   @db.Text
+  imageUrl    String?
+  media       String?  @db.Text
+  featured    Boolean  @default(false)
+  published   Boolean  @default(false)
+  author      String?
+  createdBy   String?
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([featured])
+  @@index([published])
+  @@index([publishedAt])
+}
+
 model RetroNewsPollVotes {
   id        String   @id @default(cuid())
   newsId    String   // ID de la RetroNews
