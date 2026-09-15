@@ -1167,6 +1167,64 @@ const requireAdmin = async (req, res, next) => {
   next();
 };
 
+const requireMembershipReviewAccess = async (req, res, next) => {
+  const sessionRoles = [req.user?.role, ...(Array.isArray(req.user?.roles) ? req.user.roles : [])]
+    .map((role) => String(role || '').toUpperCase());
+  if (sessionRoles.some((role) => role === 'ADMIN' || role === 'PRESIDENT')) return next();
+
+  try {
+    const actor = await prisma.members.findFirst({
+      where: {
+        OR: [
+          ...(req.user?.email ? [{ email: { equals: String(req.user.email), mode: 'insensitive' } }] : []),
+          ...(req.user?.id ? [{ id: String(req.user.id) }] : [])
+        ]
+      },
+      select: { role: true }
+    });
+    const role = String(actor?.role || '').toUpperCase();
+    if (role === 'ADMIN' || role === 'PRESIDENT') return next();
+  } catch (error) {
+    console.error('❌ Membership review access check failed:', error.message);
+  }
+
+  return res.status(403).json({ error: 'Accès réservé au président et aux administrateurs' });
+};
+
+const createMemberFromSignedBulletin = async (memberData = {}) => {
+  const email = String(memberData.email || '').trim().toLowerCase();
+  if (!email) throw new Error('Le bulletin signé ne contient pas d’adresse e-mail.');
+
+  const existingMember = memberData.id
+    ? await prisma.members.findUnique({ where: { id: String(memberData.id) } })
+    : await prisma.members.findUnique({ where: { email } });
+  if (existingMember) return existingMember;
+
+  return prisma.members.create({
+    data: {
+      id: uid(),
+      firstName: String(memberData.firstName || '').trim(),
+      lastName: String(memberData.lastName || '').trim(),
+      email,
+      phone: String(memberData.phone || '').trim() || null,
+      address: String(memberData.address || '').trim() || null,
+      city: String(memberData.city || '').trim() || null,
+      postalCode: String(memberData.postalCode || '').trim() || null,
+      birthDate: toDateTime(memberData.birthDate),
+      membershipType: String(memberData.membershipType || 'STANDARD').trim() || 'STANDARD',
+      membershipStatus: 'PENDING',
+      paymentAmount: Number.isFinite(Number(memberData.paymentAmount)) ? Number(memberData.paymentAmount) : null,
+      paymentMethod: String(memberData.paymentMethod || '').trim() || null,
+      newsletter: memberData.newsletter !== false,
+      role: 'MEMBER',
+      status: 'active',
+      notes: 'Pré-fiche récupérée depuis un bulletin dématérialisé signé. Validation administrative requise.',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+  });
+};
+
 const requireTrafficContextAccess = async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -7400,6 +7458,65 @@ app.get(['/api/members','/members'], requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch members', details: e.message });
   }
 });
+
+app.get('/api/members/pending-bulletin-reviews', requireAuth, requireMembershipReviewAccess, async (_req, res) => {
+  try {
+    const signedFlows = await prisma.bulletinFlowToken.findMany({
+      where: { status: 'signed' },
+      orderBy: { signedAt: 'desc' },
+      take: 100,
+      select: { token: true, memberData: true, signedAt: true, createdAt: true }
+    });
+    const memberEmails = [...new Set(signedFlows.map((flow) => String(flow.memberData?.email || '').trim().toLowerCase()).filter(Boolean))];
+    const existingMembers = memberEmails.length
+      ? await prisma.members.findMany({ where: { email: { in: memberEmails } }, select: { id: true, email: true } })
+      : [];
+    const memberByEmail = new Map(existingMembers.map((member) => [member.email.toLowerCase(), member.id]));
+
+    res.json({
+      success: true,
+      bulletins: signedFlows.map((flow) => {
+        const memberData = flow.memberData || {};
+        const email = String(memberData.email || '').trim().toLowerCase();
+        return {
+          token: flow.token,
+          firstName: memberData.firstName || '',
+          lastName: memberData.lastName || '',
+          email,
+          signedAt: flow.signedAt,
+          createdAt: flow.createdAt,
+          memberId: String(memberData.id || '').trim() || memberByEmail.get(email) || null
+        };
+      })
+    });
+  } catch (error) {
+    console.error('❌ Error listing signed bulletin reviews:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les bulletins signés', details: error.message });
+  }
+});
+
+app.post('/api/members/pending-bulletin-reviews/:token/recover', requireAuth, requireMembershipReviewAccess, async (req, res) => {
+  try {
+    const flow = await prisma.bulletinFlowToken.findFirst({
+      where: { token: req.params.token, status: 'signed' },
+      select: { token: true, memberData: true }
+    });
+    if (!flow) return res.status(404).json({ error: 'Bulletin signé introuvable' });
+
+    const member = await createMemberFromSignedBulletin(flow.memberData || {});
+    await prisma.bulletinFlowToken.update({
+      where: { token: flow.token },
+      data: { memberData: { ...(flow.memberData || {}), id: member.id } }
+    });
+    const stateIdx = state.members.findIndex((item) => item.id === member.id);
+    if (stateIdx === -1) state.members.push(member);
+    debouncedSave();
+    res.status(201).json({ success: true, member });
+  } catch (error) {
+    console.error('❌ Error recovering pending member from bulletin:', error.message);
+    res.status(500).json({ error: 'Impossible de récupérer la fiche adhérent', details: error.message });
+  }
+});
 app.get(['/api/members/me'], requireAuth, async (req, res) => {
   try {
     const userId = String(req.user?.userId || req.user?.id || '').trim();
@@ -7669,6 +7786,26 @@ app.put(['/api/members/:id', '/members/:id'], requireAuth, async (req, res) => {
   } catch (e) {
     console.error('❌ Error updating member:', e.message);
     res.status(500).json({ error: 'Failed to update member', details: e.message });
+  }
+});
+
+app.post('/api/members/:id/validate-adhesion', requireAuth, requireMembershipReviewAccess, async (req, res) => {
+  try {
+    const member = await prisma.members.update({
+      where: { id: req.params.id },
+      data: {
+        membershipStatus: 'ACTIVE',
+        membershipStartDate: new Date(),
+        updatedAt: new Date()
+      }
+    });
+    const stateIdx = state.members.findIndex((item) => item.id === member.id);
+    if (stateIdx !== -1) state.members[stateIdx] = member;
+    debouncedSave();
+    res.json({ success: true, member });
+  } catch (error) {
+    console.error('❌ Error validating membership:', error.message);
+    res.status(500).json({ error: 'Impossible de valider l’adhésion', details: error.message });
   }
 });
 

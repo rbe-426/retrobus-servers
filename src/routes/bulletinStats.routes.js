@@ -37,7 +37,11 @@ router.get('/stats', async (req, res) => {
     };
 
     stats.forEach(row => {
-      formatted[row.status] = row.count;
+      if (row.status === 'signed' || row.status === 'completed') {
+        formatted.completed += row.count;
+      } else if (Object.prototype.hasOwnProperty.call(formatted, row.status)) {
+        formatted[row.status] = row.count;
+      }
       formatted.total += row.count;
     });
 
@@ -64,7 +68,9 @@ router.get('/recent-completions', async (req, res) => {
     
     const completions = await prisma.bulletinFlowToken.findMany({
       where: {
-        status: 'completed',
+        status: {
+          in: ['signed', 'completed']
+        },
         signedAt: {
           gte: since
         }

@@ -4,6 +4,7 @@
  */
 
 import express from 'express';
+import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import nodemailer from 'nodemailer';
@@ -26,6 +27,75 @@ import { generateDocument } from '../services/templateService.js';
 const router = express.Router();
 const prisma = new PrismaClient();
 const BULLETIN_ADMIN_EMAIL = process.env.BULLETIN_ADMIN_EMAIL || 'association.rbe@gmail.com';
+
+const createPendingMemberFromSignedBulletin = async (memberData = {}) => {
+  const email = String(memberData.email || '').trim().toLowerCase();
+  if (!email) {
+    throw new Error('EMAIL_REQUIRED_FOR_MEMBER_REVIEW');
+  }
+
+  const existingMember = memberData.id
+    ? await prisma.members.findUnique({ where: { id: String(memberData.id) } })
+    : await prisma.members.findUnique({ where: { email } });
+
+  if (existingMember) {
+    return existingMember;
+  }
+
+  return prisma.members.create({
+    data: {
+      id: crypto.randomUUID(),
+      firstName: String(memberData.firstName || '').trim(),
+      lastName: String(memberData.lastName || '').trim(),
+      email,
+      phone: String(memberData.phone || '').trim() || null,
+      address: String(memberData.address || '').trim() || null,
+      city: String(memberData.city || '').trim() || null,
+      postalCode: String(memberData.postalCode || '').trim() || null,
+      birthDate: memberData.birthDate ? new Date(memberData.birthDate) : null,
+      membershipType: String(memberData.membershipType || 'STANDARD').trim() || 'STANDARD',
+      membershipStatus: 'PENDING',
+      paymentAmount: Number.isFinite(Number(memberData.paymentAmount)) ? Number(memberData.paymentAmount) : null,
+      paymentMethod: String(memberData.paymentMethod || '').trim() || null,
+      newsletter: memberData.newsletter !== false,
+      role: 'MEMBER',
+      status: 'active',
+      notes: 'Pré-fiche créée après signature du bulletin dématérialisé. Validation administrative requise.',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+  });
+};
+
+const requireMembershipReviewer = async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const sessionRoles = [req.user.role, ...(Array.isArray(req.user.roles) ? req.user.roles : [])]
+    .map((role) => String(role || '').toUpperCase());
+  if (sessionRoles.some((role) => role === 'ADMIN' || role === 'PRESIDENT')) return next();
+
+  const identifiers = [req.user.email, req.user.id, req.user.matricule, req.user.username]
+    .filter(Boolean)
+    .map((value) => String(value).trim());
+  const reviewer = identifiers.length
+    ? await prisma.members.findFirst({
+        where: {
+          OR: identifiers.flatMap((identifier) => [
+            { id: identifier },
+            { email: { equals: identifier, mode: 'insensitive' } },
+            { matricule: { equals: identifier, mode: 'insensitive' } }
+          ])
+        },
+        select: { role: true }
+      })
+    : null;
+  const role = String(reviewer?.role || '').toUpperCase();
+  if (role === 'ADMIN' || role === 'PRESIDENT') return next();
+
+  return res.status(403).json({ error: 'Accès réservé au président et aux administrateurs' });
+};
 
 const resolveBulletinPublicBaseUrl = () => {
   // Priorite aux variables explicites de production
@@ -527,10 +597,20 @@ router.post('/:token/signature', async (req, res) => {
     }
 
     const signedData = await getTokenData(token);
+    let reviewMember = null;
+    let memberRegistrationError = null;
+
+    try {
+      reviewMember = await createPendingMemberFromSignedBulletin(signedData?.memberData || data.memberData);
+      await updateMemberData(token, { id: reviewMember.id });
+    } catch (memberError) {
+      memberRegistrationError = memberError.message;
+      console.error('❌ Failed to create pending member from signed bulletin:', memberRegistrationError);
+    }
 
     // Générer le document final avec la signature
     const templateId = 'adhesion_standard'; // TODO: Rendre configurable
-    const memberData = signedData?.memberData || data.memberData;
+    const memberData = { ...(signedData?.memberData || data.memberData), id: reviewMember?.id || signedData?.memberData?.id };
     const timestamp = Date.now();
     const outputFilename = `bulletin_${memberData.lastName}_${timestamp}.docx`;
 
@@ -561,6 +641,21 @@ router.post('/:token/signature', async (req, res) => {
       try {
         const generatedPath = path.join(process.cwd(), 'uploads', 'generated', outputFilename);
         const generatedBuffer = await fs.readFile(generatedPath);
+        if (reviewMember) {
+          await prisma.document.create({
+            data: {
+              id: crypto.randomUUID(),
+              memberId: reviewMember.id,
+              type: 'MEMBERSHIP_FORM',
+              fileName: outputFilename,
+              filePath: generatedBuffer.toString('base64'),
+              fileSize: generatedBuffer.length,
+              mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              status: 'PENDING',
+              uploadedAt: new Date()
+            }
+          });
+        }
         const apiBaseUrl = resolveRequestApiBaseUrl(req);
         const absoluteDownloadUrl = apiBaseUrl ? `${apiBaseUrl}${documentUrl}` : documentUrl;
         const mailSubject = `Bulletin signé - ${memberData.firstName || ''} ${memberData.lastName || ''}`.trim();
@@ -651,7 +746,10 @@ router.post('/:token/signature', async (req, res) => {
       documentGenerated,
       documentUrl,
       adminEmailSent,
-      adminEmailError
+      adminEmailError,
+      reviewMemberId: reviewMember?.id || null,
+      reviewMemberCreated: !!reviewMember,
+      memberRegistrationError
     });
   } catch (error) {
     console.error('❌ Error saving signature:', error);
@@ -663,7 +761,7 @@ router.post('/:token/signature', async (req, res) => {
  * POST /api/bulletin-flow/:token/resend - Renvoie le lien par email/SMS
  * Body: { method: 'email' | 'sms', recipient }
  */
-router.post('/:token/resend', async (req, res) => {
+router.post('/:token/resend', requireMembershipReviewer, async (req, res) => {
   try {
     const { token } = req.params;
     const { method = 'email', recipient } = req.body;
@@ -711,12 +809,8 @@ router.post('/:token/resend', async (req, res) => {
  * POST /api/bulletin-flow/member/resend-signed - Renvoie le dernier bulletin signé d'un adhérent
  * Body: { memberId?, email, recipientEmail? }
  */
-router.post('/member/resend-signed', async (req, res) => {
+router.post('/member/resend-signed', requireMembershipReviewer, async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
     const { memberId, email, recipientEmail } = req.body || {};
     const lookupMemberId = String(memberId || '').trim();
     const lookupEmail = String(email || '').trim().toLowerCase();
