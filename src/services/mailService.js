@@ -77,6 +77,23 @@ const normalizeMailAttachments = (attachments) => {
   });
 };
 
+const createProfilePhotoAttachment = (profilePhoto) => {
+  const match = String(profilePhoto || '').match(/^data:(image\/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/i);
+  if (!match) return null;
+
+  const [, contentType, content] = match;
+  if (Buffer.byteLength(content, 'base64') > 1024 * 1024) return null;
+
+  return {
+    filename: 'retromail-profile-photo',
+    content,
+    encoding: 'base64',
+    contentType,
+    contentDisposition: 'inline',
+    cid: 'retromail-profile-photo'
+  };
+};
+
 /**
  * Trouver le vrai nom d'un dossier IMAP en essayant plusieurs variantes
  * @param {ImapFlow} client - Client IMAP connecté
@@ -522,6 +539,8 @@ export async function sendEmail(userId, mailOptions) {
       : session.email;
 
     const processedAttachments = normalizeMailAttachments(mailOptions.attachments);
+    const profilePhotoAttachment = createProfilePhotoAttachment(mailOptions.profilePhoto);
+    if (profilePhotoAttachment) processedAttachments.push(profilePhotoAttachment);
 
     console.log(`📧 Envoi email avec ${processedAttachments.length} pièce(s) jointe(s)`);
 
@@ -541,13 +560,8 @@ export async function sendEmail(userId, mailOptions) {
       headers: {}
     };
 
-    // Ajouter la photo de profil comme en-tête personnalisé si fournie
-    // Note: La plupart des clients mail ne supportent pas l'affichage automatique
-    // mais cela permet une intégration future ou avec des extensions
-    if (mailOptions.profilePhoto) {
-      mailData.headers['X-Sender-Image'] = mailOptions.profilePhoto;
-      mailData.headers['X-Face-Image-URL'] = mailOptions.profilePhoto;
-      console.log('📸 Photo de profil incluse dans les en-têtes personnalisés');
+    if (profilePhotoAttachment) {
+      console.log('📸 Photo de profil intégrée à la signature');
     }
 
     // Envoyer l'email
