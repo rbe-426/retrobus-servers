@@ -215,8 +215,9 @@ export function getSessionUserIdByEmail(email) {
  * @param {string} userId - ID utilisateur
  * @param {string} folder - Dossier IMAP (INBOX, SENT, etc.)
  * @param {number} limit - Nombre max d'emails à récupérer
+ * @param {number} offset - Nombre de messages récents à ignorer
  */
-export async function listEmails(userId, folder = 'INBOX', limit = 50) {
+export async function listEmails(userId, folder = 'INBOX', limit = 50, offset = 0) {
   const session = getMailSession(userId);
   
   const client = new ImapFlow({
@@ -241,15 +242,20 @@ export async function listEmails(userId, folder = 'INBOX', limit = 50) {
       
       // Si aucun message, retourner un tableau vide
       if (messageCount === 0) {
-        return [];
+        return { emails: [], total: 0, hasMore: false };
       }
       
-      // Récupérer les derniers emails
       const messages = [];
-      
-      // Chercher les messages (limiter à 100 max pour éviter surcharge)
-      const maxToFetch = Math.min(messageCount, 100);
-      const range = messageCount > 100 ? `${messageCount - 99}:${messageCount}` : `1:${messageCount}`;
+
+      const safeLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 50, 1), 100);
+      const safeOffset = Math.max(Number.parseInt(offset, 10) || 0, 0);
+      const lastSequence = messageCount - safeOffset;
+      if (lastSequence < 1) {
+        return { emails: [], total: messageCount, hasMore: false };
+      }
+
+      const firstSequence = Math.max(1, lastSequence - safeLimit + 1);
+      const range = `${firstSequence}:${lastSequence}`;
       
       for await (let msg of client.fetch(range, { 
         envelope: true, 
@@ -275,11 +281,13 @@ export async function listEmails(userId, folder = 'INBOX', limit = 50) {
         });
       }
 
-      // Trier par date décroissante et limiter
+      // Trier par date décroissante dans la page chargée.
       messages.sort((a, b) => new Date(b.date) - new Date(a.date));
-      const limited = messages.slice(0, limit);
-
-      return limited;
+      return {
+        emails: messages,
+        total: messageCount,
+        hasMore: firstSequence > 1
+      };
     } finally {
       lock.release();
     }

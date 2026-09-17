@@ -577,13 +577,14 @@ router.get('/unread-count', requireAuth, async (req, res) => {
 /**
  * GET /api/mail/list
  * Lister les emails
- * Query params: folder (default: INBOX), limit (default: 50)
+ * Query params: folder (default: INBOX), limit (default: 50), offset (default: 0)
  */
 router.get('/list', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
     const folder = req.query.folder || 'INBOX';
     const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
 
     if (!hasMailSession(userId)) {
       return res.status(401).json({ 
@@ -592,19 +593,24 @@ router.get('/list', requireAuth, async (req, res) => {
       });
     }
 
-    const emails = await listEmails(userId, folder, limit);
+    const result = await listEmails(userId, folder, limit, offset);
 
     res.json({
       success: true,
-      emails: emails.map(email => ({
+      emails: result.emails.map(email => ({
         id: email.id,
         from: email.from,
         fromName: email.fromName,
+        to: email.to,
+        cc: email.cc,
+        bcc: email.bcc,
         subject: email.subject,
         date: email.date,
         read: email.read,
         preview: '' // Pas de preview dans la liste
-      }))
+      })),
+      total: result.total,
+      hasMore: result.hasMore
     });
   } catch (error) {
     console.error(`❌ Erreur liste emails (folder: ${req.query.folder}):`, error.message);
