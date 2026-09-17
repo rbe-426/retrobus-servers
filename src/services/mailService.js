@@ -77,23 +77,6 @@ const normalizeMailAttachments = (attachments) => {
   });
 };
 
-const createProfilePhotoAttachment = (profilePhoto) => {
-  const match = String(profilePhoto || '').match(/^data:(image\/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/i);
-  if (!match) return null;
-
-  const [, contentType, content] = match;
-  if (Buffer.byteLength(content, 'base64') > 1024 * 1024) return null;
-
-  return {
-    filename: 'retromail-profile-photo',
-    content,
-    encoding: 'base64',
-    contentType,
-    contentDisposition: 'inline',
-    cid: 'retromail-profile-photo'
-  };
-};
-
 /**
  * Trouver le vrai nom d'un dossier IMAP en essayant plusieurs variantes
  * @param {ImapFlow} client - Client IMAP connecté
@@ -539,8 +522,6 @@ export async function sendEmail(userId, mailOptions) {
       : session.email;
 
     const processedAttachments = normalizeMailAttachments(mailOptions.attachments);
-    const profilePhotoAttachment = createProfilePhotoAttachment(mailOptions.profilePhoto);
-    if (profilePhotoAttachment) processedAttachments.push(profilePhotoAttachment);
 
     console.log(`📧 Envoi email avec ${processedAttachments.length} pièce(s) jointe(s)`);
 
@@ -559,10 +540,6 @@ export async function sendEmail(userId, mailOptions) {
       attachments: processedAttachments,
       headers: {}
     };
-
-    if (profilePhotoAttachment) {
-      console.log('📸 Photo de profil intégrée à la signature');
-    }
 
     // Envoyer l'email
     const info = await transporter.sendMail(mailData);
