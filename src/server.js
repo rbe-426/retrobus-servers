@@ -129,6 +129,19 @@ const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 4000;
 const pathRoot = process.cwd();
+
+const resolveEffectiveRole = async (member) => {
+  const fallbackRole = String(member?.role || 'MEMBER').toUpperCase();
+  if (!member?.id) return fallbackRole;
+
+  const siteUser = await prisma.site_users.findFirst({
+    where: { linkedMemberId: member.id },
+    select: { role: true }
+  });
+
+  return String(siteUser?.role || fallbackRole).toUpperCase();
+};
+
 const NDF_MANAGER_ROLES = new Set(['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER']);
 const NDF_TRANSFER_PROOF_DIR = path.join(pathRoot, 'private_uploads', 'ndf-transfer-proofs');
 const PROCEDURE_DOCUMENT_DIR = path.join(pathRoot, 'uploads', 'procedures');
@@ -1060,13 +1073,29 @@ const requireMobileVehicleAccess = async (req, res, next) => {
 };
 
 const ADMIN_ACCESS_ROLES = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'];
+const PRESIDENT_IDENTIFIERS = new Set(['w.belaidi', 'belaidiw91@gmail.com']);
 
 const hasAdminAccessRole = (role) => ADMIN_ACCESS_ROLES.includes(String(role || '').toUpperCase());
+
+const isConfiguredPresidentRequest = (req) => [
+  req.user?.email,
+  req.user?.id,
+  req.user?.matricule,
+  req.user?.username
+]
+  .filter(Boolean)
+  .map((value) => String(value).trim().toLowerCase())
+  .some((identity) => PRESIDENT_IDENTIFIERS.has(identity));
 
 const DOSSIER_ACCESS_ROLES = ['PRESIDENT', 'VICE_PRESIDENT'];
 
 const requireMemberDossierAccess = async (req, res, next) => {
   if (!req.user?.email) return res.status(401).json({ error: 'Non authentifié' });
+
+  if (isConfiguredPresidentRequest(req)) {
+    req.memberDossierActor = { id: req.user.id || req.user.email, name: 'Waiyl BELAIDI' };
+    return next();
+  }
 
   try {
     const actor = await prisma.members.findFirst({
@@ -1090,6 +1119,8 @@ const requireMemberDossierAccess = async (req, res, next) => {
 };
 
 const isAdminRequest = async (req) => {
+  if (isConfiguredPresidentRequest(req)) return true;
+
   const sessionRoles = [req.user?.role, ...(Array.isArray(req.user?.roles) ? req.user.roles : [])];
   if (sessionRoles.some(hasAdminAccessRole)) return true;
 
@@ -1128,7 +1159,7 @@ const isTrafficContextRequest = async (req) => {
   const email = String(req.user?.email || '').toLowerCase();
   const id = String(req.user?.id || '').toLowerCase();
 
-  if (email === 'clement.marcypro@gmail.com' || id === 'c.marcy') return true;
+  if (isConfiguredPresidentRequest(req) || email === 'clement.marcypro@gmail.com' || id === 'c.marcy') return true;
   if (hasAdminAccessRole(req.user?.role)) return true;
 
   try {
@@ -1168,6 +1199,8 @@ const requireAdmin = async (req, res, next) => {
 };
 
 const requireMembershipReviewAccess = async (req, res, next) => {
+  if (isConfiguredPresidentRequest(req)) return next();
+
   const sessionRoles = [req.user?.role, ...(Array.isArray(req.user?.roles) ? req.user.roles : [])]
     .map((role) => String(role || '').toUpperCase());
   if (sessionRoles.some((role) => role === 'ADMIN' || role === 'PRESIDENT')) return next();
@@ -2290,14 +2323,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       console.warn('⚠️ Could not update lastLoginAt:', e.message);
     }
     
-    // Find user's role from site_users via linkedMemberId
-    let role = member.role || 'MEMBER';
-    if (state.siteUsers && member.id) {
-      const siteUser = state.siteUsers.find(u => u.linkedMemberId === member.id);
-      if (siteUser) {
-        role = siteUser.role || 'MEMBER';
-      }
-    }
+    const role = await resolveEffectiveRole(member);
     
     // ✅ Créer JWT avec expiration 1h (ancien: token stub sans expiration)
     const { accessToken, refreshToken } = createTokenPair({
@@ -2422,8 +2448,7 @@ app.post('/api/auth/member-login', authLimiter, async (req, res) => {
       // Non-blocking: still allow login even if we can't update status
     }
     
-    // Get role
-    let role = member.role || 'MEMBER';
+    const role = await resolveEffectiveRole(member);
     
     const email = member.email || '';
     
@@ -2540,8 +2565,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
       return res.json({ user: null });
     }
 
-    // Get role from member.role first, fall back to site_users if needed
-    let role = member.role || 'MEMBER';
+    const role = await resolveEffectiveRole(member);
 
     res.json({ 
       user: { 
@@ -8156,7 +8180,7 @@ app.delete('/api/members/:id/permissions/:permission', requireAuth, async (req, 
 const permissionsCache = new Map();
 const PERMISSIONS_CACHE_TTL = 60000; // 1 minute
 
-app.get('/api/user-permissions/:userId', async (req, res) => {
+app.get('/api/user-permissions/:userId', requireAuth, async (req, res) => {
   try {
     const userId = req.params.userId;
     
@@ -8167,7 +8191,31 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
       return res.json(cached.data);
     }
     
-    // Try to find member first (userId might be memberId)
+    // Account-management passes a site_users id. Resolve it before falling
+    // back to a member id or email used by legacy permission consumers.
+    const siteUserById = await prisma.site_users.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, role: true, linkedMemberId: true }
+    });
+
+    if (siteUserById) {
+      const dbPermissions = await prisma.user_permissions.findMany({
+        where: { userId: siteUserById.id },
+        select: { resource: true, actions: true, reason: true, expiresAt: true }
+      });
+      const response = {
+        permissions: dbPermissions,
+        success: true,
+        role: String(siteUserById.role || 'MEMBER').toUpperCase(),
+        userId: siteUserById.id,
+        memberId: siteUserById.linkedMemberId || null,
+        email: siteUserById.email
+      };
+      permissionsCache.set(cacheKey, { data: response, timestamp: Date.now() });
+      return res.json(response);
+    }
+
+    // Legacy callers may still provide a member id or an email.
     const member = await prisma.members.findFirst({
       where: {
         OR: [
@@ -8216,7 +8264,8 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
           select: {
             resource: true,
             actions: true,
-            reason: true
+            reason: true,
+            expiresAt: true
           }
         })
       : [];
@@ -8227,7 +8276,7 @@ app.get('/api/user-permissions/:userId', async (req, res) => {
       ...dbPermissions
     ];
     
-    const role = 'MEMBER';
+    const role = String(siteUser?.role || member.role || 'MEMBER').toUpperCase();
     
     const response = { 
       permissions: allPermissions,
@@ -11264,8 +11313,15 @@ app.put('/api/admin/users/:id', requireAuth, async (req, res) => {
         }
       });
 
+      if (role !== undefined && updatedUser.linkedMemberId) {
+        await prisma.members.update({
+          where: { id: updatedUser.linkedMemberId },
+          data: { role: updatedUser.role, updatedAt: new Date() }
+        });
+      }
+
       // Also update in state if exists
-      const stateIndex = state.members.findIndex(m => m.id === id);
+      const stateIndex = state.members.findIndex(m => m.id === updatedUser.linkedMemberId);
       if (stateIndex !== -1) {
         state.members[stateIndex] = {
           ...state.members[stateIndex],
@@ -13151,13 +13207,15 @@ app.get('/api/admin/users/:id/permissions', requireAuth, async (req, res) => {
 });
 
 // POST /api/user-permissions/:userId - Add a single permission action
-app.post('/api/user-permissions/:userId', requireAuth, async (req, res) => {
+app.post('/api/user-permissions/:userId', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { resource, action } = req.body;
+    const { resource, action: rawAction } = req.body;
+    const action = String(rawAction || '').trim().toUpperCase();
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
 
-    if (!resource || !action) {
-      return res.status(400).json({ error: 'Resource and action are required' });
+    if (!resource || !supportedActions.has(action)) {
+      return res.status(400).json({ error: 'Resource and a supported action are required' });
     }
 
     // Find site_user
@@ -13215,13 +13273,15 @@ app.post('/api/user-permissions/:userId', requireAuth, async (req, res) => {
 });
 
 // DELETE /api/user-permissions/:userId - Remove a single permission action
-app.delete('/api/user-permissions/:userId', requireAuth, async (req, res) => {
+app.delete('/api/user-permissions/:userId', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { resource, action } = req.body;
+    const { resource, action: rawAction } = req.body;
+    const action = String(rawAction || '').trim().toUpperCase();
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
 
-    if (!resource || !action) {
-      return res.status(400).json({ error: 'Resource and action are required' });
+    if (!resource || !supportedActions.has(action)) {
+      return res.status(400).json({ error: 'Resource and a supported action are required' });
     }
 
     // Find permission
@@ -13267,7 +13327,7 @@ app.delete('/api/user-permissions/:userId', requireAuth, async (req, res) => {
 });
 
 // POST /api/user-permissions/:userId/cards - Set visible MyRBE cards
-app.post('/api/user-permissions/:userId/cards', requireAuth, async (req, res) => {
+app.post('/api/user-permissions/:userId/cards', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
     const { visibleCards } = req.body;
