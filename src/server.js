@@ -7005,14 +7005,23 @@ app.get('/api/retro-news/:id/polls/:pollId/results', async (req, res) => {
  */
 const toDateTime = (dateStr) => {
   if (!dateStr || dateStr === '') return null;
-  try {
-    // Si déjà un DateTime ISO, retourner tel quel
-    if (dateStr.includes('T')) return new Date(dateStr);
-    // Sinon convertir YYYY-MM-DD en DateTime à minuit UTC
-    return new Date(`${dateStr}T00:00:00.000Z`);
-  } catch {
-    return null;
+  const parsedDate = new Date(String(dateStr).includes('T') ? dateStr : `${dateStr}T00:00:00.000Z`);
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+};
+
+const sendMemberUpdateError = (res, error) => {
+  if (error.code === 'P2025') {
+    return res.status(404).json({ error: 'Membre introuvable' });
   }
+  if (error.code === 'P2002') {
+    const field = error.meta?.target?.[0] || 'champ unique';
+    return res.status(409).json({
+      error: 'Conflit de données',
+      details: `La valeur saisie pour « ${field} » est déjà utilisée par un autre membre.`,
+      field
+    });
+  }
+  return res.status(500).json({ error: 'Impossible de mettre à jour le membre', details: error.message });
 };
 
 /**
@@ -7688,7 +7697,7 @@ app.put(['/api/members','/members'], requireAuth, async (req, res) => {
     res.json({ member });
   } catch (e) {
     console.error('❌ Error updating member:', e.message);
-    res.status(500).json({ error: 'Failed to update member', details: e.message });
+    return sendMemberUpdateError(res, e);
   }
 });
 app.patch(['/api/members','/members'], requireAuth, async (req, res) => {
