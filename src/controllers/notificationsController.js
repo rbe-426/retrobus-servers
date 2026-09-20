@@ -256,8 +256,17 @@ export async function getUserNotifications(req, res, next) {
     const { limit = 20 } = req.query;
     
     // Déterminer le rôle de l'utilisateur
-    const userRole = req.user?.role || 'USER';
-    const isAdmin = userRole === 'ADMIN' || userRole?.includes('ADMIN');
+    const userRoles = [req.user?.role, ...(Array.isArray(req.user?.roles) ? req.user.roles : [])]
+      .filter(Boolean)
+      .map((role) => String(role).trim().toUpperCase());
+    const userRole = userRoles[0] || 'USER';
+    const isAdmin = userRoles.some((role) => [
+      'ADMIN',
+      'PRESIDENT',
+      'VICE_PRESIDENT',
+      'TRESORIER',
+      'SECRETAIRE_GENERAL'
+    ].includes(role));
 
     console.log(`📬 getUserNotifications - userRole: ${userRole}, isAdmin: ${isAdmin}`);
 

@@ -1073,7 +1073,7 @@ const requireMobileVehicleAccess = async (req, res, next) => {
 };
 
 const ADMIN_ACCESS_ROLES = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'];
-const PRESIDENT_IDENTIFIERS = new Set(['w.belaidi', 'belaidiw91@gmail.com']);
+const PRESIDENT_IDENTIFIERS = new Set(['w.belaidi', 'belaidiw91@gmail.com', 'w.belaidi@retrobus-essonne.fr']);
 
 const hasAdminAccessRole = (role) => ADMIN_ACCESS_ROLES.includes(String(role || '').toUpperCase());
 
@@ -2571,6 +2571,8 @@ app.get('/api/me', requireAuth, async (req, res) => {
       user: { 
         id: member.id, 
         email: member.email, 
+        matricule: member.matricule || username,
+        username: username || member.matricule || '',
         prenom: member.firstName || member.prenom,
         nom: member.lastName || member.nom,
         firstName: member.firstName,
@@ -7731,25 +7733,78 @@ app.delete(['/api/members','/members'], requireAuth, async (req, res) => {
 app.post('/api/members/change-password', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
-app.post('/api/members/:id/terminate', requireAuth, async (req, res) => {
+app.post('/api/members/:id/terminate', requireAuth, requireMembershipReviewAccess, upload.fields([
+  { name: 'pv', maxCount: 1 },
+  { name: 'resignation', maxCount: 1 }
+]), async (req, res) => {
   try {
     const { id } = req.params;
+    const reason = String(req.body?.reason || '').trim().toUpperCase();
+    const notes = String(req.body?.notes || '').trim();
+    const uploadedFiles = req.files || {};
+    const pv = uploadedFiles.pv?.[0];
+    const resignation = uploadedFiles.resignation?.[0];
+
+    if (!reason) {
+      return res.status(400).json({ error: 'Le motif de résiliation est requis' });
+    }
+    if (reason === 'EXCLUSION' && !pv) {
+      return res.status(400).json({ error: 'Le procès-verbal est requis pour une exclusion' });
+    }
+    if (reason === 'DEMISSION' && (!pv || !resignation)) {
+      return res.status(400).json({ error: 'Le procès-verbal et la lettre de démission sont requis' });
+    }
 
     const existing = await prisma.members.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: 'Member not found' });
     }
-    
-    // Update in Prisma
-    const updated = await prisma.members.update({
-      where: { id },
-      data: { status: 'terminated', updatedAt: new Date() }
+
+    const terminationDetails = `[RESILIATION] Motif: ${reason}${notes ? `\n${notes}` : ''}`;
+    const mergedNotes = [existing.notes, terminationDetails].filter(Boolean).join('\n\n');
+    const now = new Date();
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const member = await tx.members.update({
+        where: { id },
+        data: {
+          status: 'terminated',
+          membershipStatus: 'CANCELLED',
+          membershipEndDate: now,
+          notes: mergedNotes,
+          updatedAt: now
+        }
+      });
+
+      for (const file of [pv, resignation].filter(Boolean)) {
+        const fileBuffer = await fs.promises.readFile(file.path);
+        await tx.document.create({
+          data: {
+            id: randomUUID(),
+            memberId: id,
+            type: 'OTHER',
+            fileName: file.originalname,
+            filePath: fileBuffer.toString('base64'),
+            fileSize: file.size,
+            mimeType: file.mimetype,
+            status: 'PENDING',
+            reviewNotes: `Justificatif de résiliation - ${reason}`,
+            uploadedAt: now
+          }
+        });
+        await fs.promises.unlink(file.path).catch(() => {});
+      }
+
+      return member;
     });
     
     // Also update in state.members
     const member = state.members.find(m => m.id === id);
     if (member) {
       member.status = 'terminated';
+      member.membershipStatus = 'CANCELLED';
+      member.membershipEndDate = now.toISOString();
+      member.notes = mergedNotes;
       member.updatedAt = new Date().toISOString();
     }
     
@@ -13272,6 +13327,55 @@ app.post('/api/user-permissions/:userId', requireAuth, requireAdmin, async (req,
   }
 });
 
+// PUT /api/user-permissions/:userId - Replace all actions for one resource atomically
+app.put('/api/user-permissions/:userId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const resource = String(req.body?.resource || '').trim();
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
+    const actions = [...new Set((Array.isArray(req.body?.actions) ? req.body.actions : [])
+      .map((action) => String(action || '').trim().toUpperCase())
+      .filter((action) => supportedActions.has(action)))];
+
+    if (!resource) {
+      return res.status(400).json({ error: 'Resource is required' });
+    }
+
+    const siteUser = await prisma.site_users.findUnique({ where: { id: userId } });
+    if (!siteUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const existingPermission = await prisma.user_permissions.findFirst({
+      where: { userId, resource }
+    });
+
+    if (actions.length === 0) {
+      if (existingPermission) {
+        await prisma.user_permissions.delete({ where: { id: existingPermission.id } });
+      }
+    } else {
+      await prisma.user_permissions.upsert({
+        where: { userId_resource: { userId, resource } },
+        update: { actions, updatedAt: new Date() },
+        create: {
+          id: randomUUID(),
+          userId,
+          resource,
+          actions,
+          updatedAt: new Date()
+        }
+      });
+    }
+
+    permissionsCache.delete(`perms_${userId}`);
+    res.json({ ok: true, resource, actions });
+  } catch (e) {
+    console.error('❌ PUT /api/user-permissions/:userId error:', e.message);
+    res.status(500).json({ error: 'Failed to update resource permissions', details: e.message });
+  }
+});
+
 // DELETE /api/user-permissions/:userId - Remove a single permission action
 app.delete('/api/user-permissions/:userId', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -13323,6 +13427,55 @@ app.delete('/api/user-permissions/:userId', requireAuth, requireAdmin, async (re
   } catch (e) {
     console.error('❌ DELETE /api/user-permissions/:userId error:', e.message);
     res.status(500).json({ error: 'Failed to remove permission', details: e.message });
+  }
+});
+
+// POST /api/user-permissions/:userId/grant-all - Grant all configured rights in one operation
+app.post('/api/user-permissions/:userId/grant-all', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const requestedPermissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
+
+    if (requestedPermissions.length === 0) {
+      return res.status(400).json({ error: 'At least one permission is required' });
+    }
+
+    const siteUser = await prisma.site_users.findUnique({ where: { id: userId } });
+    if (!siteUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const normalizedPermissions = requestedPermissions
+      .map((permission) => ({
+        resource: String(permission?.resource || '').trim(),
+        actions: [...new Set((Array.isArray(permission?.actions) ? permission.actions : [])
+          .map((action) => String(action || '').trim().toUpperCase())
+          .filter((action) => supportedActions.has(action)))]
+      }))
+      .filter((permission) => permission.resource && permission.actions.length > 0);
+
+    if (normalizedPermissions.length === 0) {
+      return res.status(400).json({ error: 'No supported permissions were provided' });
+    }
+
+    await prisma.$transaction(normalizedPermissions.map((permission) => prisma.user_permissions.upsert({
+      where: { userId_resource: { userId, resource: permission.resource } },
+      update: { actions: permission.actions, updatedAt: new Date() },
+      create: {
+        id: randomUUID(),
+        userId,
+        resource: permission.resource,
+        actions: permission.actions,
+        updatedAt: new Date()
+      }
+    })));
+
+    permissionsCache.delete(`perms_${userId}`);
+    res.json({ ok: true, count: normalizedPermissions.length });
+  } catch (e) {
+    console.error('❌ POST /api/user-permissions/:userId/grant-all error:', e.message);
+    res.status(500).json({ error: 'Failed to grant all permissions', details: e.message });
   }
 });
 
