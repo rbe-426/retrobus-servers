@@ -7176,6 +7176,10 @@ const buildMemberSignaturePayload = async (member) => {
       drivingLicenses: Array.isArray(md.drivingLicenses) ? md.drivingLicenses : [],
       drivingLicenseNumber: md.drivingLicenseNumber || null,
       drivingLicenseNumbers: md.drivingLicenseNumbers || {},
+      drivingLicensePhotoFrontDataUrl: md.drivingLicensePhotoFrontDataUrl || null,
+      drivingLicensePhotoFrontName: md.drivingLicensePhotoFrontName || null,
+      drivingLicensePhotoBackDataUrl: md.drivingLicensePhotoBackDataUrl || null,
+      drivingLicensePhotoBackName: md.drivingLicensePhotoBackName || null,
       acceptedStatuts: !!md.acceptedStatuts,
       acceptedReglementInterieur: !!md.acceptedReglementInterieur,
       acceptedCsar: !!md.acceptedCsar
@@ -7468,26 +7472,41 @@ app.get('/api/members/pending-bulletin-reviews', requireAuth, requireMembershipR
       select: { token: true, memberData: true, signedAt: true, createdAt: true }
     });
     const memberEmails = [...new Set(signedFlows.map((flow) => String(flow.memberData?.email || '').trim().toLowerCase()).filter(Boolean))];
-    const existingMembers = memberEmails.length
-      ? await prisma.members.findMany({ where: { email: { in: memberEmails } }, select: { id: true, email: true } })
+    const memberIds = [...new Set(signedFlows.map((flow) => String(flow.memberData?.id || '').trim()).filter(Boolean))];
+    const existingMembers = (memberEmails.length || memberIds.length)
+      ? await prisma.members.findMany({
+          where: {
+            OR: [
+              ...(memberIds.length ? [{ id: { in: memberIds } }] : []),
+              ...(memberEmails.length ? [{ email: { in: memberEmails } }] : [])
+            ]
+          },
+          select: { id: true, email: true, membershipStatus: true }
+        })
       : [];
-    const memberByEmail = new Map(existingMembers.map((member) => [member.email.toLowerCase(), member.id]));
+    const memberById = new Map(existingMembers.map((member) => [member.id, member]));
+    const memberByEmail = new Map(existingMembers.map((member) => [member.email.toLowerCase(), member]));
 
     res.json({
       success: true,
-      bulletins: signedFlows.map((flow) => {
-        const memberData = flow.memberData || {};
-        const email = String(memberData.email || '').trim().toLowerCase();
-        return {
-          token: flow.token,
-          firstName: memberData.firstName || '',
-          lastName: memberData.lastName || '',
-          email,
-          signedAt: flow.signedAt,
-          createdAt: flow.createdAt,
-          memberId: String(memberData.id || '').trim() || memberByEmail.get(email) || null
-        };
-      })
+      bulletins: signedFlows
+        .map((flow) => {
+          const memberData = flow.memberData || {};
+          const email = String(memberData.email || '').trim().toLowerCase();
+          const memberId = String(memberData.id || '').trim();
+          const member = memberById.get(memberId) || memberByEmail.get(email) || null;
+          return {
+            token: flow.token,
+            firstName: memberData.firstName || '',
+            lastName: memberData.lastName || '',
+            email,
+            signedAt: flow.signedAt,
+            createdAt: flow.createdAt,
+            memberId: member?.id || memberId || null,
+            membershipStatus: member?.membershipStatus || null
+          };
+        })
+        .filter((bulletin) => bulletin.membershipStatus !== 'ACTIVE')
     });
   } catch (error) {
     console.error('❌ Error listing signed bulletin reviews:', error.message);
