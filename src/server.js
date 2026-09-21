@@ -4217,7 +4217,7 @@ app.get(['/procedures/documents', '/api/procedures/documents'], requireAuth, asy
     const documentsWithStatus = documents.map((document) => ({
       ...document,
       hasUnreadUpdate: !viewsByDocument.get(document.id) || new Date(viewsByDocument.get(document.id)) < document.updatedAt
-    });
+    }));
     res.json({ documents: documentsWithStatus, canPublish: await isAdminRequest(req) });
   } catch (error) {
     console.error('GET /api/procedures/documents:', error.message);
@@ -11272,22 +11272,6 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Matricule is required' });
     }
 
-    const existingSiteUser = await prisma.site_users.findFirst({
-      where: {
-        OR: [
-          { email: { equals: normalizedEmail, mode: 'insensitive' } },
-          { username: { equals: username, mode: 'insensitive' } }
-        ]
-      }
-    });
-
-    if (existingSiteUser) {
-      return res.status(409).json({
-        error: 'Un accès utilisateur existe déjà avec cet email ou ce matricule.',
-        details: 'Utilisez la modification ou la réinitialisation du mot de passe sur le compte existant.'
-      });
-    }
-    
     // Use password from any source (password, temporaryPassword, or generate new)
     const tempPassword = password || temporaryPassword || generateTemporaryPassword();
     const hashedPassword = hashPasswordForStorage(tempPassword);
@@ -11296,99 +11280,68 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
     // If mustChangePassword is explicitly set, use it; otherwise, default to true if no password provided
     const shouldChangePwd = mustChangePassword !== undefined ? mustChangePassword : (!password);
     
-    const existingMember = await prisma.members.findFirst({
+    const matchingMembers = await prisma.members.findMany({
       where: {
         OR: [
           { email: { equals: normalizedEmail, mode: 'insensitive' } },
           { matricule: { equals: username, mode: 'insensitive' } }
         ]
-      }
+      },
+      select: { id: true }
     });
 
-    let member = existingMember;
-    if (member) {
-      const conflictingMember = await prisma.members.findFirst({
-        where: {
-          matricule: { equals: username, mode: 'insensitive' },
-          NOT: { id: member.id }
-        },
-        select: { id: true }
-      });
-      if (conflictingMember) {
-        return res.status(409).json({ error: 'Ce matricule est déjà attribué à un autre adhérent.' });
-      }
-
-      member = await prisma.members.update({
-        where: { id: member.id },
-        data: {
-          firstName,
-          lastName,
-          email: normalizedEmail,
-          matricule: username,
-          password: hashedPassword,
-          isPasswordTemporary: shouldChangePwd,
-          mustChangePassword: shouldChangePwd,
-          role: role || member.role || 'USER',
-          status: 'active',
-          updatedAt: new Date()
-        }
-      });
-    } else {
-      member = await prisma.members.create({
-        data: {
-          id: uid(),
-          email: normalizedEmail,
-          firstName,
-          lastName,
-          matricule: username,
-          password: hashedPassword,
-          isPasswordTemporary: shouldChangePwd,
-          mustChangePassword: shouldChangePwd,
-          role: role || 'USER',
-          status: 'active',
-          permissions: {},
-          createdAt: new Date(),
-          updatedAt: new Date()
-        }
+    if (matchingMembers.length > 1) {
+      return res.status(409).json({
+        error: 'L’email et le matricule désignent deux adhérents différents.',
+        details: 'Utilisez les informations de la même fiche adhérent avant de créer l’accès.'
       });
     }
 
-    const newSiteUser = await prisma.site_users.create({
-      data: {
-        id: randomUUID(),
-        username,
-        email: normalizedEmail,
-        firstName,
-        lastName,
-        password: hashedPassword,
-        role: role || 'USER',
-        hasInternalAccess: true,
-        isActive: true,
-        mustChangePassword: shouldChangePwd,
-        linkedMemberId: member.id,
-        updatedAt: new Date()
+    const linkedMember = matchingMembers[0] || null;
+    const matchingSiteUsers = await prisma.site_users.findMany({
+      where: {
+        OR: [
+          { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          { username: { equals: username, mode: 'insensitive' } },
+          ...(linkedMember ? [{ linkedMemberId: linkedMember.id }] : [])
+        ]
       }
     });
+
+    if (matchingSiteUsers.length > 1) {
+      return res.status(409).json({
+        error: 'Plusieurs accès correspondent à cet email, matricule ou adhésion.',
+        details: 'Corrigez les accès existants avant de continuer.'
+      });
+    }
+
+    const existingSiteUser = matchingSiteUsers[0] || null;
+    const accessData = {
+      username,
+      email: normalizedEmail,
+      firstName,
+      lastName,
+      password: hashedPassword,
+      role: role || 'USER',
+      hasInternalAccess: true,
+      isActive: true,
+      mustChangePassword: shouldChangePwd,
+      ...(linkedMember ? { linkedMemberId: linkedMember.id } : {}),
+      updatedAt: new Date()
+    };
+    const siteUser = existingSiteUser
+      ? await prisma.site_users.update({
+          where: { id: existingSiteUser.id },
+          data: accessData
+        })
+      : await prisma.site_users.create({
+          data: {
+        id: randomUUID(),
+            ...accessData
+          }
+        });
     
-    // Also add to state.members for in-memory access
-    state.members.push({
-      id: member.id,
-      email: member.email,
-      firstName: member.firstName,
-      lastName: member.lastName,
-      matricule: member.matricule,
-      password: member.password,
-      role: member.role,
-      status: member.status,
-      isPasswordTemporary: member.isPasswordTemporary,
-      mustChangePassword: member.mustChangePassword,
-      permissions: member.permissions || {},
-      createdAt: member.createdAt.toISOString()
-    }));
-    
-    debouncedSave();
-    
-    console.log('✅ Accès utilisateur créé:', newSiteUser.id, normalizedEmail, 'role:', role, 'mustChangePassword:', newSiteUser.mustChangePassword);
+    console.log(`✅ Accès utilisateur ${existingSiteUser ? 'mis à jour' : 'créé'}:`, siteUser.id, normalizedEmail, 'role:', role, 'mustChangePassword:', siteUser.mustChangePassword);
     
     // Send email with credentials using mailback password template
     try {
@@ -11396,9 +11349,9 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
         'mailback password',
         normalizedEmail,
         {
-          firstName: member.firstName,
-          lastName: member.lastName,
-          urbex_id: member.matricule || normalizedEmail,
+          firstName,
+          lastName,
+          urbex_id: username,
           temporar_mdp: tempPassword
         },
         'RétroBus Essonne - Identifiants'
@@ -11410,9 +11363,11 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
     }
     
     res.status(201).json({ 
-      user: newSiteUser,
+      user: siteUser,
+      replaced: Boolean(existingSiteUser),
+      linkedMemberId: linkedMember?.id || siteUser.linkedMemberId || null,
       emailSent: true,
-      message: 'Accès utilisateur créé. Un email avec les identifiants a été envoyé à ' + normalizedEmail
+      message: `Accès utilisateur ${existingSiteUser ? 'mis à jour' : 'créé'}${linkedMember ? ' et rattaché à l’adhésion existante' : ''}. Un email avec les identifiants a été envoyé à ${normalizedEmail}`
     });
   } catch (e) {
     console.error('❌ POST /api/admin/users error:', e.message);
