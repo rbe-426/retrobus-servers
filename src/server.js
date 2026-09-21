@@ -1074,8 +1074,61 @@ const requireMobileVehicleAccess = async (req, res, next) => {
 
 const ADMIN_ACCESS_ROLES = ['ADMIN', 'PRESIDENT', 'VICE_PRESIDENT', 'TRESORIER', 'SECRETAIRE_GENERAL'];
 const PRESIDENT_IDENTIFIERS = new Set(['w.belaidi', 'belaidiw91@gmail.com', 'w.belaidi@retrobus-essonne.fr']);
+const DEFAULT_PERMISSION_PROFILE_USERNAME = 'n.tetillon';
 
 const hasAdminAccessRole = (role) => ADMIN_ACCESS_ROLES.includes(String(role || '').toUpperCase());
+
+const isPresidentSiteUser = (siteUser) => [
+  siteUser?.username,
+  siteUser?.email,
+  siteUser?.members?.matricule,
+  siteUser?.members?.email
+]
+  .filter(Boolean)
+  .map((value) => String(value).trim().toLowerCase())
+  .some((identity) => PRESIDENT_IDENTIFIERS.has(identity));
+
+const getDefaultPermissionProfile = async () => {
+  const sourceUser = await prisma.site_users.findFirst({
+    where: {
+      OR: [
+        { username: { equals: DEFAULT_PERMISSION_PROFILE_USERNAME, mode: 'insensitive' } },
+        { members: { is: { matricule: { equals: DEFAULT_PERMISSION_PROFILE_USERNAME, mode: 'insensitive' } } } }
+      ]
+    },
+    select: { id: true }
+  });
+
+  if (!sourceUser) {
+    throw new Error(`Profil de permissions introuvable: ${DEFAULT_PERMISSION_PROFILE_USERNAME}`);
+  }
+
+  return prisma.user_permissions.findMany({
+    where: { userId: sourceUser.id },
+    select: { resource: true, actions: true, expiresAt: true }
+  });
+};
+
+const replaceWithDefaultPermissionProfile = async (userId, profilePermissions, grantedBy = null) => {
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.user_permissions.deleteMany({ where: { userId } }),
+    ...(profilePermissions.length > 0 ? [prisma.user_permissions.createMany({
+      data: profilePermissions.map((permission) => ({
+        id: randomUUID(),
+        userId,
+        resource: permission.resource,
+        actions: permission.actions,
+        expiresAt: permission.expiresAt,
+        grantedAt: now,
+        grantedBy,
+        reason: `Profil par défaut: ${DEFAULT_PERMISSION_PROFILE_USERNAME}`,
+        updatedAt: now
+      }))
+    })] : [])
+  ]);
+  permissionsCache.delete(`perms_${userId}`);
+};
 
 const isConfiguredPresidentRequest = (req) => [
   req.user?.email,
@@ -8430,6 +8483,37 @@ app.get('/api/user-permissions', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/user-permissions/apply-default-profile - Apply Nathan's permissions to all access accounts except w.belaidi.
+app.post('/api/user-permissions/apply-default-profile', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const defaultPermissions = await getDefaultPermissionProfile();
+    const siteUsers = await prisma.site_users.findMany({
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        members: { select: { matricule: true, email: true } }
+      }
+    });
+    const recipients = siteUsers.filter((siteUser) => !isPresidentSiteUser(siteUser));
+
+    await Promise.all(recipients.map((siteUser) => (
+      replaceWithDefaultPermissionProfile(siteUser.id, defaultPermissions, req.user?.id || null)
+    )));
+
+    res.json({
+      ok: true,
+      source: DEFAULT_PERMISSION_PROFILE_USERNAME,
+      updatedUsers: recipients.length,
+      excludedUsers: siteUsers.length - recipients.length,
+      permissionCount: defaultPermissions.length
+    });
+  } catch (error) {
+    console.error('❌ Applying default permission profile failed:', error.message);
+    res.status(500).json({ error: 'Impossible d’appliquer le profil de permissions par défaut.', details: error.message });
+  }
+});
+
 // DOCUMENTS
 app.get(['/api/documents'], requireAuth, (req, res) => {
   res.json(state.documents || []);
@@ -11396,6 +11480,11 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
             ...accessData
           }
         });
+
+    if (!existingSiteUser && !isPresidentSiteUser(siteUser)) {
+      const defaultPermissions = await getDefaultPermissionProfile();
+      await replaceWithDefaultPermissionProfile(siteUser.id, defaultPermissions, req.user?.id || null);
+    }
 
     if (linkedMember) {
       await prisma.members.update({
