@@ -13338,7 +13338,7 @@ app.post('/api/user-permissions/:userId', requireAuth, requireAdmin, async (req,
     const { userId } = req.params;
     const { resource, action: rawAction } = req.body;
     const action = String(rawAction || '').trim().toUpperCase();
-    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY', 'HIDE', 'LOCK']);
 
     if (!resource || !supportedActions.has(action)) {
       return res.status(400).json({ error: 'Resource and a supported action are required' });
@@ -13403,7 +13403,7 @@ app.put('/api/user-permissions/:userId', requireAuth, requireAdmin, async (req, 
   try {
     const { userId } = req.params;
     const resource = String(req.body?.resource || '').trim();
-    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY', 'HIDE', 'LOCK']);
     const actions = [...new Set((Array.isArray(req.body?.actions) ? req.body.actions : [])
       .map((action) => String(action || '').trim().toUpperCase())
       .filter((action) => supportedActions.has(action)))];
@@ -13453,7 +13453,7 @@ app.delete('/api/user-permissions/:userId', requireAuth, requireAdmin, async (re
     const { userId } = req.params;
     const { resource, action: rawAction } = req.body;
     const action = String(rawAction || '').trim().toUpperCase();
-    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY', 'HIDE', 'LOCK']);
 
     if (!resource || !supportedActions.has(action)) {
       return res.status(400).json({ error: 'Resource and a supported action are required' });
@@ -13506,7 +13506,7 @@ app.post('/api/user-permissions/:userId/grant-all', requireAuth, requireAdmin, a
   try {
     const { userId } = req.params;
     const requestedPermissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
-    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY']);
+    const supportedActions = new Set(['READ', 'CREATE', 'UPDATE', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE', 'GRANT', 'DENY', 'HIDE', 'LOCK']);
 
     if (requestedPermissions.length === 0) {
       return res.status(400).json({ error: 'At least one permission is required' });
