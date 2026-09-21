@@ -1155,6 +1155,44 @@ const isAdminRequest = async (req) => {
   });
 };
 
+const requireVehicleMutationAccess = async (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || !req.user) return next();
+
+  try {
+    const siteUser = await prisma.site_users.findFirst({
+      where: {
+        OR: [
+          ...(req.user.id ? [{ linkedMemberId: String(req.user.id) }] : []),
+          ...(req.user.email ? [{ email: { equals: String(req.user.email), mode: 'insensitive' } }] : [])
+        ]
+      },
+      select: { id: true }
+    });
+
+    if (!siteUser) return next();
+
+    const vehicleRestriction = await prisma.user_permissions.findFirst({
+      where: {
+        userId: siteUser.id,
+        resource: { in: ['VEHICLE_EDIT', 'vehicles:edit'] }
+      },
+      select: { actions: true, expiresAt: true }
+    });
+
+    const restrictionIsActive = !vehicleRestriction?.expiresAt || vehicleRestriction.expiresAt > new Date();
+    if (restrictionIsActive && vehicleRestriction?.actions?.some((action) => ['DENY', 'LOCK'].includes(action))) {
+      return res.status(403).json({ error: 'La modification des véhicules est verrouillée pour ce compte.' });
+    }
+
+    next();
+  } catch (error) {
+    console.error('❌ Vehicle mutation permission check failed:', error.message);
+    res.status(500).json({ error: 'Impossible de vérifier les droits de modification des véhicules.' });
+  }
+};
+
+app.use(['/vehicles', '/api/vehicles'], requireVehicleMutationAccess);
+
 const isTrafficContextRequest = async (req) => {
   const email = String(req.user?.email || '').toLowerCase();
   const id = String(req.user?.id || '').toLowerCase();
