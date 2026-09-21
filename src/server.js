@@ -2400,20 +2400,32 @@ app.post('/api/auth/member-login', authLimiter, async (req, res) => {
       member = stateM;
     }
     
+    const siteUser = await prisma.site_users.findFirst({
+      where: {
+        OR: [
+          { linkedMemberId: member.id },
+          { email: { equals: identifier, mode: 'insensitive' } },
+          { username: { equals: identifier, mode: 'insensitive' } }
+        ]
+      },
+      select: { password: true, role: true, isActive: true }
+    });
+    const storedPassword = siteUser?.password || member.password;
+
     // Verify password
-    if (!member.password) {
+    if (!storedPassword) {
       auditLog('MEMBER_LOGIN_NO_PASSWORD', identifier, { memberId: member.id }, 'failed');
       return res.status(401).json({ error: 'No password set for this account' });
     }
 
     // Try to verify with new hashed format first, then legacy plaintext
     let passwordValid = false;
-    if (member.password.includes(':')) {
+    if (storedPassword.includes(':')) {
       // New format: hash:salt:iterations
-      passwordValid = verifyPassword(password, member.password);
+      passwordValid = verifyPassword(password, storedPassword);
     } else {
       // Legacy plaintext password
-      passwordValid = (password === member.password);
+      passwordValid = (password === storedPassword);
     }
 
     if (!passwordValid) {
@@ -2422,6 +2434,11 @@ app.post('/api/auth/member-login', authLimiter, async (req, res) => {
     }
     
     // ✅ Check if login is enabled (status === "active")
+    if (siteUser && !siteUser.isActive) {
+      auditLog('MEMBER_LOGIN_DISABLED_SITE_ACCESS', identifier, { memberId: member.id }, 'failed');
+      return res.status(403).json({ error: 'Accès utilisateur désactivé. Veuillez contacter un administrateur.' });
+    }
+
     if (member.status && member.status !== 'active') {
       auditLog('MEMBER_LOGIN_DISABLED_ACCOUNT', identifier, { status: member.status }, 'failed');
       return res.status(403).json({ error: 'Compte désactivé. Veuillez contacter un administrateur.' });
@@ -2448,7 +2465,7 @@ app.post('/api/auth/member-login', authLimiter, async (req, res) => {
       // Non-blocking: still allow login even if we can't update status
     }
     
-    const role = await resolveEffectiveRole(member);
+    const role = siteUser?.role || await resolveEffectiveRole(member);
     
     const email = member.email || '';
     
