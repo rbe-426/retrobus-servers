@@ -44,14 +44,27 @@ export const authenticateUser = async (email, password) => {
       return null;
     }
 
-    // Vérifier le password
+    const siteUser = await prisma.site_users.findFirst({
+      where: {
+        isActive: true,
+        OR: [
+          { linkedMemberId: member.id },
+          { email: { equals: String(email).trim(), mode: 'insensitive' } },
+          { username: { equals: String(email).trim(), mode: 'insensitive' } }
+        ]
+      },
+      select: { password: true }
+    });
+
+    // A linked site access is the source of truth for its credentials.
+    const storedPassword = siteUser?.password || member.password;
     let passwordValid = false;
-    if (member.password?.includes(':')) {
+    if (storedPassword?.includes(':')) {
       // Format haché: hash:salt:iterations
-      passwordValid = verifyPassword(password, member.password);
+      passwordValid = verifyPassword(password, storedPassword);
     } else {
       // Format plaintext (legacy)
-      passwordValid = (password === member.password);
+      passwordValid = (password === storedPassword);
     }
 
     if (!passwordValid) {
@@ -125,6 +138,15 @@ export const changePassword = async (userId, newPassword) => {
         passwordChangedAt: new Date(),
         mustChangePassword: false,
         isPasswordTemporary: false
+      }
+    });
+
+    await prisma.site_users.updateMany({
+      where: { linkedMemberId: userId },
+      data: {
+        password: hashedPassword,
+        mustChangePassword: false,
+        updatedAt: new Date()
       }
     });
     

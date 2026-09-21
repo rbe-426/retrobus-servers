@@ -11340,6 +11340,18 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
             ...accessData
           }
         });
+
+    if (linkedMember) {
+      await prisma.members.update({
+        where: { id: linkedMember.id },
+        data: {
+          password: hashedPassword,
+          isPasswordTemporary: shouldChangePwd,
+          mustChangePassword: shouldChangePwd,
+          updatedAt: new Date()
+        }
+      });
+    }
     
     console.log(`✅ Accès utilisateur ${existingSiteUser ? 'mis à jour' : 'créé'}:`, siteUser.id, normalizedEmail, 'role:', role, 'mustChangePassword:', siteUser.mustChangePassword);
     
@@ -11812,6 +11824,16 @@ app.post('/api/admin/users/:id/link-member', requireAuth, async (req, res) => {
             email: true
           }
         }
+      }
+    });
+
+    await prisma.members.update({
+      where: { id: memberId },
+      data: {
+        password: siteUser.password,
+        isPasswordTemporary: siteUser.mustChangePassword,
+        mustChangePassword: siteUser.mustChangePassword,
+        updatedAt: new Date()
       }
     });
 
