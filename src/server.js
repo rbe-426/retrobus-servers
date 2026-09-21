@@ -1162,6 +1162,7 @@ const requireVehicleMutationAccess = async (req, res, next) => {
     const siteUser = await prisma.site_users.findFirst({
       where: {
         OR: [
+          ...(req.user.id ? [{ id: String(req.user.id) }] : []),
           ...(req.user.id ? [{ linkedMemberId: String(req.user.id) }] : []),
           ...(req.user.email ? [{ email: { equals: String(req.user.email), mode: 'insensitive' } }] : [])
         ]
