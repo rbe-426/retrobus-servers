@@ -7987,11 +7987,29 @@ app.post('/api/members/:id/link-access', requireAuth, async (req, res) => {
       select: { id: true, username: true, linkedMemberId: true, password: true, mustChangePassword: true }
     });
     if (!siteUser) return res.status(404).json({ error: 'Aucun accès ne correspond à ce matricule ou cet email' });
-    if (siteUser.linkedMemberId && siteUser.linkedMemberId !== id) {
-      return res.status(409).json({ error: 'Cet accès est déjà lié à un autre adhérent' });
+    const previousMember = siteUser.linkedMemberId && siteUser.linkedMemberId !== id
+      ? await prisma.members.findUnique({
+          where: { id: siteUser.linkedMemberId },
+          select: { id: true, status: true, membershipStatus: true }
+        })
+      : null;
+    if (previousMember && previousMember.status !== 'terminated' && previousMember.membershipStatus !== 'CANCELLED') {
+      return res.status(409).json({ error: 'Cet accès est déjà lié à un autre adhérent actif' });
+    }
+
+    const existingMemberLink = await prisma.site_users.findFirst({
+      where: { linkedMemberId: id, NOT: { id: siteUser.id } },
+      select: { username: true }
+    });
+    if (existingMemberLink) {
+      return res.status(409).json({ error: `Cet adhérent est déjà lié à l’accès ${existingMemberLink.username}` });
     }
 
     await prisma.$transaction([
+      ...(previousMember ? [prisma.members.update({
+        where: { id: previousMember.id },
+        data: { hasLinkedAccess: false, updatedAt: new Date() }
+      })] : []),
       prisma.site_users.update({
         where: { id: siteUser.id },
         data: { linkedMemberId: id, updatedAt: new Date() }

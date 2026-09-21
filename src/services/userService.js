@@ -37,27 +37,58 @@ export const findUserByIdentifier = async (identifier) => {
  */
 export const authenticateUser = async (email, password) => {
   try {
+    const siteUser = await prisma.site_users.findFirst({
+      where: {
+        OR: [
+          { email: { equals: String(email).trim(), mode: 'insensitive' } },
+          { username: { equals: String(email).trim(), mode: 'insensitive' } }
+        ]
+      },
+      include: { members: true }
+    });
+
+    if (siteUser) {
+      if (!siteUser.isActive) {
+        auditLog('MEMBER_LOGIN_DISABLED_SITE_ACCESS', email, { siteUserId: siteUser.id }, 'failed');
+        return null;
+      }
+
+      const passwordValid = siteUser.password?.includes(':')
+        ? verifyPassword(password, siteUser.password)
+        : password === siteUser.password;
+      if (!passwordValid) {
+        auditLog('MEMBER_LOGIN_INVALID_PASSWORD', email, { siteUserId: siteUser.id }, 'failed');
+        return null;
+      }
+
+      const linkedMember = siteUser.members;
+      if (linkedMember && linkedMember.status && linkedMember.status !== 'active') {
+        auditLog('MEMBER_LOGIN_DISABLED_ACCOUNT', email, { status: linkedMember.status }, 'failed');
+        return null;
+      }
+
+      // Independent access accounts are valid even when they are not attached to a member.
+      return linkedMember || {
+        id: siteUser.id,
+        email: siteUser.email,
+        firstName: siteUser.firstName,
+        lastName: siteUser.lastName,
+        matricule: siteUser.username,
+        role: siteUser.role,
+        permissions: [],
+        mustChangePassword: siteUser.mustChangePassword,
+        isPasswordTemporary: siteUser.mustChangePassword,
+        status: 'active'
+      };
+    }
+
     const member = await findUserByIdentifier(email);
-    
     if (!member) {
       auditLog('MEMBER_LOGIN_NOT_FOUND', email, { path: 'userService' }, 'failed');
       return null;
     }
 
-    const siteUser = await prisma.site_users.findFirst({
-      where: {
-        isActive: true,
-        OR: [
-          { linkedMemberId: member.id },
-          { email: { equals: String(email).trim(), mode: 'insensitive' } },
-          { username: { equals: String(email).trim(), mode: 'insensitive' } }
-        ]
-      },
-      select: { password: true }
-    });
-
-    // A linked site access is the source of truth for its credentials.
-    const storedPassword = siteUser?.password || member.password;
+    const storedPassword = member.password;
     let passwordValid = false;
     if (storedPassword?.includes(':')) {
       // Format haché: hash:salt:iterations
