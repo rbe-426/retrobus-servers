@@ -2446,8 +2446,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-// Member login endpoint - accepts identifier (email or username) and password
-app.post('/api/auth/member-login', authLimiter, async (req, res) => {
+// Legacy member login endpoint kept on a private path only; /api/auth/member-login is served by authRoutes.
+app.post('/api/auth/member-login-legacy', authLimiter, async (req, res) => {
   try {
     // 🔐 Validation et sanitization des entrées
     const identifier = sanitizeInput(req.body?.identifier || '').toLowerCase().trim();
