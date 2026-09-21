@@ -4217,7 +4217,7 @@ app.get(['/procedures/documents', '/api/procedures/documents'], requireAuth, asy
     const documentsWithStatus = documents.map((document) => ({
       ...document,
       hasUnreadUpdate: !viewsByDocument.get(document.id) || new Date(viewsByDocument.get(document.id)) < document.updatedAt
-    }));
+    });
     res.json({ documents: documentsWithStatus, canPublish: await isAdminRequest(req) });
   } catch (error) {
     console.error('GET /api/procedures/documents:', error.message);
@@ -11257,8 +11257,10 @@ app.get('/api/admin/users', requireAuth, async (req, res) => {
 app.post('/api/admin/users', requireAuth, async (req, res) => {
   try {
     const { email, firstName, lastName, matricule, password, temporaryPassword, role, mustChangePassword } = req.body;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const username = String(matricule || '').trim();
     
-    if (!email) {
+    if (!normalizedEmail) {
       return res.status(400).json({ error: 'Email is required' });
     }
     
@@ -11266,13 +11268,24 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'firstName and lastName are required' });
     }
     
-    // Check if user already exists in Prisma
-    const existingInPrisma = await prisma.members.findUnique({
-      where: { email }
+    if (!username) {
+      return res.status(400).json({ error: 'Matricule is required' });
+    }
+
+    const existingSiteUser = await prisma.site_users.findFirst({
+      where: {
+        OR: [
+          { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          { username: { equals: username, mode: 'insensitive' } }
+        ]
+      }
     });
-    
-    if (existingInPrisma) {
-      return res.status(409).json({ error: 'User with this email already exists' });
+
+    if (existingSiteUser) {
+      return res.status(409).json({
+        error: 'Un accès utilisateur existe déjà avec cet email ou ce matricule.',
+        details: 'Utilisez la modification ou la réinitialisation du mot de passe sur le compte existant.'
+      });
     }
     
     // Use password from any source (password, temporaryPassword, or generate new)
@@ -11283,68 +11296,123 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
     // If mustChangePassword is explicitly set, use it; otherwise, default to true if no password provided
     const shouldChangePwd = mustChangePassword !== undefined ? mustChangePassword : (!password);
     
-    // Create in Prisma (single source of truth)
-    const newMember = await prisma.members.create({
+    const existingMember = await prisma.members.findFirst({
+      where: {
+        OR: [
+          { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          { matricule: { equals: username, mode: 'insensitive' } }
+        ]
+      }
+    });
+
+    let member = existingMember;
+    if (member) {
+      const conflictingMember = await prisma.members.findFirst({
+        where: {
+          matricule: { equals: username, mode: 'insensitive' },
+          NOT: { id: member.id }
+        },
+        select: { id: true }
+      });
+      if (conflictingMember) {
+        return res.status(409).json({ error: 'Ce matricule est déjà attribué à un autre adhérent.' });
+      }
+
+      member = await prisma.members.update({
+        where: { id: member.id },
+        data: {
+          firstName,
+          lastName,
+          email: normalizedEmail,
+          matricule: username,
+          password: hashedPassword,
+          isPasswordTemporary: shouldChangePwd,
+          mustChangePassword: shouldChangePwd,
+          role: role || member.role || 'USER',
+          status: 'active',
+          updatedAt: new Date()
+        }
+      });
+    } else {
+      member = await prisma.members.create({
+        data: {
+          id: uid(),
+          email: normalizedEmail,
+          firstName,
+          lastName,
+          matricule: username,
+          password: hashedPassword,
+          isPasswordTemporary: shouldChangePwd,
+          mustChangePassword: shouldChangePwd,
+          role: role || 'USER',
+          status: 'active',
+          permissions: {},
+          createdAt: new Date(),
+          updatedAt: new Date()
+        }
+      });
+    }
+
+    const newSiteUser = await prisma.site_users.create({
       data: {
-        id: uid(),
-        email,
+        id: randomUUID(),
+        username,
+        email: normalizedEmail,
         firstName,
         lastName,
-        matricule: matricule || '',
         password: hashedPassword,
-        isPasswordTemporary: shouldChangePwd,
-        mustChangePassword: shouldChangePwd,
         role: role || 'USER',
-        status: 'active',
-        permissions: {},
-        createdAt: new Date(),
+        hasInternalAccess: true,
+        isActive: true,
+        mustChangePassword: shouldChangePwd,
+        linkedMemberId: member.id,
         updatedAt: new Date()
       }
     });
     
     // Also add to state.members for in-memory access
     state.members.push({
-      id: newMember.id,
-      email: newMember.email,
-      firstName: newMember.firstName,
-      lastName: newMember.lastName,
-      matricule: newMember.matricule,
-      password: newMember.password,
-      role: newMember.role,
-      status: newMember.status,
-      isPasswordTemporary: newMember.isPasswordTemporary,
-      mustChangePassword: newMember.mustChangePassword,
-      permissions: newMember.permissions || {},
-      createdAt: newMember.createdAt.toISOString()
-    });
+      id: member.id,
+      email: member.email,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      matricule: member.matricule,
+      password: member.password,
+      role: member.role,
+      status: member.status,
+      isPasswordTemporary: member.isPasswordTemporary,
+      mustChangePassword: member.mustChangePassword,
+      permissions: member.permissions || {},
+      createdAt: member.createdAt.toISOString()
+    }));
     
     debouncedSave();
     
-    console.log('✅ User créé:', newMember.id, email, 'role:', role, 'mustChangePassword:', newMember.mustChangePassword, 'tempPassword:', tempPassword);
+    console.log('✅ Accès utilisateur créé:', newSiteUser.id, normalizedEmail, 'role:', role, 'mustChangePassword:', newSiteUser.mustChangePassword);
     
     // Send email with credentials using mailback password template
     try {
       await sendTemplatedEmail(
         'mailback password',
-        email,
+        normalizedEmail,
         {
-          firstName: newMember.firstName,
-          lastName: newMember.lastName,
-          urbex_id: newMember.matricule || email,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          urbex_id: member.matricule || normalizedEmail,
           temporar_mdp: tempPassword
         },
         'RétroBus Essonne - Identifiants'
       );
-      console.log('✅ Email de bienvenue envoyé à:', email);
+      console.log('✅ Email de bienvenue envoyé à:', normalizedEmail);
     } catch (emailError) {
       console.error('⚠️ Erreur envoi email de bienvenue:', emailError.message);
       // Continue even if email fails
     }
     
     res.status(201).json({ 
-      user: newMember,
+      user: newSiteUser,
       emailSent: true,
-      message: 'Utilisateur créé. Un email avec les identifiants a été envoyé à ' + email
+      message: 'Accès utilisateur créé. Un email avec les identifiants a été envoyé à ' + normalizedEmail
     });
   } catch (e) {
     console.error('❌ POST /api/admin/users error:', e.message);
