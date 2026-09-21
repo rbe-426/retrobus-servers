@@ -7686,15 +7686,28 @@ app.get(['/api/members/me'], requireAuth, async (req, res) => {
     const userEmail = String(req.user?.email || '').trim().toLowerCase();
     const username = String(req.user?.username || '').trim();
 
-    let member = await prisma.members.findFirst({
+    const siteUser = await prisma.site_users.findFirst({
       where: {
         OR: [
           ...(userId ? [{ id: userId }] : []),
           ...(userEmail ? [{ email: { equals: userEmail, mode: 'insensitive' } }] : []),
-          ...(username ? [{ matricule: { equals: username, mode: 'insensitive' } }] : [])
+          ...(username ? [{ username: { equals: username, mode: 'insensitive' } }] : [])
         ]
-      }
+      },
+      select: { linkedMemberId: true }
     });
+
+    let member = siteUser?.linkedMemberId
+      ? await prisma.members.findUnique({ where: { id: siteUser.linkedMemberId } })
+      : await prisma.members.findFirst({
+          where: {
+            OR: [
+              ...(userId ? [{ id: userId }] : []),
+              ...(userEmail ? [{ email: { equals: userEmail, mode: 'insensitive' } }] : []),
+              ...(username ? [{ matricule: { equals: username, mode: 'insensitive' } }] : [])
+            ]
+          }
+        });
 
     if (!member) {
       // Fallback historique: données en mémoire locale
@@ -7828,14 +7841,28 @@ app.patch(['/api/members','/members'], requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to patch member', details: e.message });
   }
 });
-app.delete(['/api/members','/members'], requireAuth, async (req, res) => {
+app.delete(['/api/members/:id','/members/:id','/api/members','/members'], requireAuth, async (req, res) => {
   try {
-    const { id } = req.body;
-    
-    // Delete from Prisma (single source of truth)
-    const deleted = await prisma.members.delete({
-      where: { id }
+    const id = req.params.id || req.body?.id;
+    if (!id) return res.status(400).json({ error: 'L’identifiant de l’adhérent est requis' });
+
+    const member = await prisma.members.findUnique({
+      where: { id },
+      select: { id: true, membershipStatus: true }
     });
+    if (!member) return res.status(404).json({ error: 'Adhérent introuvable' });
+    if (member.membershipStatus !== 'CANCELLED') {
+      return res.status(409).json({ error: 'Résiliez d’abord l’adhésion avant de supprimer la fiche' });
+    }
+    
+    // An access account can exist without a membership. Keep it, but remove its relation first.
+    await prisma.$transaction([
+      prisma.site_users.updateMany({
+        where: { linkedMemberId: id },
+        data: { linkedMemberId: null, updatedAt: new Date() }
+      }),
+      prisma.members.delete({ where: { id } })
+    ]);
     
     // Also remove from state.members
     state.members = state.members.filter(m => m.id !== id);
@@ -7845,6 +7872,9 @@ app.delete(['/api/members','/members'], requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('❌ Error deleting member:', e.message);
+    if (e.code === 'P2003') {
+      return res.status(409).json({ error: 'Cette fiche est encore utilisée par des données liées et ne peut pas être supprimée' });
+    }
     res.status(500).json({ error: 'Failed to delete member', details: e.message });
   }
 });
@@ -7934,28 +7964,59 @@ app.post('/api/members/:id/terminate', requireAuth, requireMembershipReviewAcces
     res.status(500).json({ error: 'Failed to terminate member', details: e.message });
   }
 });
-app.post('/api/members/:id/link-access', requireAuth, (req, res) => {
-  const { id } = req.params;
-  const { email, membershipType = 'STANDARD', permissions = [] } = req.body || {};
-  
-  // Find or create user permissions for this member
-  if (!state.userPermissions) state.userPermissions = {};
-  
-  state.userPermissions[id] = {
-    id,
-    email: email || state.members.find(m => m.id === id)?.email,
-    membershipType,
-    permissions: Array.isArray(permissions) ? permissions : [],
-    linkedAt: new Date().toISOString(),
-    lastModified: new Date().toISOString()
-  };
-  
-  debouncedSave();
-  res.json({ 
-    ok: true, 
-    message: 'Accès lié avec succès',
-    userPermissions: state.userPermissions[id]
-  });
+app.post('/api/members/:id/link-access', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const username = String(req.body?.username || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+
+    if (!username && !email) {
+      return res.status(400).json({ error: 'Le matricule ou l’email de l’accès est requis' });
+    }
+
+    const member = await prisma.members.findUnique({ where: { id }, select: { id: true } });
+    if (!member) return res.status(404).json({ error: 'Adhérent introuvable' });
+
+    const siteUser = await prisma.site_users.findFirst({
+      where: {
+        OR: [
+          ...(username ? [{ username: { equals: username, mode: 'insensitive' } }] : []),
+          ...(email ? [{ email: { equals: email, mode: 'insensitive' } }] : [])
+        ]
+      },
+      select: { id: true, username: true, linkedMemberId: true, password: true, mustChangePassword: true }
+    });
+    if (!siteUser) return res.status(404).json({ error: 'Aucun accès ne correspond à ce matricule ou cet email' });
+    if (siteUser.linkedMemberId && siteUser.linkedMemberId !== id) {
+      return res.status(409).json({ error: 'Cet accès est déjà lié à un autre adhérent' });
+    }
+
+    await prisma.$transaction([
+      prisma.site_users.update({
+        where: { id: siteUser.id },
+        data: { linkedMemberId: id, updatedAt: new Date() }
+      }),
+      prisma.members.update({
+        where: { id },
+        data: {
+          hasLinkedAccess: true,
+          password: siteUser.password,
+          isPasswordTemporary: siteUser.mustChangePassword,
+          mustChangePassword: siteUser.mustChangePassword,
+          updatedAt: new Date()
+        }
+      })
+    ]);
+
+    const stateIndex = state.members.findIndex((memberItem) => memberItem.id === id);
+    if (stateIndex !== -1) state.members[stateIndex] = { ...state.members[stateIndex], hasLinkedAccess: true };
+    debouncedSave();
+
+    res.json({ ok: true, message: 'Accès lié avec succès', username: siteUser.username });
+  } catch (error) {
+    console.error('❌ Error linking member access:', error.message);
+    res.status(500).json({ error: 'Impossible de lier cet accès à l’adhérent', details: error.message });
+  }
 });
 
 // GET member permissions
@@ -11371,6 +11432,7 @@ app.get('/api/admin/users', requireAuth, async (req, res) => {
     const users = siteUsers.map(u => ({
       id: u.id,
       username: u.username,
+      matricule: u.username,
       firstName: u.firstName,
       lastName: u.lastName,
       email: u.email,
@@ -11536,7 +11598,7 @@ app.post('/api/admin/users', requireAuth, async (req, res) => {
 app.put('/api/admin/users/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { firstName, lastName, role, hasInternalAccess, hasExternalAccess } = req.body;
+    const { firstName, lastName, matricule, role, hasInternalAccess, hasExternalAccess } = req.body;
 
     // Try site_users first (admin users)
     let existingUser = await prisma.site_users.findUnique({
@@ -11544,10 +11606,27 @@ app.put('/api/admin/users/:id', requireAuth, async (req, res) => {
     });
 
     if (existingUser) {
+      const username = matricule !== undefined ? String(matricule).trim() : existingUser.username;
+      if (!username) {
+        return res.status(400).json({ error: 'Le matricule est requis' });
+      }
+
+      const duplicateUsername = await prisma.site_users.findFirst({
+        where: {
+          username: { equals: username, mode: 'insensitive' },
+          NOT: { id }
+        },
+        select: { id: true }
+      });
+      if (duplicateUsername) {
+        return res.status(409).json({ error: 'Ce matricule est déjà utilisé par un autre accès' });
+      }
+
       // Update in site_users (admin accounts)
       const updatedUser = await prisma.site_users.update({
         where: { id },
         data: {
+          username,
           firstName: firstName !== undefined ? firstName : existingUser.firstName,
           lastName: lastName !== undefined ? lastName : existingUser.lastName,
           role: role !== undefined ? role : existingUser.role,
