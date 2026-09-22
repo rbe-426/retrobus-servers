@@ -12105,69 +12105,88 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
     const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
     const confirmPassword = typeof req.body?.confirmPassword === 'string' ? req.body.confirmPassword : '';
-    const userEmail = req.user?.id; // Decoded from token (usually email)
+    const userId = String(req.user?.userId || req.user?.id || '').trim();
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+    const username = String(req.user?.username || '').trim();
+    const auditIdentity = userEmail || username || userId;
 
-    if (!userEmail) {
+    if (!auditIdentity) {
       auditLog('PASSWORD_CHANGE_NOT_AUTH', 'ANONYMOUS', { reason: 'No auth' }, 'failed');
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
     if (!currentPassword || !newPassword) {
-      auditLog('PASSWORD_CHANGE_MISSING_FIELDS', userEmail, { current: !!currentPassword, new: !!newPassword }, 'failed');
+      auditLog('PASSWORD_CHANGE_MISSING_FIELDS', auditIdentity, { current: !!currentPassword, new: !!newPassword }, 'failed');
       return res.status(400).json({ error: 'Current password and new password are required' });
     }
 
     if (newPassword !== confirmPassword) {
-      auditLog('PASSWORD_CHANGE_MISMATCH', userEmail, { path: '/api/auth/change-password' }, 'failed');
+      auditLog('PASSWORD_CHANGE_MISMATCH', auditIdentity, { path: '/api/auth/change-password' }, 'failed');
       return res.status(400).json({ error: 'Passwords do not match' });
     }
 
-    // Try to find user in members by email first
-    let user = await prisma.members.findFirst({
-      where: { 
+    const memberFromToken = await prisma.members.findFirst({
+      where: {
         OR: [
-          { email: userEmail },
-          { id: userEmail }
+          ...(userId ? [{ id: userId }] : []),
+          ...(userEmail ? [{ email: { equals: userEmail, mode: 'insensitive' } }] : []),
+          ...(username ? [{ matricule: { equals: username, mode: 'insensitive' } }] : [])
         ]
       }
     });
-    let userType = 'members';
-
-    // If not found in members, try site_users by email
-    if (!user) {
-      user = await prisma.site_users.findFirst({
-        where: {
-          OR: [
-            { email: userEmail },
-            { username: userEmail },
-            { id: userEmail }
-          ]
-        }
-      });
-      userType = 'site_users';
-    }
+    const siteUser = await prisma.site_users.findFirst({
+      where: {
+        OR: [
+          ...(userId ? [{ id: userId }] : []),
+          ...(userEmail ? [{ email: { equals: userEmail, mode: 'insensitive' } }] : []),
+          ...(username ? [{ username: { equals: username, mode: 'insensitive' } }] : []),
+          ...(memberFromToken ? [{ linkedMemberId: memberFromToken.id }] : [])
+        ]
+      }
+    });
+    const member = siteUser?.linkedMemberId
+      ? await prisma.members.findUnique({ where: { id: siteUser.linkedMemberId } })
+      : memberFromToken;
+    const user = siteUser || member;
+    const userType = siteUser ? 'site_users' : member ? 'members' : 'state_members';
 
     // Fallback to state.members if still not found
     if (!user) {
-      user = state.members.find(m => m.id === userEmail || m.email === userEmail);
-      userType = 'state_members';
-    }
-
-    if (!user) {
-      auditLog('PASSWORD_CHANGE_USER_NOT_FOUND', userEmail, { searchType: userType }, 'failed');
-      return res.status(404).json({ error: 'User not found' });
+      const stateMember = state.members.find((memberItem) => (
+        memberItem.id === userId ||
+        String(memberItem.email || '').toLowerCase() === userEmail ||
+        String(memberItem.matricule || '').toLowerCase() === username
+      ));
+      if (!stateMember) {
+        auditLog('PASSWORD_CHANGE_USER_NOT_FOUND', auditIdentity, { searchType: userType }, 'failed');
+        return res.status(404).json({ error: 'User not found' });
+      }
+      const passwordValid = stateMember.password && verifyPassword(currentPassword, stateMember.password);
+      if (!passwordValid) {
+        auditLog('PASSWORD_CHANGE_INVALID_CURRENT', auditIdentity, { userType }, 'failed');
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+      const validation = validatePasswordStrength(newPassword);
+      if (!validation.isValid) {
+        return res.status(400).json({ error: 'Password does not meet requirements', requirements: validation.errors });
+      }
+      const hashedPassword = hashPasswordForStorage(newPassword);
+      const stateIndex = state.members.findIndex((memberItem) => memberItem.id === stateMember.id);
+      state.members[stateIndex] = { ...stateMember, password: hashedPassword, isPasswordTemporary: false, mustChangePassword: false };
+      debouncedSave();
+      return res.json({ success: true, message: 'Password changed successfully' });
     }
 
     // Verify current password
     if (!user.password || !verifyPassword(currentPassword, user.password)) {
-      auditLog('PASSWORD_CHANGE_INVALID_CURRENT', userEmail, { userType }, 'failed');
+      auditLog('PASSWORD_CHANGE_INVALID_CURRENT', auditIdentity, { userType }, 'failed');
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
     // Validate new password strength
     const validation = validatePasswordStrength(newPassword);
     if (!validation.isValid) {
-      auditLog('PASSWORD_CHANGE_WEAK_PASSWORD', userEmail, { requirements: validation.errors }, 'failed');
+      auditLog('PASSWORD_CHANGE_WEAK_PASSWORD', auditIdentity, { requirements: validation.errors }, 'failed');
       return res.status(400).json({ 
         error: 'Password does not meet requirements',
         requirements: validation.errors
@@ -12177,30 +12196,26 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     // Hash new password
     const hashedPassword = hashPasswordForStorage(newPassword);
 
-    // Update user based on type
-    if (userType === 'members') {
-      await prisma.members.update({
-        where: { id: user.id },
+    const now = new Date();
+    await prisma.$transaction([
+      ...(siteUser ? [prisma.site_users.update({
+        where: { id: siteUser.id },
+        data: { password: hashedPassword, mustChangePassword: false, updatedAt: now }
+      })] : []),
+      ...(member ? [prisma.members.update({
+        where: { id: member.id },
         data: {
           password: hashedPassword,
           isPasswordTemporary: false,
           mustChangePassword: false,
-          updatedAt: new Date()
+          passwordChangedAt: now,
+          updatedAt: now
         }
-      });
-    } else if (userType === 'site_users') {
-      await prisma.site_users.update({
-        where: { id: user.id },
-        data: {
-          password: hashedPassword,
-          mustChangePassword: false,
-          updatedAt: new Date()
-        }
-      });
-    }
+      })] : [])
+    ]);
 
     // Update in memory state
-    const stateIndex = state.members.findIndex(m => m.id === user.id);
+    const stateIndex = state.members.findIndex((memberItem) => memberItem.id === member?.id);
     if (stateIndex !== -1) {
       state.members[stateIndex] = {
         ...state.members[stateIndex],
@@ -12212,7 +12227,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 
     debouncedSave();
 
-    auditLog('PASSWORD_CHANGE_SUCCESS', userEmail, { userType, userId: user.id }, 'success');
+    auditLog('PASSWORD_CHANGE_SUCCESS', auditIdentity, { userType, userId: user.id }, 'success');
     res.json({ 
       success: true,
       message: 'Password changed successfully'
