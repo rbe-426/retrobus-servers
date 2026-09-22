@@ -1140,6 +1140,13 @@ const isConfiguredPresidentRequest = (req) => [
   .map((value) => String(value).trim().toLowerCase())
   .some((identity) => PRESIDENT_IDENTIFIERS.has(identity));
 
+const requireOperationalMutationAccess = (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (!req.user) return next();
+  if (isConfiguredPresidentRequest(req)) return next();
+  return res.status(403).json({ error: 'La création et la modification sont réservées au président.' });
+};
+
 const DOSSIER_ACCESS_ROLES = ['PRESIDENT', 'VICE_PRESIDENT'];
 
 const requireMemberDossierAccess = async (req, res, next) => {
@@ -1211,6 +1218,10 @@ const isAdminRequest = async (req) => {
 const requireVehicleMutationAccess = async (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || !req.user) return next();
 
+  if (!isConfiguredPresidentRequest(req)) {
+    return res.status(403).json({ error: 'La création et la modification des véhicules sont réservées au président.' });
+  }
+
   try {
     const siteUser = await prisma.site_users.findFirst({
       where: {
@@ -1246,6 +1257,7 @@ const requireVehicleMutationAccess = async (req, res, next) => {
 };
 
 app.use(['/vehicles', '/api/vehicles'], requireVehicleMutationAccess);
+app.use(['/events', '/api/events'], requireOperationalMutationAccess);
 
 const isTrafficContextRequest = async (req) => {
   const email = String(req.user?.email || '').toLowerCase();
