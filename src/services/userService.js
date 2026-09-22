@@ -68,7 +68,15 @@ export const authenticateUser = async (email, password) => {
       }
 
       // Independent access accounts are valid even when they are not attached to a member.
-      return linkedMember || {
+      if (linkedMember) {
+        return {
+          ...linkedMember,
+          mustChangePassword: siteUser.mustChangePassword || linkedMember.mustChangePassword,
+          isPasswordTemporary: siteUser.mustChangePassword || linkedMember.isPasswordTemporary
+        };
+      }
+
+      return {
         id: siteUser.id,
         email: siteUser.email,
         firstName: siteUser.firstName,
