@@ -62,13 +62,10 @@ export const authenticateUser = async (email, password) => {
       }
 
       const linkedMember = siteUser.members;
-      if (linkedMember && linkedMember.status && linkedMember.status !== 'active') {
-        auditLog('MEMBER_LOGIN_DISABLED_ACCOUNT', email, { status: linkedMember.status }, 'failed');
-        return null;
-      }
+      const hasActiveLinkedMember = linkedMember && (!linkedMember.status || linkedMember.status === 'active');
 
       // Independent access accounts are valid even when they are not attached to a member.
-      if (linkedMember) {
+      if (hasActiveLinkedMember) {
         return {
           ...linkedMember,
           mustChangePassword: siteUser.mustChangePassword || linkedMember.mustChangePassword,

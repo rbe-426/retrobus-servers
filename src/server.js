@@ -7597,7 +7597,25 @@ app.get(['/api/members','/members'], requireAuth, async (req, res) => {
   try {
     const limit = Number(req.query.limit) || undefined;
     console.log('📍 GET /api/members - fetching with limit:', limit);
-    const members = await prisma.members.findMany({ take: limit });
+    const memberRows = await prisma.members.findMany({
+      take: limit,
+      include: {
+        site_users: {
+          select: {
+            username: true,
+            isActive: true,
+            mustChangePassword: true
+          }
+        }
+      }
+    });
+    const members = memberRows.map(({ site_users: siteUser, ...member }) => ({
+      ...member,
+      hasLinkedAccess: Boolean(siteUser),
+      loginEnabled: Boolean(siteUser?.isActive),
+      accessUsername: siteUser?.username || null,
+      mustChangePassword: Boolean(siteUser?.mustChangePassword || member.mustChangePassword)
+    }));
     console.log('✅ Found members:', members.length);
     return res.json({ members });
   } catch (e) {
