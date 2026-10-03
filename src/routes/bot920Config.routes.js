@@ -40,6 +40,10 @@ function snowflake(value) {
   return SNOWFLAKE_PATTERN.test(candidate) ? candidate : '';
 }
 
+function isSnowflake(value) {
+  return typeof value === 'string' && SNOWFLAKE_PATTERN.test(value);
+}
+
 function welcomeSource(value) {
   return value?.welcome && typeof value.welcome === 'object' && !Array.isArray(value.welcome) ? value.welcome : {};
 }
@@ -55,13 +59,13 @@ export function validateBot920Configuration(value = {}) {
   if (typeof welcomeMessage !== 'string' || !welcomeMessage.trim() || welcomeMessage.trim().length > WELCOME_MESSAGE_MAX_LENGTH) {
     errors.push(`Le message d’accueil doit contenir entre 1 et ${WELCOME_MESSAGE_MAX_LENGTH} caractères.`);
   }
-  if (welcome.welcomeChannelId && !SNOWFLAKE_PATTERN.test(String(welcome.welcomeChannelId))) {
+  if (welcome.welcomeChannelId && !isSnowflake(welcome.welcomeChannelId)) {
     errors.push('Le canal d’accueil doit être un identifiant Discord valide.');
   }
-  if (welcome.autoRoleId && !SNOWFLAKE_PATTERN.test(String(welcome.autoRoleId))) {
+  if (welcome.autoRoleId && !isSnowflake(welcome.autoRoleId)) {
     errors.push('Le rôle automatique doit être un identifiant Discord valide.');
   }
-  if (welcomeEnabled === true && !SNOWFLAKE_PATTERN.test(String(welcome.welcomeChannelId || ''))) {
+  if (welcomeEnabled === true && !isSnowflake(welcome.welcomeChannelId)) {
     errors.push('Un canal Discord valide est requis lorsque l’accueil est activé.');
   }
 
