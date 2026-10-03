@@ -2,13 +2,20 @@ import { Router } from 'express';
 
 const CONFIGURATION_ID = 'default';
 const COMMANDS = ['ping', 'about', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage'];
+const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
+const WELCOME_MESSAGE_MAX_LENGTH = 1_800;
 
 export const defaultBot920Configuration = {
   general: { name: '920 Le Bot !', description: 'Le bot communautaire officiel de RétroBus Essonne.' },
   commands: { enabled: Object.fromEntries(COMMANDS.map((command) => [command, true])) },
   messages: { aboutStatus: 'Socle technique en cours de déploiement' },
   socialLinks: { website: '', instagram: '', discord: '' },
-  welcome: { enabled: false, message: 'Bienvenue sur le serveur RétroBus Essonne !' },
+  welcome: {
+    welcomeEnabled: false,
+    welcomeChannelId: '',
+    welcomeMessage: 'Bienvenue sur le serveur RétroBus Essonne !',
+    autoRoleId: '',
+  },
   logs: { enabled: true },
   fun: { enabled: true },
 };
@@ -28,9 +35,43 @@ function url(value) {
   }
 }
 
+function snowflake(value) {
+  const candidate = text(value, '', 20);
+  return SNOWFLAKE_PATTERN.test(candidate) ? candidate : '';
+}
+
+function welcomeSource(value) {
+  return value?.welcome && typeof value.welcome === 'object' && !Array.isArray(value.welcome) ? value.welcome : {};
+}
+
+export function validateBot920Configuration(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const welcome = welcomeSource(source);
+  const welcomeEnabled = welcome.welcomeEnabled ?? welcome.enabled;
+  const welcomeMessage = welcome.welcomeMessage ?? welcome.message;
+  const errors = [];
+
+  if (typeof welcomeEnabled !== 'boolean') errors.push('Le statut du message d’accueil est invalide.');
+  if (typeof welcomeMessage !== 'string' || !welcomeMessage.trim() || welcomeMessage.trim().length > WELCOME_MESSAGE_MAX_LENGTH) {
+    errors.push(`Le message d’accueil doit contenir entre 1 et ${WELCOME_MESSAGE_MAX_LENGTH} caractères.`);
+  }
+  if (welcome.welcomeChannelId && !SNOWFLAKE_PATTERN.test(String(welcome.welcomeChannelId))) {
+    errors.push('Le canal d’accueil doit être un identifiant Discord valide.');
+  }
+  if (welcome.autoRoleId && !SNOWFLAKE_PATTERN.test(String(welcome.autoRoleId))) {
+    errors.push('Le rôle automatique doit être un identifiant Discord valide.');
+  }
+  if (welcomeEnabled === true && !SNOWFLAKE_PATTERN.test(String(welcome.welcomeChannelId || ''))) {
+    errors.push('Un canal Discord valide est requis lorsque l’accueil est activé.');
+  }
+
+  return errors;
+}
+
 export function normalizeBot920Configuration(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const sourceCommands = source.commands?.enabled && typeof source.commands.enabled === 'object' ? source.commands.enabled : {};
+  const sourceWelcome = welcomeSource(source);
   return {
     general: {
       name: text(source.general?.name, defaultBot920Configuration.general.name, 100),
@@ -44,8 +85,10 @@ export function normalizeBot920Configuration(value = {}) {
       discord: url(source.socialLinks?.discord),
     },
     welcome: {
-      enabled: source.welcome?.enabled === true,
-      message: text(source.welcome?.message, defaultBot920Configuration.welcome.message, 1_000),
+      welcomeEnabled: sourceWelcome.welcomeEnabled === true || (sourceWelcome.welcomeEnabled === undefined && sourceWelcome.enabled === true),
+      welcomeChannelId: snowflake(sourceWelcome.welcomeChannelId),
+      welcomeMessage: text(sourceWelcome.welcomeMessage ?? sourceWelcome.message, defaultBot920Configuration.welcome.welcomeMessage, WELCOME_MESSAGE_MAX_LENGTH),
+      autoRoleId: snowflake(sourceWelcome.autoRoleId),
     },
     logs: { enabled: source.logs?.enabled !== false },
     fun: { enabled: source.fun?.enabled !== false },
@@ -66,6 +109,8 @@ export function createBot920ConfigRouter() {
   });
 
   router.put('/config', async (request, response) => {
+    const validationErrors = validateBot920Configuration(request.body?.configuration);
+    if (validationErrors.length > 0) return response.status(400).json({ error: validationErrors[0], errors: validationErrors });
     const configuration = normalizeBot920Configuration(request.body?.configuration);
     const actorId = request.user?.id || request.user?.userId || null;
     const actorName = request.user?.email || request.user?.matricule || null;
