@@ -4,6 +4,40 @@ const CONFIGURATION_ID = 'default';
 const COMMANDS = ['ping', 'about', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage'];
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const WELCOME_MESSAGE_MAX_LENGTH = 1_800;
+const BOT920_HEALTH_TIMEOUT_MS = 4_000;
+
+function resolveBot920HealthUrl() {
+  return String(process.env.BOT920_HEALTH_URL || 'http://127.0.0.1:4300/health').trim();
+}
+
+function isConfigurationStorageUnavailable(error) {
+  return error?.code === 'P2021'
+    || error?.code === 'P2022'
+    || error?.code === 'BOT920_CONFIGURATION_STORAGE_UNAVAILABLE';
+}
+
+function configurationStorage(prisma) {
+  if (!prisma?.bot920Configuration) {
+    const error = new Error('Bot 920 configuration storage is unavailable');
+    error.code = 'BOT920_CONFIGURATION_STORAGE_UNAVAILABLE';
+    throw error;
+  }
+  return prisma.bot920Configuration;
+}
+
+function validateBotStatus(payload) {
+  if (payload?.status !== 'ok' || payload?.service !== '920-le-bot') {
+    throw new Error('Réponse de santé du bot invalide.');
+  }
+
+  return {
+    discord: payload.discord === 'connected' ? 'connected' : 'standby',
+    latencyMs: Number.isFinite(payload.latencyMs) ? Math.round(payload.latencyMs) : null,
+    guildCount: Number.isInteger(payload.guildCount) && payload.guildCount >= 0 ? payload.guildCount : 0,
+    commandCount: Number.isInteger(payload.commandCount) && payload.commandCount >= 0 ? payload.commandCount : 0,
+    startedAt: typeof payload.startedAt === 'string' ? payload.startedAt : null,
+  };
+}
 
 export const defaultBot920Configuration = {
   general: { name: '920 Le Bot !', description: 'Le bot communautaire officiel de RétroBus Essonne.' },
@@ -102,11 +136,38 @@ export function normalizeBot920Configuration(value = {}) {
 export function createBot920ConfigRouter() {
   const router = Router();
 
+  router.get('/status', async (_request, response) => {
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), BOT920_HEALTH_TIMEOUT_MS);
+
+    try {
+      const botResponse = await fetch(resolveBot920HealthUrl(), { method: 'GET', signal: controller.signal });
+      if (!botResponse.ok) throw new Error(`Le bot a répondu HTTP ${botResponse.status}.`);
+      const bot = validateBotStatus(await botResponse.json());
+      return response.json({ available: true, checkedAt, responseTimeMs: Date.now() - startedAt, bot });
+    } catch (error) {
+      console.warn('Unable to load Bot 920 health status:', error instanceof Error ? error.message : error);
+      return response.status(503).json({
+        available: false,
+        checkedAt,
+        error: 'Le statut du bot est temporairement indisponible.',
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
   router.get('/config', async (request, response) => {
     try {
-      const record = await request.app.locals.prisma.bot920Configuration.findUnique({ where: { id: CONFIGURATION_ID } });
-      response.json({ configuration: normalizeBot920Configuration(record?.data), updatedAt: record?.updatedAt ?? null });
+      const record = await configurationStorage(request.app.locals.prisma).findUnique({ where: { id: CONFIGURATION_ID } });
+      response.json({ configuration: normalizeBot920Configuration(record?.data), updatedAt: record?.updatedAt ?? null, storageAvailable: true });
     } catch (error) {
+      if (isConfigurationStorageUnavailable(error)) {
+        console.warn('Bot 920 configuration storage unavailable; using defaults.');
+        return response.json({ configuration: defaultBot920Configuration, updatedAt: null, storageAvailable: false });
+      }
       console.error('Unable to load Bot 920 configuration:', error);
       response.status(500).json({ error: 'Impossible de charger la configuration du bot.' });
     }
@@ -121,7 +182,13 @@ export function createBot920ConfigRouter() {
 
     try {
       const record = await request.app.locals.prisma.$transaction(async (prisma) => {
-        const saved = await prisma.bot920Configuration.upsert({
+        const storage = configurationStorage(prisma);
+        if (!prisma.bot920ConfigurationAudit) {
+          const error = new Error('Bot 920 configuration audit storage is unavailable');
+          error.code = 'BOT920_CONFIGURATION_STORAGE_UNAVAILABLE';
+          throw error;
+        }
+        const saved = await storage.upsert({
           where: { id: CONFIGURATION_ID },
           create: { id: CONFIGURATION_ID, data: configuration },
           update: { data: configuration },
@@ -131,6 +198,9 @@ export function createBot920ConfigRouter() {
       });
       response.json({ configuration: normalizeBot920Configuration(record.data), updatedAt: record.updatedAt });
     } catch (error) {
+      if (isConfigurationStorageUnavailable(error)) {
+        return response.status(503).json({ error: 'Le stockage de configuration du bot n’est pas encore disponible.' });
+      }
       console.error('Unable to save Bot 920 configuration:', error);
       response.status(500).json({ error: 'Impossible d’enregistrer la configuration du bot.' });
     }

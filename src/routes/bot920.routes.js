@@ -45,9 +45,15 @@ router.use(requireBotService);
 
 router.get('/config', async (request, response) => {
   try {
-    const record = await request.app.locals.prisma.bot920Configuration.findUnique({ where: { id: 'default' } });
+    const storage = request.app.locals.prisma?.bot920Configuration;
+    if (!storage) return response.json({ configuration: normalizeBot920Configuration() });
+    const record = await storage.findUnique({ where: { id: 'default' } });
     response.json({ configuration: normalizeBot920Configuration(record?.data), updatedAt: record?.updatedAt ?? null });
   } catch (error) {
+    if (error?.code === 'P2021' || error?.code === 'P2022') {
+      console.warn('Bot 920 configuration storage unavailable; using defaults.');
+      return response.json({ configuration: normalizeBot920Configuration() });
+    }
     console.error('Unable to load Bot 920 service configuration:', error);
     response.status(500).json({ error: 'Unable to load bot configuration' });
   }
