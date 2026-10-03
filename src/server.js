@@ -41,6 +41,7 @@ import lumistudioRoutes from './routes/lumistudio.routes.js';
 import processParcRoutes, { restorePublic920IfOverwrittenByProcessParc } from './routes/processParc.routes.js';
 import retrostudioRoutes from './routes/retrostudio.routes.js';
 import museeRoutes from './routes/musee.routes.js';
+import bot920Routes from './routes/bot920.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
 import { createMailSession } from './services/mailService.js';
 // � Import module de calcul des KPI historiques
@@ -2037,6 +2038,9 @@ app.use('/api/ticketing', ticketingRoutes);
 
 // Routes musée (gestion des collections et modules)
 app.use('/api/museum', museumRoutes);
+
+// Bot Discord: service-to-service routes protected by BOT920_SERVICE_TOKEN.
+app.use('/api/bot920', bot920Routes);
 
 const museumWorkspaceSections = new Set([
   'restorations', 'docs', 'events', 'facing', 'floor', 'staff', 'planning',

@@ -1385,6 +1385,20 @@ model site_users {
   user_permissions   user_permissions[]
 }
 
+model DiscordBirthday {
+  id          String   @id @default(cuid())
+  guildId     String   @map("guild_id")
+  userId      String   @map("user_id")
+  displayName String   @map("display_name")
+  birthDate   DateTime @db.Date @map("birth_date")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([guildId, userId])
+  @@index([guildId, birthDate])
+  @@map("discord_birthdays")
+}
+
 model retromail_settings {
   userId       String   @id
   signature    String?  @db.Text

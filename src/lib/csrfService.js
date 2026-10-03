@@ -149,8 +149,9 @@ export const csrfProtection = (req, res, next) => {
   
   // Routes expense-reports accessibles sans CSRF (déjà protégées par JWT)
   const isExpenseReportsRoute = /^\/(api\/)?finance\/expense-reports/.test(req.path);
+  const isBot920ServiceRoute = /^\/api\/bot920\/guilds\/\d{17,20}\/birthdays(?:\/\d{17,20})?$/.test(req.path);
   
-  if (publicRoutes.some(route => req.path === route) || isPublicBulletinTokenMutation || isExpenseReportsRoute) {
+  if (publicRoutes.some(route => req.path === route) || isPublicBulletinTokenMutation || isExpenseReportsRoute || isBot920ServiceRoute) {
     console.log(`✅ Bypassing CSRF for public route: ${req.path}`);
     return next();
   }
