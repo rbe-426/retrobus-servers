@@ -42,6 +42,7 @@ import processParcRoutes, { restorePublic920IfOverwrittenByProcessParc } from '.
 import retrostudioRoutes from './routes/retrostudio.routes.js';
 import museeRoutes from './routes/musee.routes.js';
 import bot920Routes from './routes/bot920.routes.js';
+import { createBot920ConfigRouter } from './routes/bot920Config.routes.js';
 import { sendExpenseReportNotification, sendTemplatedEmail, setNoreplyUserId } from './services/notificationService.js';
 import { createMailSession } from './services/mailService.js';
 // � Import module de calcul des KPI historiques
@@ -2041,6 +2042,7 @@ app.use('/api/museum', museumRoutes);
 
 // Bot Discord: service-to-service routes protected by BOT920_SERVICE_TOKEN.
 app.use('/api/bot920', bot920Routes);
+app.use('/api/admin/bot920', requireAuth, requireAdmin, createBot920ConfigRouter());
 
 const museumWorkspaceSections = new Set([
   'restorations', 'docs', 'events', 'facing', 'floor', 'staff', 'planning',

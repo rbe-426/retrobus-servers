@@ -109,6 +109,23 @@ model MuseumWorkspaceRecord {
   @@index([section, updatedAt])
 }
 
+model Bot920Configuration {
+  id        String   @id
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Bot920ConfigurationAudit {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorName String?
+  data      Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 model Event {
   id                String              @id
   title             String

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import express from 'express';
+import { normalizeBot920Configuration } from './bot920Config.routes.js';
 
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const router = express.Router();
@@ -41,6 +42,16 @@ function parseBirthDate(value) {
 }
 
 router.use(requireBotService);
+
+router.get('/config', async (request, response) => {
+  try {
+    const record = await request.app.locals.prisma.bot920Configuration.findUnique({ where: { id: 'default' } });
+    response.json({ configuration: normalizeBot920Configuration(record?.data), updatedAt: record?.updatedAt ?? null });
+  } catch (error) {
+    console.error('Unable to load Bot 920 service configuration:', error);
+    response.status(500).json({ error: 'Unable to load bot configuration' });
+  }
+});
 
 router.get('/guilds/:guildId/birthdays', async (request, response) => {
   if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
