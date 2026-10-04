@@ -126,6 +126,92 @@ model Bot920ConfigurationAudit {
   @@index([createdAt])
 }
 
+model DiscordGuild {
+  id           String                @id
+  name         String
+  iconUrl      String?
+  ownerId      String?
+  memberCount  Int                   @default(0)
+  lastSyncedAt DateTime              @default(now())
+  channels     DiscordGuildChannel[]
+  roles        DiscordGuildRole[]
+  settings     Bot920GuildSettings?
+  auditEvents  Bot920PanelAuditEvent[]
+  moderationCases DiscordModerationCase[]
+
+  @@index([lastSyncedAt])
+}
+
+model DiscordGuildChannel {
+  id        String       @id
+  guildId   String
+  name      String
+  type      String
+  parentId  String?
+  position  Int          @default(0)
+  guild     DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@index([guildId, position])
+}
+
+model DiscordGuildRole {
+  id        String       @id
+  guildId   String
+  name      String
+  color     String       @default("#000000")
+  position  Int          @default(0)
+  managed   Boolean      @default(false)
+  guild     DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@index([guildId, position])
+}
+
+model Bot920GuildSettings {
+  guildId      String       @id
+  data         Json
+  version      Int          @default(1)
+  publishedAt  DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  guild        DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+}
+
+model Bot920PanelAuditEvent {
+  id         String       @id @default(cuid())
+  guildId    String
+  actorId    String?
+  actorName  String?
+  module     String
+  action     String
+  beforeData Json?
+  afterData  Json?
+  createdAt  DateTime     @default(now())
+  guild      DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@index([guildId, createdAt])
+}
+
+model DiscordModerationCase {
+  id             String       @id @default(cuid())
+  guildId        String
+  targetUserId   String
+  targetTag      String
+  moderatorId    String
+  moderatorTag   String
+  action         String
+  reason         String
+  durationMinutes Int?
+  expiresAt      DateTime?
+  status         String       @default("ACTIVE")
+  source         String       @default("COMMAND")
+  createdAt      DateTime     @default(now())
+  resolvedAt     DateTime?
+  guild          DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@index([guildId, createdAt])
+  @@index([guildId, targetUserId, createdAt])
+  @@index([expiresAt, status])
+}
+
 model Event {
   id                String              @id
   title             String

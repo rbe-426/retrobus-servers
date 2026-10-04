@@ -25,6 +25,21 @@ function configurationStorage(prisma) {
   return prisma.bot920Configuration;
 }
 
+function guildFoundationStorage(prisma) {
+  if (!prisma?.discordGuild || !prisma?.bot920PanelAuditEvent) {
+    const error = new Error('Bot 920 guild foundation storage is unavailable');
+    error.code = 'BOT920_GUILD_FOUNDATION_STORAGE_UNAVAILABLE';
+    throw error;
+  }
+  return prisma;
+}
+
+function isGuildFoundationStorageUnavailable(error) {
+  return error?.code === 'P2021'
+    || error?.code === 'P2022'
+    || error?.code === 'BOT920_GUILD_FOUNDATION_STORAGE_UNAVAILABLE';
+}
+
 function validateBotStatus(payload) {
   if (payload?.status !== 'ok' || payload?.service !== '920-le-bot') {
     throw new Error('Réponse de santé du bot invalide.');
@@ -206,6 +221,73 @@ export function createBot920ConfigRouter() {
       });
     } finally {
       clearTimeout(timeout);
+    }
+  });
+
+  router.get('/guilds', async (request, response) => {
+    try {
+      const prisma = guildFoundationStorage(request.app.locals.prisma);
+      const guilds = await prisma.discordGuild.findMany({
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, iconUrl: true, memberCount: true, lastSyncedAt: true, settings: { select: { version: true, publishedAt: true } } },
+      });
+      response.json({ guilds });
+    } catch (error) {
+      if (isGuildFoundationStorageUnavailable(error)) return response.status(503).json({ error: 'La synchronisation des serveurs Discord n’est pas encore disponible.' });
+      console.error('Unable to load Bot 920 Discord guilds:', error);
+      response.status(500).json({ error: 'Impossible de charger les serveurs Discord.' });
+    }
+  });
+
+  router.get('/guilds/:guildId/context', async (request, response) => {
+    if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Identifiant de serveur Discord invalide.' });
+    try {
+      const prisma = guildFoundationStorage(request.app.locals.prisma);
+      const guild = await prisma.discordGuild.findUnique({
+        where: { id: request.params.guildId },
+        include: {
+          channels: { orderBy: [{ position: 'asc' }, { name: 'asc' }] },
+          roles: { orderBy: [{ position: 'desc' }, { name: 'asc' }] },
+          settings: { select: { version: true, publishedAt: true, updatedAt: true } },
+        },
+      });
+      if (!guild) return response.status(404).json({ error: 'Serveur Discord introuvable. Attendez la prochaine synchronisation du bot.' });
+      response.json({ guild });
+    } catch (error) {
+      if (isGuildFoundationStorageUnavailable(error)) return response.status(503).json({ error: 'Le contexte Discord est temporairement indisponible.' });
+      console.error('Unable to load Bot 920 Discord guild context:', error);
+      response.status(500).json({ error: 'Impossible de charger le contexte Discord.' });
+    }
+  });
+
+  router.get('/guilds/:guildId/audit', async (request, response) => {
+    if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Identifiant de serveur Discord invalide.' });
+    try {
+      const prisma = guildFoundationStorage(request.app.locals.prisma);
+      const events = await prisma.bot920PanelAuditEvent.findMany({ where: { guildId: request.params.guildId }, orderBy: { createdAt: 'desc' }, take: 100 });
+      response.json({ events });
+    } catch (error) {
+      if (isGuildFoundationStorageUnavailable(error)) return response.status(503).json({ error: 'Le journal d’audit est indisponible.' });
+      console.error('Unable to load Bot 920 audit events:', error);
+      response.status(500).json({ error: 'Impossible de charger le journal d’audit.' });
+    }
+  });
+
+  router.get('/guilds/:guildId/moderation-cases', async (request, response) => {
+    if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Identifiant de serveur Discord invalide.' });
+    try {
+      const prisma = guildFoundationStorage(request.app.locals.prisma);
+      if (!prisma.discordModerationCase) return response.status(503).json({ error: 'Le stockage de modération est indisponible.' });
+      const cases = await prisma.discordModerationCase.findMany({
+        where: { guildId: request.params.guildId },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      });
+      response.json({ cases });
+    } catch (error) {
+      if (isGuildFoundationStorageUnavailable(error) || error?.code === 'P2021' || error?.code === 'P2022') return response.status(503).json({ error: 'L’historique de modération est indisponible.' });
+      console.error('Unable to load Bot 920 moderation cases:', error);
+      response.status(500).json({ error: 'Impossible de charger l’historique de modération.' });
     }
   });
 
