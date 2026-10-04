@@ -138,6 +138,8 @@ model DiscordGuild {
   settings     Bot920GuildSettings?
   auditEvents  Bot920PanelAuditEvent[]
   moderationCases DiscordModerationCase[]
+  autoModRules AutoModRule[]
+  autoModWords AutoModWord[]
 
   @@index([lastSyncedAt])
 }
@@ -210,6 +212,57 @@ model DiscordModerationCase {
   @@index([guildId, createdAt])
   @@index([guildId, targetUserId, createdAt])
   @@index([expiresAt, status])
+}
+
+model AutoModRule {
+  id               String             @id @default(cuid())
+  guildId          String
+  type             String
+  name             String
+  enabled          Boolean            @default(true)
+  severity         String             @default("MEDIUM")
+  action           String             @default("TIMEOUT")
+  threshold        Int?
+  windowSeconds    Int?
+  timeoutMinutes   Int?
+  alertChannelId   String?
+  deleteMessage    Boolean            @default(true)
+  notifyUser       Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  guild            DiscordGuild       @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  exceptions       AutoModException[]
+
+  @@unique([guildId, type])
+  @@index([guildId, enabled])
+}
+
+model AutoModException {
+  id         String      @id @default(cuid())
+  ruleId     String
+  entityType String
+  entityId   String
+  createdAt  DateTime    @default(now())
+  rule       AutoModRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, entityType, entityId])
+  @@index([ruleId])
+}
+
+model AutoModWord {
+  id          String       @id @default(cuid())
+  guildId     String
+  phrase      String
+  matchType   String       @default("PARTIAL")
+  severity    String       @default("MEDIUM")
+  action      String       @default("TIMEOUT")
+  enabled     Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  guild       DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, phrase])
+  @@index([guildId, enabled])
 }
 
 model Event {
