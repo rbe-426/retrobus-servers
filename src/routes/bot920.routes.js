@@ -28,6 +28,20 @@ function isSnowflake(value) {
   return SNOWFLAKE_PATTERN.test(String(value || ''));
 }
 
+function temporaryBanStorage(request) {
+  const storage = request.app.locals.prisma?.discordTemporaryBan;
+  if (!storage) {
+    const error = new Error('Temporary ban storage is unavailable');
+    error.code = 'BOT920_TEMPBAN_STORAGE_UNAVAILABLE';
+    throw error;
+  }
+  return storage;
+}
+
+function isTemporaryBanStorageUnavailable(error) {
+  return error?.code === 'P2021' || error?.code === 'P2022' || error?.code === 'BOT920_TEMPBAN_STORAGE_UNAVAILABLE';
+}
+
 function parseBirthDate(value) {
   const birthDate = new Date(String(value || ''));
   if (Number.isNaN(birthDate.getTime()) || birthDate > new Date()) return null;
@@ -72,6 +86,67 @@ router.get('/guilds/:guildId/birthdays', async (request, response) => {
   } catch (error) {
     console.error('Unable to list Discord birthdays:', error);
     response.status(500).json({ error: 'Unable to list birthdays' });
+  }
+});
+
+router.post('/temp-bans', async (request, response) => {
+  const { guildId, userId, moderatorId } = request.body ?? {};
+  const reason = String(request.body?.reason || '').trim().slice(0, 400);
+  const expiresAt = new Date(String(request.body?.expiresAt || ''));
+  if (!isSnowflake(guildId) || !isSnowflake(userId) || !isSnowflake(moderatorId) || !reason || Number.isNaN(expiresAt.getTime()) || expiresAt <= new Date()) {
+    return response.status(400).json({ error: 'Invalid temporary ban payload' });
+  }
+
+  try {
+    const ban = await temporaryBanStorage(request).create({ data: { guildId, userId, moderatorId, reason, expiresAt } });
+    response.status(201).json({ ban: { id: ban.id } });
+  } catch (error) {
+    if (isTemporaryBanStorageUnavailable(error)) return response.status(503).json({ error: 'Temporary ban storage is unavailable' });
+    console.error('Unable to schedule Discord temporary ban:', error);
+    response.status(500).json({ error: 'Unable to schedule temporary ban' });
+  }
+});
+
+router.get('/temp-bans/due', async (request, response) => {
+  try {
+    const bans = await temporaryBanStorage(request).findMany({
+      where: { expiresAt: { lte: new Date() }, liftedAt: null },
+      select: { id: true, guildId: true, userId: true },
+      orderBy: { expiresAt: 'asc' },
+      take: 100,
+    });
+    response.json({ bans });
+  } catch (error) {
+    if (isTemporaryBanStorageUnavailable(error)) return response.status(503).json({ error: 'Temporary ban storage is unavailable' });
+    console.error('Unable to load due Discord temporary bans:', error);
+    response.status(500).json({ error: 'Unable to load temporary bans' });
+  }
+});
+
+router.post('/temp-bans/:id/complete', async (request, response) => {
+  try {
+    await temporaryBanStorage(request).updateMany({ where: { id: request.params.id, liftedAt: null }, data: { liftedAt: new Date() } });
+    response.status(204).end();
+  } catch (error) {
+    if (isTemporaryBanStorageUnavailable(error)) return response.status(503).json({ error: 'Temporary ban storage is unavailable' });
+    console.error('Unable to complete Discord temporary ban:', error);
+    response.status(500).json({ error: 'Unable to complete temporary ban' });
+  }
+});
+
+router.delete('/temp-bans/guilds/:guildId/users/:userId', async (request, response) => {
+  if (!isSnowflake(request.params.guildId) || !isSnowflake(request.params.userId)) return response.status(400).json({ error: 'Invalid Discord ID' });
+
+  try {
+    await temporaryBanStorage(request).updateMany({
+      where: { guildId: request.params.guildId, userId: request.params.userId, liftedAt: null },
+      data: { liftedAt: new Date() },
+    });
+    response.status(204).end();
+  } catch (error) {
+    if (isTemporaryBanStorageUnavailable(error)) return response.status(503).json({ error: 'Temporary ban storage is unavailable' });
+    console.error('Unable to cancel Discord temporary ban:', error);
+    response.status(500).json({ error: 'Unable to cancel temporary ban' });
   }
 });
 

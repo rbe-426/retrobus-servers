@@ -1416,6 +1416,21 @@ model DiscordBirthday {
   @@map("discord_birthdays")
 }
 
+model DiscordTemporaryBan {
+  id          String    @id @default(cuid())
+  guildId     String    @map("guild_id")
+  userId      String    @map("user_id")
+  reason      String
+  moderatorId String    @map("moderator_id")
+  expiresAt   DateTime  @map("expires_at")
+  liftedAt    DateTime? @map("lifted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@unique([guildId, userId, liftedAt])
+  @@index([expiresAt, liftedAt])
+  @@map("discord_temporary_bans")
+}
+
 model retromail_settings {
   userId       String   @id
   signature    String?  @db.Text
