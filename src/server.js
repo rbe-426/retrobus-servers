@@ -6801,8 +6801,25 @@ const uniquePublicNewsSlug = async (title, currentId) => {
   }
 };
 
+const LEGACY_PUBLIC_NEWS_UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const isLegacyPublicNewsSlug = (news) => news.slug === news.id || LEGACY_PUBLIC_NEWS_UUID.test(news.slug) || /^[a-f0-9]{16,}$/i.test(news.slug);
+
+const backfillPublicNewsSlugs = async () => {
+  const legacyNews = await prisma.publicNews.findMany({
+    where: {},
+    select: { id: true, slug: true, title: true },
+  });
+
+  for (const news of legacyNews) {
+    if (!isLegacyPublicNewsSlug(news)) continue;
+    const slug = await uniquePublicNewsSlug(news.title, news.id);
+    if (slug !== news.slug) await prisma.publicNews.update({ where: { id: news.id }, data: { slug } });
+  }
+};
+
 app.get('/api/public-news', requireAuth, requireAdmin, async (_req, res) => {
   try {
+    await backfillPublicNewsSlugs();
     const news = await prisma.publicNews.findMany({ orderBy: [{ featured: 'desc' }, { publishedAt: 'desc' }, { createdAt: 'desc' }] });
     res.json(news.map(formatPublicNewsForFrontend));
   } catch (error) {
@@ -6813,6 +6830,7 @@ app.get('/api/public-news', requireAuth, requireAdmin, async (_req, res) => {
 
 app.get(['/public/news', '/public/news/:slug'], async (req, res) => {
   try {
+    await backfillPublicNewsSlugs();
     const where = req.params.slug ? { slug: req.params.slug, published: true } : { published: true };
     if (req.params.slug) {
       const article = await prisma.publicNews.findFirst({ where });
