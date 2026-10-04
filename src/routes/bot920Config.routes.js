@@ -62,7 +62,7 @@ export const defaultBot920Configuration = {
     socialAlerts: { enabled: false },
     statisticsChannels: { enabled: false },
     music: { enabled: true },
-    automod: { enabled: false, antiSpam: true, antiRaid: true, blockedLinks: false },
+    automod: { enabled: false, antiSpam: true, antiRaid: true, blockedLinks: false, alertChannelId: '', spamMessageLimit: 6, spamWindowSeconds: 10, timeoutMinutes: 10, raidJoinLimit: 8, raidWindowSeconds: 60 },
   },
 };
 
@@ -100,6 +100,11 @@ function pluginSource(value) {
 
 function plugin(value, fallback) {
   return { enabled: value?.enabled === true || (value?.enabled === undefined && fallback.enabled) };
+}
+
+function integer(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
 }
 
 export function validateBot920Configuration(value = {}) {
@@ -167,6 +172,12 @@ export function normalizeBot920Configuration(value = {}) {
         antiSpam: sourceAutomod.antiSpam !== false,
         antiRaid: sourceAutomod.antiRaid !== false,
         blockedLinks: sourceAutomod.blockedLinks === true,
+        alertChannelId: snowflake(sourceAutomod.alertChannelId),
+        spamMessageLimit: integer(sourceAutomod.spamMessageLimit, defaultBot920Configuration.plugins.automod.spamMessageLimit, 2, 20),
+        spamWindowSeconds: integer(sourceAutomod.spamWindowSeconds, defaultBot920Configuration.plugins.automod.spamWindowSeconds, 2, 300),
+        timeoutMinutes: integer(sourceAutomod.timeoutMinutes, defaultBot920Configuration.plugins.automod.timeoutMinutes, 1, 40_320),
+        raidJoinLimit: integer(sourceAutomod.raidJoinLimit, defaultBot920Configuration.plugins.automod.raidJoinLimit, 2, 100),
+        raidWindowSeconds: integer(sourceAutomod.raidWindowSeconds, defaultBot920Configuration.plugins.automod.raidWindowSeconds, 5, 600),
       },
     },
   };
