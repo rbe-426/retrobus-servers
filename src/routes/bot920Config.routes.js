@@ -260,6 +260,47 @@ export function createBot920ConfigRouter() {
     }
   });
 
+  router.get('/guilds/:guildId/settings', async (request, response) => {
+    if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Identifiant de serveur Discord invalide.' });
+    try {
+      const prisma = guildFoundationStorage(request.app.locals.prisma);
+      const guild = await prisma.discordGuild.findUnique({ where: { id: request.params.guildId }, select: { id: true, settings: true } });
+      if (!guild) return response.status(404).json({ error: 'Serveur Discord introuvable.' });
+      response.json({ configuration: normalizeBot920Configuration(guild.settings?.data), version: guild.settings?.version ?? 0, publishedAt: guild.settings?.publishedAt ?? null });
+    } catch (error) {
+      if (isGuildFoundationStorageUnavailable(error)) return response.status(503).json({ error: 'La configuration par serveur est indisponible.' });
+      console.error('Unable to load Bot 920 guild settings:', error);
+      response.status(500).json({ error: 'Impossible de charger la configuration du serveur.' });
+    }
+  });
+
+  router.put('/guilds/:guildId/settings', async (request, response) => {
+    if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Identifiant de serveur Discord invalide.' });
+    const errors = validateBot920Configuration(request.body?.configuration);
+    if (errors.length) return response.status(400).json({ error: errors[0], errors });
+    const configuration = normalizeBot920Configuration(request.body.configuration);
+    try {
+      const prisma = guildFoundationStorage(request.app.locals.prisma);
+      const guild = await prisma.discordGuild.findUnique({ where: { id: request.params.guildId }, select: { id: true } });
+      if (!guild) return response.status(404).json({ error: 'Serveur Discord introuvable.' });
+      const previous = await prisma.bot920GuildSettings.findUnique({ where: { guildId: guild.id } });
+      const settings = await prisma.bot920GuildSettings.upsert({
+        where: { guildId: guild.id },
+        create: { guildId: guild.id, data: configuration },
+        update: { data: configuration, version: { increment: 1 }, publishedAt: new Date() },
+      });
+      await prisma.bot920PanelAuditEvent.create({ data: {
+        guildId: guild.id, actorId: request.user?.id ?? null, actorName: request.user?.username ?? null,
+        module: 'configuration', action: 'publish', beforeData: previous?.data ?? null, afterData: configuration,
+      } });
+      response.json({ configuration: normalizeBot920Configuration(settings.data), version: settings.version, publishedAt: settings.publishedAt });
+    } catch (error) {
+      if (isGuildFoundationStorageUnavailable(error)) return response.status(503).json({ error: 'La configuration par serveur est indisponible.' });
+      console.error('Unable to publish Bot 920 guild settings:', error);
+      response.status(500).json({ error: 'Impossible de publier la configuration du serveur.' });
+    }
+  });
+
   router.get('/guilds/:guildId/audit', async (request, response) => {
     if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Identifiant de serveur Discord invalide.' });
     try {

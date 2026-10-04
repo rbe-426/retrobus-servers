@@ -120,6 +120,20 @@ router.get('/config', async (request, response) => {
   }
 });
 
+router.get('/guilds/:guildId/config', async (request, response) => {
+  if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
+  try {
+    const settings = request.app.locals.prisma?.bot920GuildSettings;
+    if (!settings) return response.json({ configuration: normalizeBot920Configuration() });
+    const record = await settings.findUnique({ where: { guildId: request.params.guildId } });
+    response.json({ configuration: normalizeBot920Configuration(record?.data), version: record?.version ?? 0 });
+  } catch (error) {
+    if (error?.code === 'P2021' || error?.code === 'P2022') return response.json({ configuration: normalizeBot920Configuration() });
+    console.error('Unable to load Bot 920 guild configuration:', error);
+    response.status(500).json({ error: 'Unable to load guild configuration' });
+  }
+});
+
 router.post('/guild-context', async (request, response) => {
   const guilds = (Array.isArray(request.body?.guilds) ? request.body.guilds : []).map(inventoryGuild).filter(Boolean).slice(0, 100);
   try {
