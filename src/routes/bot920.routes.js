@@ -58,6 +58,16 @@ function isGuildInventoryStorageUnavailable(error) {
     || error?.code === 'BOT920_GUILD_INVENTORY_STORAGE_UNAVAILABLE';
 }
 
+function autoModStorage(request) {
+  const prisma = request.app.locals.prisma;
+  if (!prisma?.autoModRule || !prisma?.autoModWord) {
+    const error = new Error('AutoMod storage is unavailable');
+    error.code = 'BOT920_AUTOMOD_STORAGE_UNAVAILABLE';
+    throw error;
+  }
+  return prisma;
+}
+
 function moderationCaseStorage(request) {
   const storage = request.app.locals.prisma?.discordModerationCase;
   if (!storage) {
@@ -66,6 +76,20 @@ function moderationCaseStorage(request) {
     throw error;
   }
   return storage;
+}
+
+function logStorage(request) {
+  const prisma = request.app.locals.prisma;
+  if (!prisma?.discordLogRule || !prisma?.discordLogEvent) {
+    const error = new Error('Discord log storage is unavailable');
+    error.code = 'BOT920_LOG_STORAGE_UNAVAILABLE';
+    throw error;
+  }
+  return prisma;
+}
+
+function isLogStorageUnavailable(error) {
+  return error?.code === 'P2021' || error?.code === 'P2022' || error?.code === 'BOT920_LOG_STORAGE_UNAVAILABLE';
 }
 
 function inventoryGuild(value) {
@@ -131,6 +155,73 @@ router.get('/guilds/:guildId/config', async (request, response) => {
     if (error?.code === 'P2021' || error?.code === 'P2022') return response.json({ configuration: normalizeBot920Configuration() });
     console.error('Unable to load Bot 920 guild configuration:', error);
     response.status(500).json({ error: 'Unable to load guild configuration' });
+  }
+});
+
+router.get('/guilds/:guildId/automod', async (request, response) => {
+  if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
+  try {
+    const prisma = autoModStorage(request);
+    const [rules, words] = await Promise.all([
+      prisma.autoModRule.findMany({
+        where: { guildId: request.params.guildId, enabled: true },
+        include: { exceptions: { select: { entityType: true, entityId: true } } },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.autoModWord.findMany({
+        where: { guildId: request.params.guildId, enabled: true },
+        select: { id: true, phrase: true, matchType: true, severity: true, action: true, enabled: true },
+        orderBy: { phrase: 'asc' },
+      }),
+    ]);
+    response.json({ rules, words });
+  } catch (error) {
+    if (error?.code === 'P2021' || error?.code === 'P2022' || error?.code === 'BOT920_AUTOMOD_STORAGE_UNAVAILABLE') {
+      return response.status(503).json({ error: 'AutoMod storage is unavailable' });
+    }
+    console.error('Unable to load Bot 920 AutoMod configuration:', error);
+    response.status(500).json({ error: 'Unable to load AutoMod configuration' });
+  }
+});
+
+router.get('/guilds/:guildId/logging', async (request, response) => {
+  if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
+  try {
+    const rules = await logStorage(request).discordLogRule.findMany({
+      where: { guildId: request.params.guildId, enabled: true },
+      select: { id: true, type: true, channelId: true, enabled: true, updatedAt: true },
+    });
+    response.json({ rules });
+  } catch (error) {
+    if (isLogStorageUnavailable(error)) return response.status(503).json({ error: 'Discord log storage is unavailable' });
+    console.error('Unable to load Bot 920 log configuration:', error);
+    response.status(500).json({ error: 'Unable to load log configuration' });
+  }
+});
+
+router.post('/guilds/:guildId/log-events', async (request, response) => {
+  if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
+  const payload = request.body ?? {};
+  const validEventTypes = new Set(['kick', 'mute', 'unmute', 'ban', 'tempban', 'unban']);
+  const durationMinutes = Number(payload.durationMinutes);
+  const expiresAt = payload.expiresAt ? new Date(String(payload.expiresAt)) : null;
+  if (!validEventTypes.has(payload.eventType) || !isSnowflake(payload.targetUserId) || !isSnowflake(payload.moderatorId)
+    || !String(payload.targetTag || '').trim() || !String(payload.moderatorTag || '').trim() || !String(payload.reason || '').trim()
+    || (payload.durationMinutes != null && (!Number.isInteger(durationMinutes) || durationMinutes < 1))
+    || (expiresAt && Number.isNaN(expiresAt.getTime()))) {
+    return response.status(400).json({ error: 'Invalid Discord log event payload' });
+  }
+  try {
+    const event = await logStorage(request).discordLogEvent.create({ data: {
+      guildId: request.params.guildId, eventType: payload.eventType, targetUserId: String(payload.targetUserId), targetTag: String(payload.targetTag).trim().slice(0, 100),
+      moderatorId: String(payload.moderatorId), moderatorTag: String(payload.moderatorTag).trim().slice(0, 100), reason: String(payload.reason).trim().slice(0, 400),
+      durationMinutes: payload.durationMinutes == null ? null : durationMinutes, expiresAt,
+    } });
+    response.status(201).json({ event: { id: event.id, createdAt: event.createdAt } });
+  } catch (error) {
+    if (isLogStorageUnavailable(error)) return response.status(503).json({ error: 'Discord log storage is unavailable' });
+    console.error('Unable to record Discord log event:', error);
+    response.status(500).json({ error: 'Unable to record Discord log event' });
   }
 });
 

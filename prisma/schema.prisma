@@ -140,6 +140,8 @@ model DiscordGuild {
   moderationCases DiscordModerationCase[]
   autoModRules AutoModRule[]
   autoModWords AutoModWord[]
+  logRules     DiscordLogRule[]
+  logEvents    DiscordLogEvent[]
 
   @@index([lastSyncedAt])
 }
@@ -263,6 +265,38 @@ model AutoModWord {
 
   @@unique([guildId, phrase])
   @@index([guildId, enabled])
+}
+
+model DiscordLogRule {
+  id        String      @id @default(cuid())
+  guildId   String
+  type      String
+  enabled   Boolean     @default(true)
+  channelId String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  guild     DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, type])
+  @@index([guildId, enabled])
+}
+
+model DiscordLogEvent {
+  id              String      @id @default(cuid())
+  guildId         String
+  eventType       String
+  targetUserId    String
+  targetTag       String
+  moderatorId     String
+  moderatorTag    String
+  reason          String
+  durationMinutes Int?
+  expiresAt       DateTime?
+  createdAt       DateTime    @default(now())
+  guild           DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@index([guildId, createdAt])
+  @@index([guildId, eventType, createdAt])
 }
 
 model Event {
