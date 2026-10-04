@@ -1,7 +1,7 @@
 import { Router } from 'express';
 
 const CONFIGURATION_ID = 'default';
-const COMMANDS = ['ping', 'about', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
+const COMMANDS = ['ping', 'about', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'ecouter', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const WELCOME_MESSAGE_MAX_LENGTH = 1_800;
 const BOT920_HEALTH_TIMEOUT_MS = 4_000;
@@ -52,6 +52,18 @@ export const defaultBot920Configuration = {
   },
   logs: { enabled: true },
   fun: { enabled: true },
+  plugins: {
+    reactionRoles: { enabled: false },
+    tickets: { enabled: false },
+    automations: { enabled: false },
+    pollsGiveaways: { enabled: false },
+    reminders: { enabled: false },
+    levels: { enabled: false },
+    socialAlerts: { enabled: false },
+    statisticsChannels: { enabled: false },
+    music: { enabled: true },
+    automod: { enabled: false, antiSpam: true, antiRaid: true, blockedLinks: false },
+  },
 };
 
 function text(value, fallback, maxLength = 500) {
@@ -82,6 +94,14 @@ function welcomeSource(value) {
   return value?.welcome && typeof value.welcome === 'object' && !Array.isArray(value.welcome) ? value.welcome : {};
 }
 
+function pluginSource(value) {
+  return value?.plugins && typeof value.plugins === 'object' && !Array.isArray(value.plugins) ? value.plugins : {};
+}
+
+function plugin(value, fallback) {
+  return { enabled: value?.enabled === true || (value?.enabled === undefined && fallback.enabled) };
+}
+
 export function validateBot920Configuration(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const welcome = welcomeSource(source);
@@ -110,6 +130,8 @@ export function normalizeBot920Configuration(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const sourceCommands = source.commands?.enabled && typeof source.commands.enabled === 'object' ? source.commands.enabled : {};
   const sourceWelcome = welcomeSource(source);
+  const sourcePlugins = pluginSource(source);
+  const sourceAutomod = sourcePlugins.automod && typeof sourcePlugins.automod === 'object' ? sourcePlugins.automod : {};
   return {
     general: {
       name: text(source.general?.name, defaultBot920Configuration.general.name, 100),
@@ -130,6 +152,23 @@ export function normalizeBot920Configuration(value = {}) {
     },
     logs: { enabled: source.logs?.enabled !== false },
     fun: { enabled: source.fun?.enabled !== false },
+    plugins: {
+      reactionRoles: plugin(sourcePlugins.reactionRoles, defaultBot920Configuration.plugins.reactionRoles),
+      tickets: plugin(sourcePlugins.tickets, defaultBot920Configuration.plugins.tickets),
+      automations: plugin(sourcePlugins.automations, defaultBot920Configuration.plugins.automations),
+      pollsGiveaways: plugin(sourcePlugins.pollsGiveaways, defaultBot920Configuration.plugins.pollsGiveaways),
+      reminders: plugin(sourcePlugins.reminders, defaultBot920Configuration.plugins.reminders),
+      levels: plugin(sourcePlugins.levels, defaultBot920Configuration.plugins.levels),
+      socialAlerts: plugin(sourcePlugins.socialAlerts, defaultBot920Configuration.plugins.socialAlerts),
+      statisticsChannels: plugin(sourcePlugins.statisticsChannels, defaultBot920Configuration.plugins.statisticsChannels),
+      music: plugin(sourcePlugins.music, defaultBot920Configuration.plugins.music),
+      automod: {
+        enabled: sourceAutomod.enabled === true,
+        antiSpam: sourceAutomod.antiSpam !== false,
+        antiRaid: sourceAutomod.antiRaid !== false,
+        blockedLinks: sourceAutomod.blockedLinks === true,
+      },
+    },
   };
 }
 
