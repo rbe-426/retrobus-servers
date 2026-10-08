@@ -1304,6 +1304,19 @@ const requireAdmin = async (req, res, next) => {
   next();
 };
 
+const hasBot920Access = (user) => {
+  const identities = [user?.id, user?.username, user?.email]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+  return identities.includes('c.marcy') || identities.includes('clement.marcypro@gmail.com');
+};
+
+const requireBot920Access = async (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  if (hasBot920Access(req.user) || await isAdminRequest(req)) return next();
+  return res.status(403).json({ error: 'Bot 920 access required' });
+};
+
 const requireMembershipReviewAccess = async (req, res, next) => {
   if (isConfiguredPresidentRequest(req)) return next();
 
@@ -2042,7 +2055,7 @@ app.use('/api/museum', museumRoutes);
 
 // Bot Discord: service-to-service routes protected by BOT920_SERVICE_TOKEN.
 app.use('/api/bot920', bot920Routes);
-app.use('/api/admin/bot920', requireAuth, requireAdmin, createBot920ConfigRouter());
+app.use('/api/admin/bot920', requireAuth, requireBot920Access, createBot920ConfigRouter());
 
 const museumWorkspaceSections = new Set([
   'restorations', 'docs', 'events', 'facing', 'floor', 'staff', 'planning',
