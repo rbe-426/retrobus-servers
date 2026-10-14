@@ -288,6 +288,159 @@ router.post('/moderation-cases', async (request, response) => {
   }
 });
 
+router.post('/guilds/:guildId/activity', async (request, response) => {
+  const { guildId } = request.params;
+  const { userId } = request.body ?? {};
+  if (!isSnowflake(guildId) || !isSnowflake(userId)) return response.status(400).json({ error: 'Invalid activity identity' });
+  try {
+    const activity = request.app.locals.prisma.discordMemberActivity;
+    if (!activity) return response.status(503).json({ error: 'Activity storage is unavailable' });
+    const previous = await activity.findUnique({ where: { guildId_userId: { guildId, userId } }, select: { lastActiveAt: true } });
+    const awardPoint = !previous || Date.now() - previous.lastActiveAt.getTime() >= 15 * 60_000;
+    const record = await activity.upsert({
+      where: { guildId_userId: { guildId, userId } },
+      create: { guildId, userId, displayName: String(request.body?.displayName || 'Membre Discord').trim().slice(0, 100), points: 1 },
+      update: { displayName: String(request.body?.displayName || 'Membre Discord').trim().slice(0, 100), points: { increment: awardPoint ? 1 : 0 }, messageCount: { increment: 1 }, lastActiveAt: new Date() },
+      select: { points: true, messageCount: true, lastActiveAt: true },
+    });
+    response.json({ activity: record, awardedPoint: awardPoint });
+  } catch (error) {
+    console.error('Unable to record Bot 920 member activity:', error);
+    response.status(500).json({ error: 'Unable to record member activity' });
+  }
+});
+
+router.get('/guilds/:guildId/leaderboard', async (request, response) => {
+  if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
+  try {
+    const entries = await request.app.locals.prisma.discordMemberActivity.findMany({
+      where: { guildId: request.params.guildId }, orderBy: [{ points: 'desc' }, { lastActiveAt: 'desc' }], take: 10,
+      select: { userId: true, displayName: true, points: true, messageCount: true, lastActiveAt: true },
+    });
+    response.json({ entries: entries.map((entry) => ({ ...entry, active: Date.now() - entry.lastActiveAt.getTime() < 30 * 24 * 60 * 60_000 })) });
+  } catch (error) {
+    console.error('Unable to load Bot 920 leaderboard:', error);
+    response.status(500).json({ error: 'Unable to load leaderboard' });
+  }
+});
+
+router.get('/polls/due', async (request, response) => {
+  try {
+    const polls = await request.app.locals.prisma.discordPoll.findMany({
+      where: { status: 'OPEN', endsAt: { lte: new Date() }, messageId: { not: null } },
+      select: { id: true, guildId: true, channelId: true, messageId: true },
+      take: 100,
+    });
+    response.json({ polls });
+  } catch (error) {
+    console.error('Unable to load due Bot 920 polls:', error);
+    response.status(500).json({ error: 'Unable to load due polls' });
+  }
+});
+
+router.post('/guilds/:guildId/polls', async (request, response) => {
+  const { guildId } = request.params;
+  const question = String(request.body?.question || '').trim().slice(0, 250);
+  const options = Array.isArray(request.body?.options) ? request.body.options.map((value) => String(value).trim().slice(0, 80)).filter(Boolean).slice(0, 5) : [];
+  const creatorId = String(request.body?.creatorId || '');
+  const channelId = String(request.body?.channelId || '');
+  const durationMinutes = Number(request.body?.durationMinutes || 0);
+  if (!isSnowflake(guildId) || !isSnowflake(creatorId) || !isSnowflake(channelId) || question.length < 3 || options.length < 2 || new Set(options).size !== options.length || (durationMinutes && (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 10_080))) {
+    return response.status(400).json({ error: 'Invalid poll payload' });
+  }
+  try {
+    const poll = await request.app.locals.prisma.discordPoll.create({ data: {
+      guildId, creatorId, channelId, question, endsAt: durationMinutes ? new Date(Date.now() + durationMinutes * 60_000) : null,
+      options: { create: options.map((label, index) => ({ label, index })) },
+    }, include: { options: true } });
+    response.status(201).json({ poll });
+  } catch (error) {
+    console.error('Unable to create Bot 920 poll:', error);
+    response.status(500).json({ error: 'Unable to create poll' });
+  }
+});
+
+router.post('/guilds/:guildId/polls/:pollId/message', async (request, response) => {
+  const { guildId, pollId } = request.params;
+  const messageId = String(request.body?.messageId || '');
+  if (!isSnowflake(guildId) || !isSnowflake(messageId)) return response.status(400).json({ error: 'Invalid poll message' });
+  try {
+    const result = await request.app.locals.prisma.discordPoll.updateMany({ where: { id: pollId, guildId }, data: { messageId } });
+    if (!result.count) return response.status(404).json({ error: 'Poll not found' });
+    response.json({ saved: true });
+  } catch (error) {
+    console.error('Unable to attach Bot 920 poll message:', error);
+    response.status(500).json({ error: 'Unable to attach poll message' });
+  }
+});
+
+router.get('/guilds/:guildId/polls/:pollId', async (request, response) => {
+  if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
+  try {
+    const poll = await request.app.locals.prisma.discordPoll.findFirst({
+      where: { id: request.params.pollId, guildId: request.params.guildId },
+      include: { options: { include: { _count: { select: { votes: true } } }, orderBy: { index: 'asc' } }, _count: { select: { votes: true } } },
+    });
+    if (!poll) return response.status(404).json({ error: 'Poll not found' });
+    const expired = poll.endsAt && poll.endsAt <= new Date();
+    if (expired && poll.status === 'OPEN') await request.app.locals.prisma.discordPoll.update({ where: { id: poll.id }, data: { status: 'CLOSED' } });
+    response.json({ poll: { ...poll, status: expired ? 'CLOSED' : poll.status, options: poll.options.map((option) => ({ id: option.id, label: option.label, index: option.index, votes: option._count.votes })) } });
+  } catch (error) {
+    console.error('Unable to load Bot 920 poll:', error);
+    response.status(500).json({ error: 'Unable to load poll' });
+  }
+});
+
+router.post('/guilds/:guildId/polls/:pollId/votes', async (request, response) => {
+  const { guildId, pollId } = request.params;
+  const { userId, optionId } = request.body ?? {};
+  if (!isSnowflake(guildId) || !isSnowflake(userId) || !String(optionId || '')) return response.status(400).json({ error: 'Invalid poll vote' });
+  try {
+    const poll = await request.app.locals.prisma.discordPoll.findFirst({ where: { id: pollId, guildId, status: 'OPEN', OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }], options: { some: { id: optionId } } }, select: { id: true } });
+    if (!poll) return response.status(409).json({ error: 'Poll is closed or option is invalid' });
+    await request.app.locals.prisma.discordPollVote.upsert({
+      where: { pollId_userId: { pollId, userId } }, create: { pollId, userId, optionId }, update: { optionId, createdAt: new Date() },
+    });
+    const options = await request.app.locals.prisma.discordPollOption.findMany({ where: { pollId }, include: { _count: { select: { votes: true } } }, orderBy: { index: 'asc' } });
+    response.json({ options: options.map((option) => ({ id: option.id, label: option.label, votes: option._count.votes })) });
+  } catch (error) {
+    console.error('Unable to record Bot 920 poll vote:', error);
+    response.status(500).json({ error: 'Unable to record poll vote' });
+  }
+});
+
+router.post('/guilds/:guildId/suggestions', async (request, response) => {
+  const { guildId } = request.params;
+  const creatorId = String(request.body?.creatorId || '');
+  const suggestionText = String(request.body?.text || '').trim();
+  if (!isSnowflake(guildId) || !isSnowflake(creatorId) || suggestionText.length < 8 || suggestionText.length > 1_000) return response.status(400).json({ error: 'Invalid suggestion payload' });
+  try {
+    const suggestion = await request.app.locals.prisma.discordSuggestion.create({ data: { guildId, creatorId, text: suggestionText } });
+    response.status(201).json({ suggestion });
+  } catch (error) {
+    console.error('Unable to create Bot 920 suggestion:', error);
+    response.status(500).json({ error: 'Unable to create suggestion' });
+  }
+});
+
+router.post('/guilds/:guildId/suggestions/:suggestionId/votes', async (request, response) => {
+  const { guildId, suggestionId } = request.params;
+  const userId = String(request.body?.userId || '');
+  if (!isSnowflake(guildId) || !isSnowflake(userId)) return response.status(400).json({ error: 'Invalid suggestion vote' });
+  try {
+    const suggestion = await request.app.locals.prisma.discordSuggestion.findFirst({ where: { id: suggestionId, guildId, status: 'OPEN' }, select: { id: true } });
+    if (!suggestion) return response.status(404).json({ error: 'Suggestion not found' });
+    const vote = await request.app.locals.prisma.discordSuggestionVote.findUnique({ where: { suggestionId_userId: { suggestionId, userId } } });
+    if (vote) await request.app.locals.prisma.discordSuggestionVote.delete({ where: { id: vote.id } });
+    else await request.app.locals.prisma.discordSuggestionVote.create({ data: { suggestionId, userId } });
+    const votes = await request.app.locals.prisma.discordSuggestionVote.count({ where: { suggestionId } });
+    response.json({ votes, voted: !vote });
+  } catch (error) {
+    console.error('Unable to record Bot 920 suggestion vote:', error);
+    response.status(500).json({ error: 'Unable to record suggestion vote' });
+  }
+});
+
 router.get('/guilds/:guildId/birthdays', async (request, response) => {
   if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
 

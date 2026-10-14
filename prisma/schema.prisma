@@ -142,6 +142,9 @@ model DiscordGuild {
   autoModWords AutoModWord[]
   logRules     DiscordLogRule[]
   logEvents    DiscordLogEvent[]
+  memberActivity DiscordMemberActivity[]
+  polls        DiscordPoll[]
+  suggestions  DiscordSuggestion[]
 
   @@index([lastSyncedAt])
 }
@@ -297,6 +300,87 @@ model DiscordLogEvent {
 
   @@index([guildId, createdAt])
   @@index([guildId, eventType, createdAt])
+}
+
+model DiscordMemberActivity {
+  id           String       @id @default(cuid())
+  guildId      String
+  userId       String
+  displayName  String
+  points       Int          @default(0)
+  messageCount Int          @default(0)
+  lastActiveAt DateTime     @default(now())
+  guild        DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, userId])
+  @@index([guildId, points])
+  @@index([guildId, lastActiveAt])
+}
+
+model DiscordPoll {
+  id        String             @id @default(cuid())
+  guildId   String
+  creatorId String
+  channelId String
+  question  String
+  status    String             @default("OPEN")
+  endsAt    DateTime?
+  messageId String?
+  createdAt DateTime           @default(now())
+  guild     DiscordGuild       @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  options   DiscordPollOption[]
+  votes     DiscordPollVote[]
+
+  @@index([guildId, status, createdAt])
+}
+
+model DiscordPollOption {
+  id     String          @id @default(cuid())
+  pollId String
+  label  String
+  index  Int
+  poll   DiscordPoll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes  DiscordPollVote[]
+
+  @@unique([pollId, index])
+}
+
+model DiscordPollVote {
+  id        String           @id @default(cuid())
+  pollId    String
+  optionId  String
+  userId    String
+  createdAt DateTime         @default(now())
+  poll      DiscordPoll      @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option    DiscordPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@index([pollId, optionId])
+}
+
+model DiscordSuggestion {
+  id        String                 @id @default(cuid())
+  guildId   String
+  creatorId String
+  text      String
+  status    String                 @default("OPEN")
+  messageId String?
+  createdAt DateTime               @default(now())
+  guild     DiscordGuild           @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  votes     DiscordSuggestionVote[]
+
+  @@index([guildId, status, createdAt])
+}
+
+model DiscordSuggestionVote {
+  id           String            @id @default(cuid())
+  suggestionId String
+  userId       String
+  createdAt    DateTime          @default(now())
+  suggestion   DiscordSuggestion @relation(fields: [suggestionId], references: [id], onDelete: Cascade)
+
+  @@unique([suggestionId, userId])
+  @@index([suggestionId])
 }
 
 model Event {
