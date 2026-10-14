@@ -144,6 +144,26 @@ router.get('/config', async (request, response) => {
   }
 });
 
+router.get('/updates', async (request, response) => {
+  try {
+    const updates = await request.app.locals.prisma.changelog.findMany({
+      where: { title: { contains: '920', mode: 'insensitive' } },
+      orderBy: { date: 'desc' },
+      take: 5,
+      select: { version: true, title: true, date: true, changes: true },
+    });
+    response.json({ updates: updates.map((update) => ({
+      version: String(update.version),
+      title: String(update.title),
+      date: update.date.toLocaleDateString('fr-FR'),
+      changes: Array.isArray(update.changes) ? update.changes.map(String).slice(0, 8) : [],
+    })) });
+  } catch (error) {
+    console.error('Unable to load Bot 920 updates:', error);
+    response.status(500).json({ error: 'Unable to load Bot 920 updates' });
+  }
+});
+
 router.get('/guilds/:guildId/config', async (request, response) => {
   if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
   try {
