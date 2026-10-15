@@ -3,6 +3,7 @@ import express from 'express';
 import { normalizeBot920Configuration } from './bot920Config.routes.js';
 
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
+const DAILY_CARD_DRAW_LIMIT = 3;
 const router = express.Router();
 
 function hasValidServiceToken(request) {
@@ -336,18 +337,48 @@ router.post('/guilds/:guildId/collection/draw', async (request, response) => {
     return response.status(400).json({ error: 'Invalid collectible card payload' });
   }
   try {
-    const ownedCard = await request.app.locals.prisma.discordUserCard.upsert({
-      where: { guildId_userId_cardId: { guildId, userId, cardId: card.id } },
-      create: {
-        guildId, userId, cardId: card.id,
-        cardName: String(card.name).trim().slice(0, 120),
-        rarity: card.rarity,
-        description: String(card.description).trim().slice(0, 300),
-      },
-      update: { quantity: { increment: 1 }, lastAcquired: new Date() },
-      select: { quantity: true, firstAcquired: true },
+    const now = new Date();
+    const nextUtcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+    const result = await request.app.locals.prisma.$transaction(async (transaction) => {
+      const quotaKey = { guildId_userId: { guildId, userId } };
+      await transaction.discordCardDrawQuota.upsert({
+        where: quotaKey,
+        create: { guildId, userId, draws: 0, resetAt: now },
+        update: {},
+      });
+
+      let quotaUpdate = await transaction.discordCardDrawQuota.updateMany({
+        where: { guildId, userId, resetAt: { lte: now } },
+        data: { draws: 1, resetAt: nextUtcMidnight },
+      });
+      if (!quotaUpdate.count) {
+        quotaUpdate = await transaction.discordCardDrawQuota.updateMany({
+          where: { guildId, userId, resetAt: { gt: now }, draws: { lt: DAILY_CARD_DRAW_LIMIT } },
+          data: { draws: { increment: 1 } },
+        });
+      }
+
+      if (!quotaUpdate.count) {
+        const quota = await transaction.discordCardDrawQuota.findUnique({ where: quotaKey });
+        return { limited: true, resetAt: quota?.resetAt ?? nextUtcMidnight };
+      }
+
+      const quota = await transaction.discordCardDrawQuota.findUniqueOrThrow({ where: quotaKey });
+      const ownedCard = await transaction.discordUserCard.upsert({
+        where: { guildId_userId_cardId: { guildId, userId, cardId: card.id } },
+        create: {
+          guildId, userId, cardId: card.id,
+          cardName: String(card.name).trim().slice(0, 120),
+          rarity: card.rarity,
+          description: String(card.description).trim().slice(0, 300),
+        },
+        update: { quantity: { increment: 1 }, lastAcquired: now },
+        select: { quantity: true, firstAcquired: true },
+      });
+      return { limited: false, ownedCard, drawsRemaining: DAILY_CARD_DRAW_LIMIT - quota.draws, resetAt: quota.resetAt };
     });
-    response.status(201).json({ quantity: ownedCard.quantity, firstAcquired: ownedCard.firstAcquired });
+    if (result.limited) return response.status(429).json({ error: 'Daily card draw limit reached', code: 'DAILY_DRAW_LIMIT', resetAt: result.resetAt });
+    response.status(201).json({ quantity: result.ownedCard.quantity, firstAcquired: result.ownedCard.firstAcquired, drawsRemaining: result.drawsRemaining, resetAt: result.resetAt });
   } catch (error) {
     console.error('Unable to persist Bot 920 collectible card:', error);
     response.status(500).json({ error: 'Unable to persist collectible card' });
@@ -358,12 +389,23 @@ router.get('/guilds/:guildId/collection/:userId', async (request, response) => {
   const { guildId, userId } = request.params;
   if (!isSnowflake(guildId) || !isSnowflake(userId)) return response.status(400).json({ error: 'Invalid collection identity' });
   try {
-    const cards = await request.app.locals.prisma.discordUserCard.findMany({
-      where: { guildId, userId },
-      orderBy: [{ rarity: 'desc' }, { cardName: 'asc' }],
-      select: { cardId: true, cardName: true, rarity: true, description: true, quantity: true, firstAcquired: true },
+    const [cards, quota] = await Promise.all([
+      request.app.locals.prisma.discordUserCard.findMany({
+        where: { guildId, userId },
+        orderBy: [{ rarity: 'desc' }, { cardName: 'asc' }],
+        select: { cardId: true, cardName: true, rarity: true, description: true, quantity: true, firstAcquired: true },
+      }),
+      request.app.locals.prisma.discordCardDrawQuota.findUnique({ where: { guildId_userId: { guildId, userId } }, select: { draws: true, resetAt: true } }),
+    ]);
+    const quotaIsCurrent = quota && quota.resetAt > new Date();
+    response.json({
+      cards,
+      uniqueCards: cards.length,
+      totalCards: cards.reduce((sum, card) => sum + card.quantity, 0),
+      drawsRemaining: quotaIsCurrent ? Math.max(0, DAILY_CARD_DRAW_LIMIT - quota.draws) : DAILY_CARD_DRAW_LIMIT,
+      resetAt: quotaIsCurrent ? quota.resetAt : new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1)),
+      dailyDrawLimit: DAILY_CARD_DRAW_LIMIT,
     });
-    response.json({ cards, uniqueCards: cards.length, totalCards: cards.reduce((sum, card) => sum + card.quantity, 0) });
   } catch (error) {
     console.error('Unable to load Bot 920 collection:', error);
     response.status(500).json({ error: 'Unable to load collection' });
