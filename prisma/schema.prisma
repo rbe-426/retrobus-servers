@@ -145,6 +145,7 @@ model DiscordGuild {
   memberActivity DiscordMemberActivity[]
   polls        DiscordPoll[]
   suggestions  DiscordSuggestion[]
+  userCards    DiscordUserCard[]
 
   @@index([lastSyncedAt])
 }
@@ -381,6 +382,24 @@ model DiscordSuggestionVote {
 
   @@unique([suggestionId, userId])
   @@index([suggestionId])
+}
+
+model DiscordUserCard {
+  id            String       @id @default(cuid())
+  guildId       String
+  userId        String
+  cardId        String
+  cardName      String
+  rarity        String
+  description   String
+  quantity      Int          @default(1)
+  firstAcquired DateTime     @default(now())
+  lastAcquired  DateTime     @default(now())
+  guild         DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, userId, cardId])
+  @@index([guildId, userId, rarity])
+  @@index([guildId, userId, lastAcquired])
 }
 
 model Event {
