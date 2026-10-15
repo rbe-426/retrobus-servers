@@ -347,39 +347,49 @@ router.post('/guilds/:guildId/collection/draw', async (request, response) => {
         update: {},
       });
 
-      let quotaUpdate = await transaction.discordCardDrawQuota.updateMany({
+      await transaction.discordCardDrawQuota.updateMany({
         where: { guildId, userId, resetAt: { lte: now } },
-        data: { draws: 1, resetAt: nextUtcMidnight },
+        data: { draws: 0, resetAt: nextUtcMidnight },
       });
-      if (!quotaUpdate.count) {
-        quotaUpdate = await transaction.discordCardDrawQuota.updateMany({
-          where: { guildId, userId, resetAt: { gt: now }, draws: { lt: DAILY_CARD_DRAW_LIMIT } },
-          data: { draws: { increment: 1 } },
-        });
-      }
 
-      if (!quotaUpdate.count) {
-        const quota = await transaction.discordCardDrawQuota.findUnique({ where: quotaKey });
-        return { limited: true, resetAt: quota?.resetAt ?? nextUtcMidnight };
-      }
-
-      const quota = await transaction.discordCardDrawQuota.findUniqueOrThrow({ where: quotaKey });
-      const ownedCard = await transaction.discordUserCard.upsert({
+      const existingCard = await transaction.discordUserCard.findUnique({
         where: { guildId_userId_cardId: { guildId, userId, cardId: card.id } },
-        create: {
-          guildId, userId, cardId: card.id,
-          cardName: String(card.name).trim().slice(0, 120),
-          rarity: card.rarity,
-          description: String(card.description).trim().slice(0, 300),
-        },
-        update: { quantity: { increment: 1 }, lastAcquired: now },
-        select: { quantity: true, firstAcquired: true },
+        select: { quantity: true },
       });
-      return { limited: false, ownedCard, drawsRemaining: DAILY_CARD_DRAW_LIMIT - quota.draws, resetAt: quota.resetAt };
+      let quota = await transaction.discordCardDrawQuota.findUniqueOrThrow({ where: quotaKey });
+      if (existingCard) {
+        return { limited: false, duplicate: true, quantity: existingCard.quantity, drawsRemaining: Math.max(0, DAILY_CARD_DRAW_LIMIT - quota.draws), resetAt: quota.resetAt };
+      }
+
+      const quotaUpdate = await transaction.discordCardDrawQuota.updateMany({
+        where: { guildId, userId, resetAt: { gt: now }, draws: { lt: DAILY_CARD_DRAW_LIMIT } },
+        data: { draws: { increment: 1 } },
+      });
+      if (!quotaUpdate.count) return { limited: true, resetAt: quota.resetAt };
+
+      quota = await transaction.discordCardDrawQuota.findUniqueOrThrow({ where: quotaKey });
+      const ownedCard = await transaction.discordUserCard.create({ data: {
+        guildId, userId, cardId: card.id,
+        cardName: String(card.name).trim().slice(0, 120),
+        rarity: card.rarity,
+        description: String(card.description).trim().slice(0, 300),
+      }, select: { quantity: true, firstAcquired: true } });
+      return { limited: false, duplicate: false, ownedCard, drawsRemaining: DAILY_CARD_DRAW_LIMIT - quota.draws, resetAt: quota.resetAt };
     });
     if (result.limited) return response.status(429).json({ error: 'Daily card draw limit reached', code: 'DAILY_DRAW_LIMIT', resetAt: result.resetAt });
-    response.status(201).json({ quantity: result.ownedCard.quantity, firstAcquired: result.ownedCard.firstAcquired, drawsRemaining: result.drawsRemaining, resetAt: result.resetAt });
+    response.status(result.duplicate ? 200 : 201).json({ duplicate: result.duplicate, quantity: result.duplicate ? result.quantity : result.ownedCard.quantity, firstAcquired: result.duplicate ? null : result.ownedCard.firstAcquired, drawsRemaining: result.drawsRemaining, resetAt: result.resetAt });
   } catch (error) {
+    if (error?.code === 'P2002') {
+      try {
+        const [ownedCard, quota] = await Promise.all([
+          request.app.locals.prisma.discordUserCard.findUnique({ where: { guildId_userId_cardId: { guildId, userId, cardId: card.id } }, select: { quantity: true } }),
+          request.app.locals.prisma.discordCardDrawQuota.findUnique({ where: { guildId_userId: { guildId, userId } }, select: { draws: true, resetAt: true } }),
+        ]);
+        if (ownedCard && quota) return response.status(200).json({ duplicate: true, quantity: ownedCard.quantity, firstAcquired: null, drawsRemaining: Math.max(0, DAILY_CARD_DRAW_LIMIT - quota.draws), resetAt: quota.resetAt });
+      } catch (lookupError) {
+        console.error('Unable to resolve concurrent Bot 920 card draw:', lookupError);
+      }
+    }
     console.error('Unable to persist Bot 920 collectible card:', error);
     response.status(500).json({ error: 'Unable to persist collectible card' });
   }
