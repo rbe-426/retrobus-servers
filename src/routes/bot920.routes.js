@@ -324,6 +324,52 @@ router.get('/guilds/:guildId/leaderboard', async (request, response) => {
   }
 });
 
+router.post('/guilds/:guildId/collection/draw', async (request, response) => {
+  const { guildId } = request.params;
+  const { userId } = request.body ?? {};
+  const card = request.body?.card ?? {};
+  const validRarities = new Set(['COMMUN', 'RARE', 'EPIQUE', 'LEGENDAIRE', 'MYTHIQUE']);
+  if (!isSnowflake(guildId) || !isSnowflake(userId)
+    || !/^[a-z0-9-]{1,80}$/i.test(String(card.id || ''))
+    || !String(card.name || '').trim() || !validRarities.has(card.rarity)
+    || !String(card.description || '').trim()) {
+    return response.status(400).json({ error: 'Invalid collectible card payload' });
+  }
+  try {
+    const ownedCard = await request.app.locals.prisma.discordUserCard.upsert({
+      where: { guildId_userId_cardId: { guildId, userId, cardId: card.id } },
+      create: {
+        guildId, userId, cardId: card.id,
+        cardName: String(card.name).trim().slice(0, 120),
+        rarity: card.rarity,
+        description: String(card.description).trim().slice(0, 300),
+      },
+      update: { quantity: { increment: 1 }, lastAcquired: new Date() },
+      select: { quantity: true, firstAcquired: true },
+    });
+    response.status(201).json({ quantity: ownedCard.quantity, firstAcquired: ownedCard.firstAcquired });
+  } catch (error) {
+    console.error('Unable to persist Bot 920 collectible card:', error);
+    response.status(500).json({ error: 'Unable to persist collectible card' });
+  }
+});
+
+router.get('/guilds/:guildId/collection/:userId', async (request, response) => {
+  const { guildId, userId } = request.params;
+  if (!isSnowflake(guildId) || !isSnowflake(userId)) return response.status(400).json({ error: 'Invalid collection identity' });
+  try {
+    const cards = await request.app.locals.prisma.discordUserCard.findMany({
+      where: { guildId, userId },
+      orderBy: [{ rarity: 'desc' }, { cardName: 'asc' }],
+      select: { cardId: true, cardName: true, rarity: true, description: true, quantity: true, firstAcquired: true },
+    });
+    response.json({ cards, uniqueCards: cards.length, totalCards: cards.reduce((sum, card) => sum + card.quantity, 0) });
+  } catch (error) {
+    console.error('Unable to load Bot 920 collection:', error);
+    response.status(500).json({ error: 'Unable to load collection' });
+  }
+});
+
 router.get('/polls/due', async (request, response) => {
   try {
     const polls = await request.app.locals.prisma.discordPoll.findMany({

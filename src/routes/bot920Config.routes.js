@@ -1,7 +1,7 @@
 import { Router } from 'express';
 
 const CONFIGURATION_ID = 'default';
-const COMMANDS = ['ping', 'about', 'help', 'updatelog', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'ecouter', 'classement', 'sondage', 'suggestion', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
+const COMMANDS = ['ping', 'about', 'help', 'updatelog', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'collection', 'ecouter', 'classement', 'sondage', 'suggestion', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const WELCOME_MESSAGE_MAX_LENGTH = 1_800;
 const BOT920_HEALTH_TIMEOUT_MS = 4_000;
