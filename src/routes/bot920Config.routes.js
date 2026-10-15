@@ -1,7 +1,7 @@
 import { Router } from 'express';
 
 const CONFIGURATION_ID = 'default';
-const COMMANDS = ['ping', 'about', 'help', 'updatelog', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'ecouter', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
+const COMMANDS = ['ping', 'about', 'help', 'updatelog', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'ecouter', 'classement', 'sondage', 'suggestion', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const WELCOME_MESSAGE_MAX_LENGTH = 1_800;
 const BOT920_HEALTH_TIMEOUT_MS = 4_000;
@@ -70,7 +70,7 @@ export const defaultBot920Configuration = {
   welcome: {
     welcomeEnabled: false,
     welcomeChannelId: '',
-    welcomeMessage: 'Bienvenue sur le serveur RétroBus Essonne !',
+    welcomeMessage: 'Bienvenue sur le serveur RétroBus Essonne ! Pense à consulter les règles et utilise /920 help pour découvrir les commandes.',
     autoRoleId: '',
   },
   logs: { enabled: true },
@@ -85,6 +85,7 @@ export const defaultBot920Configuration = {
     socialAlerts: { enabled: false },
     statisticsChannels: { enabled: false },
     music: { enabled: true },
+    randomEvents: { enabled: false, channelId: '' },
     automod: { enabled: false, antiSpam: true, antiRaid: true, blockedLinks: false, alertChannelId: '', spamMessageLimit: 6, spamWindowSeconds: 10, timeoutMinutes: 10, raidJoinLimit: 8, raidWindowSeconds: 60 },
   },
 };
@@ -340,6 +341,7 @@ export function normalizeBot920Configuration(value = {}) {
       socialAlerts: plugin(sourcePlugins.socialAlerts, defaultBot920Configuration.plugins.socialAlerts),
       statisticsChannels: plugin(sourcePlugins.statisticsChannels, defaultBot920Configuration.plugins.statisticsChannels),
       music: plugin(sourcePlugins.music, defaultBot920Configuration.plugins.music),
+      randomEvents: { enabled: sourcePlugins.randomEvents?.enabled === true, channelId: snowflake(sourcePlugins.randomEvents?.channelId) },
       automod: {
         enabled: sourceAutomod.enabled === true,
         antiSpam: sourceAutomod.antiSpam !== false,
