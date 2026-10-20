@@ -147,6 +147,7 @@ model DiscordGuild {
   suggestions  DiscordSuggestion[]
   userCards    DiscordUserCard[]
   cardDrawQuotas DiscordCardDrawQuota[]
+  moderatorRoles DiscordGuildModeratorRole[]
 
   @@index([lastSyncedAt])
 }
@@ -414,6 +415,17 @@ model DiscordCardDrawQuota {
 
   @@unique([guildId, userId])
   @@index([resetAt])
+}
+
+model DiscordGuildModeratorRole {
+  id        String       @id @default(cuid())
+  guildId   String
+  roleId    String
+  createdAt DateTime     @default(now())
+  guild     DiscordGuild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@unique([guildId, roleId])
+  @@index([guildId])
 }
 
 model Event {

@@ -325,6 +325,68 @@ router.get('/guilds/:guildId/leaderboard', async (request, response) => {
   }
 });
 
+router.get('/guilds/:guildId/moderator-roles', async (request, response) => {
+  const { guildId } = request.params;
+  if (!isSnowflake(guildId)) return response.status(400).json({ error: 'Invalid guild ID' });
+  try {
+    const prisma = request.app.locals.prisma;
+    if (!prisma?.discordGuildModeratorRole) return response.status(503).json({ error: 'Moderator role storage is unavailable' });
+    const assignments = await prisma.discordGuildModeratorRole.findMany({ where: { guildId }, orderBy: { createdAt: 'asc' } });
+    const inventory = await prisma.discordGuildRole.findMany({ where: { guildId, id: { in: assignments.map((entry) => entry.roleId) } }, select: { id: true, name: true, position: true } });
+    const roleById = new Map(inventory.map((role) => [role.id, role]));
+    response.json({ roles: assignments.map((entry) => ({ roleId: entry.roleId, role: roleById.get(entry.roleId) ?? null, createdAt: entry.createdAt })) });
+  } catch (error) {
+    console.error('Unable to load Bot 920 moderator roles:', error);
+    response.status(500).json({ error: 'Unable to load moderator roles' });
+  }
+});
+
+router.post('/guilds/:guildId/moderator-roles', async (request, response) => {
+  const { guildId } = request.params;
+  const roleId = String(request.body?.roleId || '');
+  const actorId = String(request.body?.actorId || '');
+  if (!isSnowflake(guildId) || !isSnowflake(roleId) || !isSnowflake(actorId)) return response.status(400).json({ error: 'Invalid moderator role payload' });
+  try {
+    const prisma = request.app.locals.prisma;
+    const role = await prisma.discordGuildRole.findFirst({ where: { id: roleId, guildId }, select: { id: true, name: true, managed: true } });
+    if (!role || role.managed) return response.status(400).json({ error: 'Role is not an assignable role in this guild' });
+    const assignment = await prisma.discordGuildModeratorRole.upsert({
+      where: { guildId_roleId: { guildId, roleId } },
+      create: { guildId, roleId },
+      update: {},
+    });
+    await prisma.bot920PanelAuditEvent.create({ data: {
+      guildId, actorId, actorName: String(request.body?.actorName || '').trim().slice(0, 100) || null,
+      module: 'moderation', action: 'moderator-role:add', beforeData: null,
+      afterData: { roleId, roleName: role.name },
+    } });
+    response.status(201).json({ role: { roleId, name: role.name }, createdAt: assignment.createdAt });
+  } catch (error) {
+    console.error('Unable to add Bot 920 moderator role:', error);
+    response.status(500).json({ error: 'Unable to add moderator role' });
+  }
+});
+
+router.delete('/guilds/:guildId/moderator-roles/:roleId', async (request, response) => {
+  const { guildId, roleId } = request.params;
+  const actorId = String(request.query.actorId || '');
+  if (!isSnowflake(guildId) || !isSnowflake(roleId) || !isSnowflake(actorId)) return response.status(400).json({ error: 'Invalid moderator role identity' });
+  try {
+    const prisma = request.app.locals.prisma;
+    const role = await prisma.discordGuildRole.findFirst({ where: { id: roleId, guildId }, select: { name: true } });
+    const assignment = await prisma.discordGuildModeratorRole.deleteMany({ where: { guildId, roleId } });
+    if (!assignment.count) return response.status(404).json({ error: 'Moderator role assignment not found' });
+    await prisma.bot920PanelAuditEvent.create({ data: {
+      guildId, actorId, actorName: String(request.query.actorName || '').trim().slice(0, 100) || null,
+      module: 'moderation', action: 'moderator-role:remove', beforeData: { roleId, roleName: role?.name ?? null }, afterData: null,
+    } });
+    response.json({ removed: true });
+  } catch (error) {
+    console.error('Unable to remove Bot 920 moderator role:', error);
+    response.status(500).json({ error: 'Unable to remove moderator role' });
+  }
+});
+
 router.post('/guilds/:guildId/collection/draw', async (request, response) => {
   const { guildId } = request.params;
   const { userId } = request.body ?? {};
