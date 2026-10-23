@@ -1,7 +1,7 @@
 import { Router } from 'express';
 
 const CONFIGURATION_ID = 'default';
-const COMMANDS = ['ping', 'about', 'help', 'updatelog', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'collection', 'ecouter', 'classement', 'sondage', 'suggestion', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
+const COMMANDS = ['ping', 'about', 'help', 'updatelog', 'anniversaire', 'phrase', 'bus', 'panne', 'destin', 'controle', 'diagnostic', 'tirage', 'collection', 'ecouter', 'classement', 'sondage', 'suggestion', 'jeremonte', 'kick', 'mute', 'unmute', 'ban', 'tempban', 'unban'];
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const WELCOME_MESSAGE_MAX_LENGTH = 1_800;
 const BOT920_HEALTH_TIMEOUT_MS = 4_000;
@@ -489,6 +489,71 @@ export function createBot920ConfigRouter() {
       if (isGuildFoundationStorageUnavailable(error) || error?.code === 'P2021' || error?.code === 'P2022') return response.status(503).json({ error: 'L’historique de modération est indisponible.' });
       console.error('Unable to load Bot 920 moderation cases:', error);
       response.status(500).json({ error: 'Impossible de charger l’historique de modération.' });
+    }
+  });
+
+  router.get('/guilds/:guildId/feedback', async (request, response) => {
+    if (!isSnowflake(request.params.guildId)) return response.status(400).json({ error: 'Identifiant de serveur Discord invalide.' });
+    const page = Math.max(1, Number.parseInt(request.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(request.query.pageSize, 10) || 25));
+    const status = String(request.query.status || '').trim().toUpperCase();
+    const type = String(request.query.type || '').trim().toUpperCase();
+    const search = String(request.query.search || '').trim().slice(0, 100);
+    if (status && !['OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'].includes(status)) return response.status(400).json({ error: 'Statut de remontée invalide.' });
+    if (type && !['SUGGESTION', 'INCIDENT'].includes(type)) return response.status(400).json({ error: 'Type de remontée invalide.' });
+    try {
+      const prisma = request.app.locals.prisma;
+      if (!prisma?.discordGuildFeedback) return response.status(503).json({ error: 'Le stockage #JeRemonte est indisponible.' });
+      const where = {
+        guildId: request.params.guildId,
+        ...(status ? { status } : {}),
+        ...(type ? { type } : {}),
+        ...(search ? { OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { authorName: { contains: search, mode: 'insensitive' } },
+        ] } : {}),
+      };
+      const [items, total] = await Promise.all([
+        prisma.discordGuildFeedback.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+        prisma.discordGuildFeedback.count({ where }),
+      ]);
+      response.json({ items, page, pageSize, total });
+    } catch (error) {
+      console.error('Unable to load Bot 920 #JeRemonte:', error);
+      response.status(500).json({ error: 'Impossible de charger les remontées.' });
+    }
+  });
+
+  router.patch('/guilds/:guildId/feedback/:feedbackId', async (request, response) => {
+    if (!isSnowflake(request.params.guildId) || !/^[a-z0-9]{12,32}$/i.test(request.params.feedbackId)) return response.status(400).json({ error: 'Identifiant de remontée invalide.' });
+    const status = String(request.body?.status || '').trim().toUpperCase();
+    const adminNote = request.body?.adminNote === undefined ? undefined : String(request.body.adminNote).trim().slice(0, 1_000);
+    if (status && !['OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'].includes(status)) return response.status(400).json({ error: 'Statut de remontée invalide.' });
+    if (!status && adminNote === undefined) return response.status(400).json({ error: 'Aucune modification à enregistrer.' });
+    try {
+      const prisma = request.app.locals.prisma;
+      if (!prisma?.discordGuildFeedback) return response.status(503).json({ error: 'Le stockage #JeRemonte est indisponible.' });
+      const before = await prisma.discordGuildFeedback.findFirst({ where: { id: request.params.feedbackId, guildId: request.params.guildId } });
+      if (!before) return response.status(404).json({ error: 'Remontée introuvable.' });
+      const data = {
+        ...(status ? { status, resolvedAt: status === 'RESOLVED' || status === 'REJECTED' ? new Date() : null } : {}),
+        ...(adminNote === undefined ? {} : { adminNote: adminNote || null }),
+      };
+      const item = await prisma.$transaction(async (transaction) => {
+        const updated = await transaction.discordGuildFeedback.update({ where: { id: before.id }, data });
+        await transaction.bot920PanelAuditEvent.create({ data: {
+          guildId: before.guildId,
+          actorId: request.user?.id ?? null,
+          actorName: request.user?.username ?? request.user?.email ?? null,
+          module: 'jeremonte', action: 'feedback.update', beforeData: before, afterData: updated,
+        } });
+        return updated;
+      });
+      response.json({ item });
+    } catch (error) {
+      console.error('Unable to update Bot 920 #JeRemonte item:', error);
+      response.status(500).json({ error: 'Impossible de mettre à jour la remontée.' });
     }
   });
 

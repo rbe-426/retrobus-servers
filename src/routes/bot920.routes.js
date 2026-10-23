@@ -387,6 +387,30 @@ router.delete('/guilds/:guildId/moderator-roles/:roleId', async (request, respon
   }
 });
 
+router.post('/guilds/:guildId/feedback', async (request, response) => {
+  const { guildId } = request.params;
+  const authorId = String(request.body?.authorId || '');
+  const authorName = String(request.body?.authorName || '').trim().slice(0, 100);
+  const type = String(request.body?.type || '').trim().toUpperCase();
+  const title = String(request.body?.title || '').trim();
+  const description = String(request.body?.description || '').trim();
+  if (!isSnowflake(guildId) || !isSnowflake(authorId)
+    || !authorName || !['SUGGESTION', 'INCIDENT'].includes(type)
+    || title.length < 4 || title.length > 120
+    || description.length < 10 || description.length > 2_000) {
+    return response.status(400).json({ error: 'Invalid #JeRemonte payload' });
+  }
+  try {
+    const feedback = await request.app.locals.prisma.discordGuildFeedback.create({ data: {
+      guildId, authorId, authorName, type, title, description,
+    }, select: { id: true, createdAt: true, status: true } });
+    response.status(201).json({ feedback });
+  } catch (error) {
+    console.error('Unable to record Bot 920 #JeRemonte:', error);
+    response.status(500).json({ error: 'Unable to record #JeRemonte' });
+  }
+});
+
 router.post('/guilds/:guildId/collection/draw', async (request, response) => {
   const { guildId } = request.params;
   const { userId } = request.body ?? {};
