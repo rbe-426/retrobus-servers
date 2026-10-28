@@ -12943,9 +12943,18 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
       date: req.body.date ? new Date(req.body.date) : new Date(),
       dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null,
       amount: Number(req.body.amount || 0),
-      taxRate: Number(req.body.taxRate || 20),
+      taxRate: Number(req.body.taxRate ?? 20),
       taxAmount: Number(req.body.taxAmount || 0),
       amountExcludingTax: Number(req.body.amountExcludingTax || 0),
+      eventId: req.body.eventId || null,
+      memberId: req.body.memberId || null,
+      retroRequestId: req.body.retroRequestId || null,
+      templateId: req.body.templateId || null,
+      pricingData: typeof req.body.pricingData === 'string'
+        ? req.body.pricingData
+        : (req.body.pricingData ? JSON.stringify(req.body.pricingData) : null),
+      htmlContent: req.body.htmlContent || null,
+      documentUrl: req.body.documentUrl || null,
       // Infos destinataire/client
       destinataireName: req.body.destinataireName || null,
       destinataireAdresse: req.body.destinataireAdresse || null,
@@ -13013,14 +13022,29 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
 // PUT /api/finance/documents/:id -> update document
 app.put('/api/finance/documents/:id', requireAuth, async (req, res) => {
   try {
+    const numOrUndef = (v) => (v === undefined || v === null || v === '' ? undefined : Number(v));
+    const dateOrUndef = (v) => (v === undefined ? undefined : (v ? new Date(v) : null));
     const updateData = {
       title: req.body.title,
       description: req.body.description,
       htmlContent: req.body.htmlContent,
-      amount: req.body.amount ? Number(req.body.amount) : undefined,
-      taxRate: req.body.taxRate ? Number(req.body.taxRate) : undefined,
-      taxAmount: req.body.taxAmount ? Number(req.body.taxAmount) : undefined,
-      amountExcludingTax: req.body.amountExcludingTax ? Number(req.body.amountExcludingTax) : undefined,
+      number: req.body.number,
+      date: dateOrUndef(req.body.date),
+      dueDate: dateOrUndef(req.body.dueDate),
+      eventId: req.body.eventId,
+      memberId: req.body.memberId,
+      templateId: req.body.templateId,
+      documentUrl: req.body.documentUrl,
+      internalNotes: req.body.internalNotes,
+      pricingData: req.body.pricingData === undefined
+        ? undefined
+        : (typeof req.body.pricingData === 'string' || req.body.pricingData === null
+          ? req.body.pricingData
+          : JSON.stringify(req.body.pricingData)),
+      amount: numOrUndef(req.body.amount),
+      taxRate: numOrUndef(req.body.taxRate),
+      taxAmount: numOrUndef(req.body.taxAmount),
+      amountExcludingTax: numOrUndef(req.body.amountExcludingTax),
       destinataireName: req.body.destinataireName,
       destinataireAdresse: req.body.destinataireAdresse,
       destinataireSociete: req.body.destinataireSociete,
@@ -13260,6 +13284,69 @@ app.delete('/api/quote-templates/:id', requireAuth, (req, res) => {
   state.quoteTemplates = state.quoteTemplates.filter(t => t.id !== req.params.id);
   debouncedSave();
   res.json({ ok: true });
+});
+
+// ===== CATALOGUE D'ARTICLES (devis/factures) =====
+const sanitizeArticle = (body = {}) => ({
+  name: String(body.name || '').trim(),
+  description: body.description ? String(body.description) : null,
+  category: body.category ? String(body.category).trim() : null,
+  unit: body.unit ? String(body.unit).trim() : 'unité',
+  unitPrice: Number(body.unitPrice) || 0,
+  isActive: body.isActive === undefined ? true : !!body.isActive
+});
+
+app.get('/api/finance/articles', requireAuth, async (req, res) => {
+  try {
+    const articles = await prisma.financeArticle.findMany({
+      orderBy: [{ category: 'asc' }, { name: 'asc' }]
+    });
+    res.json(articles);
+  } catch (e) {
+    console.error('❌ GET /api/finance/articles error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch articles', details: e.message });
+  }
+});
+
+app.post('/api/finance/articles', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizeArticle(req.body);
+    if (!data.name) return res.status(400).json({ error: 'name is required' });
+    const article = await prisma.financeArticle.create({
+      data: { id: uid(), updatedAt: new Date(), ...data }
+    });
+    res.status(201).json(article);
+  } catch (e) {
+    console.error('❌ POST /api/finance/articles error:', e.message);
+    res.status(500).json({ error: 'Failed to create article', details: e.message });
+  }
+});
+
+app.put('/api/finance/articles/:id', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizeArticle(req.body);
+    if (!data.name) return res.status(400).json({ error: 'name is required' });
+    const article = await prisma.financeArticle.update({
+      where: { id: req.params.id },
+      data: { ...data, updatedAt: new Date() }
+    });
+    res.json(article);
+  } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Article not found' });
+    console.error('❌ PUT /api/finance/articles/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to update article', details: e.message });
+  }
+});
+
+app.delete('/api/finance/articles/:id', requireAuth, async (req, res) => {
+  try {
+    await prisma.financeArticle.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Article not found' });
+    console.error('❌ DELETE /api/finance/articles/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to delete article', details: e.message });
+  }
 });
 
 // Devis Lines endpoints
