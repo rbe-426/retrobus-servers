@@ -13349,6 +13349,108 @@ app.delete('/api/finance/articles/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Calendrier : événements/rappels personnels + événements partagés (réservés à w.belaidi)
+const CALENDAR_ADMINS = ['w.belaidi'];
+const calendarOwnerId = (user) => String(user?.id || user?.username || user?.email || '');
+const isCalendarAdmin = (user) =>
+  [user?.username, user?.matricule, user?.id, user?.email]
+    .filter(Boolean)
+    .some((v) => CALENDAR_ADMINS.includes(String(v).toLowerCase()));
+
+const sanitizeCalendarEvent = (body = {}) => {
+  const startAt = new Date(body.startAt);
+  if (!String(body.title || '').trim() || Number.isNaN(startAt.getTime())) return null;
+  const endAt = body.endAt ? new Date(body.endAt) : null;
+  return {
+    title: String(body.title).trim().slice(0, 200),
+    description: body.description ? String(body.description).slice(0, 5000) : null,
+    startAt,
+    endAt: endAt && !Number.isNaN(endAt.getTime()) ? endAt : null,
+    allDay: body.allDay === undefined ? true : !!body.allDay,
+    kind: body.kind === 'REMINDER' ? 'REMINDER' : 'EVENT',
+    done: !!body.done
+  };
+};
+
+app.get('/api/calendar-events', requireAuth, async (req, res) => {
+  try {
+    const events = await prisma.calendarEvent.findMany({
+      where: { OR: [{ shared: true }, { ownerId: calendarOwnerId(req.user) }] },
+      orderBy: { startAt: 'asc' }
+    });
+    res.json(events);
+  } catch (e) {
+    console.error('❌ GET /api/calendar-events error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
+
+app.post('/api/calendar-events', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizeCalendarEvent(req.body);
+    if (!data) return res.status(400).json({ error: 'title and valid startAt are required' });
+    const shared = !!req.body.shared;
+    if (shared && !isCalendarAdmin(req.user)) {
+      return res.status(403).json({ error: 'Seul un administrateur peut créer un événement partagé' });
+    }
+    const event = await prisma.calendarEvent.create({
+      data: {
+        id: uid(),
+        ...data,
+        shared,
+        ownerId: calendarOwnerId(req.user),
+        ownerName: [req.user.prenom, req.user.nom].filter(Boolean).join(' ') || req.user.username || req.user.email || null,
+        updatedAt: new Date()
+      }
+    });
+    res.status(201).json(event);
+  } catch (e) {
+    console.error('❌ POST /api/calendar-events error:', e.message);
+    res.status(500).json({ error: 'Failed to create calendar event' });
+  }
+});
+
+const loadEditableCalendarEvent = async (req, res) => {
+  const existing = await prisma.calendarEvent.findUnique({ where: { id: req.params.id } });
+  if (!existing) { res.status(404).json({ error: 'Event not found' }); return null; }
+  const canEdit = existing.shared ? isCalendarAdmin(req.user) : existing.ownerId === calendarOwnerId(req.user);
+  if (!canEdit) { res.status(403).json({ error: 'Forbidden' }); return null; }
+  return existing;
+};
+
+app.put('/api/calendar-events/:id', requireAuth, async (req, res) => {
+  try {
+    const existing = await loadEditableCalendarEvent(req, res);
+    if (!existing) return;
+    const data = sanitizeCalendarEvent({ ...existing, ...req.body });
+    if (!data) return res.status(400).json({ error: 'title and valid startAt are required' });
+    const event = await prisma.calendarEvent.update({
+      where: { id: existing.id },
+      data: { ...data, updatedAt: new Date() }
+    });
+    res.json(event);
+  } catch (e) {
+    console.error('❌ PUT /api/calendar-events error:', e.message);
+    res.status(500).json({ error: 'Failed to update calendar event' });
+  }
+});
+
+app.delete('/api/calendar-events/:id', requireAuth, async (req, res) => {
+  try {
+    const existing = await loadEditableCalendarEvent(req, res);
+    if (!existing) return;
+    await prisma.calendarEvent.delete({ where: { id: existing.id } });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('❌ DELETE /api/calendar-events error:', e.message);
+    res.status(500).json({ error: 'Failed to delete calendar event' });
+  }
+});
+
+app.get('/api/calendar-events/permissions', requireAuth, (req, res) => {
+  res.json({ canShare: isCalendarAdmin(req.user) });
+});
+
 // Devis Lines endpoints
 app.get('/api/devis-lines/:devisId', requireAuth, async (req, res) => {
   try {

@@ -542,6 +542,26 @@ model FinanceArticle {
   @@index([isActive])
 }
 
+model CalendarEvent {
+  id          String    @id
+  title       String
+  description String?
+  startAt     DateTime
+  endAt       DateTime?
+  allDay      Boolean   @default(true)
+  kind        String    @default("EVENT")
+  shared      Boolean   @default(false)
+  ownerId     String
+  ownerName   String?
+  done        Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+
+  @@index([startAt])
+  @@index([ownerId])
+  @@index([shared])
+}
+
 model QuoteTemplate {
   id           String   @id
   name         String
