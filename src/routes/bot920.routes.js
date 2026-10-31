@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import express from 'express';
 import { normalizeBot920Configuration } from './bot920Config.routes.js';
+import { formatFeedbackReference, withFeedbackReferences } from './feedbackReference.js';
 
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const DAILY_CARD_DRAW_LIMIT = 3;
@@ -401,13 +402,32 @@ router.post('/guilds/:guildId/feedback', async (request, response) => {
     return response.status(400).json({ error: 'Invalid #JeRemonte payload' });
   }
   try {
-    const feedback = await request.app.locals.prisma.discordGuildFeedback.create({ data: {
+    const prisma = request.app.locals.prisma;
+    const previous = await prisma.discordGuildFeedback.count({ where: { guildId, authorId } });
+    const created = await prisma.discordGuildFeedback.create({ data: {
       guildId, authorId, authorName, type, title, description,
     }, select: { id: true, createdAt: true, status: true } });
-    response.status(201).json({ feedback });
+    response.status(201).json({ feedback: { ...created, reference: formatFeedbackReference(authorName, previous + 1) } });
   } catch (error) {
     console.error('Unable to record Bot 920 #JeRemonte:', error);
     response.status(500).json({ error: 'Unable to record #JeRemonte' });
+  }
+});
+
+router.get('/guilds/:guildId/feedback/mine', async (request, response) => {
+  const { guildId } = request.params;
+  const authorId = String(request.query.authorId || '');
+  if (!isSnowflake(guildId) || !isSnowflake(authorId)) return response.status(400).json({ error: 'Invalid #JeRemonte author' });
+  try {
+    const rows = await request.app.locals.prisma.discordGuildFeedback.findMany({
+      where: { guildId, authorId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, authorName: true, type: true, title: true, status: true, adminNote: true, createdAt: true, updatedAt: true, resolvedAt: true },
+    });
+    response.json({ items: withFeedbackReferences(rows).reverse() });
+  } catch (error) {
+    console.error('Unable to list Bot 920 #JeRemonte tickets:', error);
+    response.status(500).json({ error: 'Unable to list #JeRemonte tickets' });
   }
 });
 

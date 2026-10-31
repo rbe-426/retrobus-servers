@@ -1213,6 +1213,8 @@ model financial_documents {
   paymentHistory          String         @default("[]")
   // Snapshot JSON de l'éditeur (lignes, remises, prépa tarifaire, trajet) réutilisé pour la facture
   pricingData             String?
+  archived                Boolean        @default(false)
+  archivedAt              DateTime?
   // Infos destinataire/client
   destinataireName        String?
   destinataireAdresse     String?
@@ -1228,6 +1230,7 @@ model financial_documents {
   @@index([quoteStatus])
   @@index([retroRequestId])
   @@index([type])
+  @@index([archived])
 }
 
 model gps_logs {

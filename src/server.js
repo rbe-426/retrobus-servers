@@ -13104,10 +13104,38 @@ app.delete('/api/finance/documents/:id', requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('❌ DELETE /api/finance/documents/:id error:', e.message);
-    // Fallback
-    state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.id);
+    if (e.code === 'P2025') {
+      state.financialDocuments = state.financialDocuments.filter(d => d.id !== req.params.id);
+      return res.status(404).json({ success: false, error: 'Document introuvable' });
+    }
+    res.status(500).json({ success: false, error: 'Impossible de supprimer le document', details: e.message });
+  }
+});
+
+// PATCH /api/finance/documents/:id/archive -> archive / désarchive un document
+app.patch('/api/finance/documents/:id/archive', requireAuth, async (req, res) => {
+  try {
+    const archived = req.body?.archived !== false;
+    const updated = await prisma.financial_documents.update({
+      where: { id: req.params.id },
+      data: { archived, archivedAt: archived ? new Date() : null }
+    });
+    const result = {
+      ...updated,
+      status: updated.type === 'INVOICE' ? (updated.invoiceStatus || 'DRAFT') : (updated.quoteStatus || 'DRAFT'),
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+      date: updated.date.toISOString(),
+      dueDate: updated.dueDate?.toISOString?.() || null,
+      archivedAt: updated.archivedAt?.toISOString?.() || null
+    };
+    state.financialDocuments = state.financialDocuments.map(d => d.id === req.params.id ? result : d);
     debouncedSave();
-    res.json({ ok: true });
+    res.json(result);
+  } catch (e) {
+    console.error('❌ PATCH /api/finance/documents/:id/archive error:', e.message);
+    if (e.code === 'P2025') return res.status(404).json({ success: false, error: 'Document introuvable' });
+    res.status(500).json({ success: false, error: "Impossible d'archiver le document", details: e.message });
   }
 });
 
