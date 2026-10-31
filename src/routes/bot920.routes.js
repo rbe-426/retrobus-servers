@@ -4,7 +4,7 @@ import { normalizeBot920Configuration } from './bot920Config.routes.js';
 import { formatFeedbackReference, withFeedbackReferences } from './feedbackReference.js';
 
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
-const DAILY_CARD_DRAW_LIMIT = 3;
+const DAILY_CARD_DRAW_LIMIT = 5;
 const router = express.Router();
 
 function hasValidServiceToken(request) {
