@@ -13389,6 +13389,11 @@ const sanitizeCalendarEvent = (body = {}) => {
   const startAt = new Date(body.startAt);
   if (!String(body.title || '').trim() || Number.isNaN(startAt.getTime())) return null;
   const endAt = body.endAt ? new Date(body.endAt) : null;
+  const recurrence = ['NONE', 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(String(body.recurrence || 'NONE').toUpperCase())
+    ? String(body.recurrence || 'NONE').toUpperCase()
+    : 'NONE';
+  const recurrenceEndAt = body.recurrenceEndAt ? new Date(body.recurrenceEndAt) : null;
+  if (recurrenceEndAt && (Number.isNaN(recurrenceEndAt.getTime()) || recurrenceEndAt < startAt)) return null;
   return {
     title: String(body.title).trim().slice(0, 200),
     description: body.description ? String(body.description).slice(0, 5000) : null,
@@ -13396,7 +13401,9 @@ const sanitizeCalendarEvent = (body = {}) => {
     endAt: endAt && !Number.isNaN(endAt.getTime()) ? endAt : null,
     allDay: body.allDay === undefined ? true : !!body.allDay,
     kind: body.kind === 'REMINDER' ? 'REMINDER' : 'EVENT',
-    done: !!body.done
+    done: !!body.done,
+    recurrence,
+    recurrenceEndAt: recurrence === 'NONE' ? null : recurrenceEndAt
   };
 };
 
@@ -13452,9 +13459,12 @@ app.put('/api/calendar-events/:id', requireAuth, async (req, res) => {
     if (!existing) return;
     const data = sanitizeCalendarEvent({ ...existing, ...req.body });
     if (!data) return res.status(400).json({ error: 'title and valid startAt are required' });
+    const shared = req.body.shared === undefined
+      ? existing.shared
+      : (isCalendarAdmin(req.user) ? !!req.body.shared : existing.shared);
     const event = await prisma.calendarEvent.update({
       where: { id: existing.id },
-      data: { ...data, updatedAt: new Date() }
+      data: { ...data, shared, updatedAt: new Date() }
     });
     res.json(event);
   } catch (e) {
