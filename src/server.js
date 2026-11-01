@@ -4637,11 +4637,80 @@ app.delete(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, requir
 
 app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
-    const profiles = await prisma.ineoVehicleProfile.findMany({ orderBy: { vehicleParc: 'asc' } });
-    res.json({ profiles });
+    const [profiles, trackers] = await Promise.all([
+      prisma.ineoVehicleProfile.findMany({ orderBy: { vehicleParc: 'asc' } }),
+      prisma.ineoVehicleTracker.findMany({ select: { vehicleParc: true, imei: true, deviceLabel: true } }),
+    ]);
+    const trackerByParc = new Map(trackers.map((tracker) => [tracker.vehicleParc, tracker]));
+    res.json({ profiles: profiles.map((profile) => ({ ...profile, imei: trackerByParc.get(profile.vehicleParc)?.imei || null, deviceLabel: trackerByParc.get(profile.vehicleParc)?.deviceLabel || null })) });
   } catch (error) {
     console.error('GET /api/ineo/vehicle-profiles:', error.message);
     res.status(500).json({ error: 'Impossible de charger les profils vehicules Inéo' });
+  }
+});
+
+// Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
+const UC_SERIAL_PLACEHOLDERS = new Set(['TOBEFILLEDBYO.E.M.', 'DEFAULTSTRING', 'SYSTEMSERIALNUMBER', 'NOTAVAILABLE', 'NOTAPPLICABLE', 'NONE', 'UNKNOWN', 'N/A', 'NA', '123456789', '0123456789']);
+const normalizeUcSerial = (value) => String(value || '').replace(/\s+/g, '').toUpperCase();
+const isValidUcSerial = (serial) => /^[A-Z0-9._\-/]{4,64}$/.test(serial) && !UC_SERIAL_PLACEHOLDERS.has(serial) && !/^(.)\1+$/.test(serial);
+
+const ucIdentifyHits = new Map();
+const isUcIdentifyRateLimited = (key) => {
+  const now = Date.now();
+  const entry = ucIdentifyHits.get(key);
+  if (!entry || entry.resetAt <= now) {
+    ucIdentifyHits.set(key, { count: 1, resetAt: now + 60_000 });
+    if (ucIdentifyHits.size > 5_000) for (const [hitKey, hit] of ucIdentifyHits) if (hit.resetAt <= now) ucIdentifyHits.delete(hitKey);
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > 20;
+};
+
+app.post('/api/ineo-rbe-desktop/identify', async (req, res) => {
+  if (isUcIdentifyRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
+    return res.status(429).json({ error: 'Trop de demandes, réessayez dans une minute.' });
+  }
+  const serial = normalizeUcSerial(req.body?.serial);
+  if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série UC invalide ou non exploitable.' });
+  const hostname = String(req.body?.hostname || '').trim().slice(0, 100) || null;
+  const appVersion = /^\d+(?:\.\d+){1,3}$/.test(String(req.body?.appVersion || '')) ? String(req.body.appVersion) : null;
+  try {
+    const now = new Date();
+    await prisma.ineoUcDevice.upsert({
+      where: { serial },
+      create: { serial, hostname, appVersion, firstSeenAt: now, lastSeenAt: now },
+      update: { hostname, appVersion, lastSeenAt: now },
+    });
+    const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, include: { vehicle: true } });
+    if (!profile) return res.json({ registered: false, serial });
+    const { vehicle } = profile;
+    res.json({
+      registered: true,
+      serial,
+      vehicle: { parc: vehicle.parc, immat: vehicle.immat || null, marque: vehicle.marque || null, modele: vehicle.modele || null },
+      profile: {
+        vehicleType: profile.vehicleType, maxSpeedKmh: profile.maxSpeedKmh, lengthM: profile.lengthM,
+        widthM: profile.widthM, heightM: profile.heightM, options: profile.options,
+      },
+    });
+  } catch (error) {
+    console.error('POST /api/ineo-rbe-desktop/identify:', error.message);
+    res.status(500).json({ error: 'Impossible d’identifier cet UC.' });
+  }
+});
+
+app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const [devices, profiles] = await Promise.all([
+      prisma.ineoUcDevice.findMany({ orderBy: { lastSeenAt: 'desc' }, take: 200 }),
+      prisma.ineoVehicleProfile.findMany({ where: { ucSerial: { not: null } }, select: { vehicleParc: true, ucSerial: true } }),
+    ]);
+    const parcBySerial = new Map(profiles.map((profile) => [profile.ucSerial, profile.vehicleParc]));
+    res.json({ devices: devices.map((device) => ({ ...device, vehicleParc: parcBySerial.get(device.serial) || null })) });
+  } catch (error) {
+    console.error('GET /api/ineo/uc-devices:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les UC détectés' });
   }
 });
 
@@ -4665,10 +4734,16 @@ app.put(['/ineo/vehicle-profiles/:parc', '/api/ineo/vehicle-profiles/:parc'], re
     if (Object.entries(profileData).some(([, value]) => typeof value === 'number' && (!Number.isFinite(value) || value < 0))) {
       return res.status(400).json({ error: 'Les valeurs numeriques du profil sont invalides' });
     }
+    if (req.body?.ucSerial !== undefined) {
+      const ucSerial = normalizeUcSerial(req.body.ucSerial);
+      if (ucSerial && !isValidUcSerial(ucSerial)) return res.status(400).json({ error: 'Numéro de série UC invalide ou non exploitable (valeur générique du constructeur ?)' });
+      profileData.ucSerial = ucSerial || null;
+    }
     const profile = await prisma.ineoVehicleProfile.upsert({ where: { vehicleParc }, create: { vehicleParc, ...profileData }, update: profileData });
-    await logIneoOperationsActivity(req, 'INEO_VEHICLE_PROFILE_SAVED', true, { vehicleParc });
+    await logIneoOperationsActivity(req, 'INEO_VEHICLE_PROFILE_SAVED', true, { vehicleParc, ucSerial: profileData.ucSerial });
     res.json({ profile });
   } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Ce numéro de série UC est déjà rattaché à un autre véhicule' });
     console.error('PUT /api/ineo/vehicle-profiles/:parc:', error.message);
     res.status(500).json({ error: 'Impossible d enregistrer le profil vehicule Inéo' });
   }
@@ -13375,6 +13450,38 @@ app.delete('/api/finance/articles/:id', requireAuth, async (req, res) => {
     console.error('❌ DELETE /api/finance/articles/:id error:', e.message);
     res.status(500).json({ error: 'Failed to delete article', details: e.message });
   }
+});
+
+// Poste embarqué Inéo RétroBus : manifeste de mise à jour public et vérifié par SHA-256.
+const compareDesktopVersions = (left, right) => {
+  const normalize = (version) => String(version).split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const leftParts = normalize(left);
+  const rightParts = normalize(right);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    if ((leftParts[index] || 0) !== (rightParts[index] || 0)) return (leftParts[index] || 0) - (rightParts[index] || 0);
+  }
+  return 0;
+};
+
+app.get('/api/ineo-rbe-desktop/update', (req, res) => {
+  const version = String(process.env.INEO_RBE_DESKTOP_VERSION || '').trim();
+  const installerUrl = String(process.env.INEO_RBE_DESKTOP_INSTALLER_URL || '').trim();
+  const sha256 = String(process.env.INEO_RBE_DESKTOP_INSTALLER_SHA256 || '').trim().toLowerCase();
+  const releaseNotes = String(process.env.INEO_RBE_DESKTOP_RELEASE_NOTES || '').trim().slice(0, 500);
+  const currentVersion = String(req.query.version || '').trim();
+  const isVersion = /^\d+(?:\.\d+){1,3}$/;
+  let validInstallerUrl = false;
+  try { validInstallerUrl = new URL(installerUrl).protocol === 'https:'; } catch { validInstallerUrl = false; }
+  if (!isVersion.test(version) || !isVersion.test(currentVersion) || !validInstallerUrl || !/^[a-f0-9]{64}$/.test(sha256)) {
+    return res.status(503).json({ error: 'Le manifeste de mise à jour Inéo RétroBus n’est pas configuré.' });
+  }
+  return res.json({
+    updateAvailable: compareDesktopVersions(version, currentVersion) > 0,
+    version,
+    installerUrl,
+    sha256,
+    releaseNotes,
+  });
 });
 
 // Calendrier : événements/rappels personnels + événements partagés (réservés à w.belaidi)

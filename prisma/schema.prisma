@@ -839,9 +839,21 @@ model IneoVehicleProfile {
   widthM      Float?
   heightM     Float?
   options     String?
+  ucSerial    String?  @unique
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   vehicle     Vehicle  @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
+}
+
+model IneoUcDevice {
+  id          String   @id @default(cuid())
+  serial      String   @unique
+  hostname    String?
+  appVersion  String?
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@index([lastSeenAt])
 }
 
 model IneoVehicleTracker {
