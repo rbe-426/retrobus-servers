@@ -122,8 +122,8 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
       });
     }
     await prisma.ineoPilotCommand.updateMany({
-      where: { pilotId: pilot.id, status: 'PENDING', createdAt: { lt: new Date(now.getTime() - COMMAND_EXPIRY_MS) } },
-      data: { status: 'FAILED', result: 'Expirée : le poste pilote était hors ligne.', completedAt: now },
+      where: { pilotId: pilot.id, status: { in: ['PENDING', 'DELIVERED'] }, createdAt: { lt: new Date(now.getTime() - COMMAND_EXPIRY_MS) } },
+      data: { status: 'FAILED', result: 'Expirée : le poste pilote n’a pas répondu.', completedAt: now },
     });
     const pending = await prisma.ineoPilotCommand.findMany({ where: { pilotId: pilot.id, status: 'PENDING' }, orderBy: { createdAt: 'asc' }, take: 10 });
     if (pending.length) {
