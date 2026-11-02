@@ -9,6 +9,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { body, validationResult, query } from 'express-validator';
 import validator from 'validator';
 import sanitizeHtml from 'sanitize-html';
+import { isGeneralLimiterExempt } from './lib/rateLimitPolicy.js';
 
 // ============================================================
 // 🛡️ HELMET - Headers de sécurité
@@ -54,6 +55,7 @@ export const helmetConfig = helmet({
 export const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
+  skip: isGeneralLimiterExempt,
   message: '❌ Trop de requêtes, réessayez plus tard',
   standardHeaders: true,
   legacyHeaders: false,

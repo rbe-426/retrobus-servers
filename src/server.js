@@ -909,10 +909,9 @@ console.log('🛡️  Sécurités activées: Helmet, Rate Limiting, Input Valida
 // 1. Helmet - Headers de sécurité (CSP, X-Frame-Options, etc)
 app.use(helmetConfig);
 
-// 2. Rate limiting global
-app.use(generalLimiter);
-
-// 3. Secure CORS configuration
+// 2. Secure CORS configuration
+// Placé AVANT le limiteur de débit : une réponse 429 doit porter les en-têtes CORS, sinon le navigateur l'affiche
+// comme une erreur CORS et masque la vraie cause. Les requêtes préalables (OPTIONS) ne consomment ainsi plus de quota.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   const isDev = process.env.NODE_ENV !== 'production';
@@ -947,6 +946,9 @@ app.use((req, res, next) => {
   console.log(`📨 ${req.method} ${req.path} from ${origin}`);
   next();
 });
+
+// 3. Rate limiting global (100 requêtes / 15 min / IP ; voir lib/rateLimitPolicy.js pour les exceptions)
+app.use(generalLimiter);
 
 // Middleware JSON - Accept large payloads for BASE64 images (increased for vehicle galleries)
 app.use(express.json({ limit: '100mb' }));
@@ -4672,6 +4674,14 @@ const createDesktopRateLimiter = (limitPerMinute) => {
 const isUcIdentifyRateLimited = createDesktopRateLimiter(20);
 // Le logiciel interroge l'API toutes les 15 s (poste pilote) à 60 s : on laisse de la marge.
 const isUcSyncRateLimited = createDesktopRateLimiter(90);
+// Ces routes sont exemptées du quota global (lib/rateLimitPolicy.js) : ce plafond par IP les protège à la place.
+const isDesktopRateLimited = createDesktopRateLimiter(600);
+app.use('/api/ineo-rbe-desktop', (req, res, next) => {
+  if (isDesktopRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
+    return res.status(429).json({ error: 'Trop de demandes, réessayez dans une minute.' });
+  }
+  next();
+});
 
 const desktopSyncHandler = (isRateLimited) => async (req, res) => {
   if (isRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
