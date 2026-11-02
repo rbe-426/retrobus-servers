@@ -871,6 +871,20 @@ model IneoMedia {
   createdAt DateTime @default(now())
 }
 
+model IneoDesktopRelease {
+  id        String   @id @default(cuid())
+  version   String   @unique
+  fileName  String
+  size      Int
+  sha256    String
+  notes     String?
+  data      Bytes
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 model IneoScreenProfile {
   id              String               @id @default(cuid())
   name            String               @unique

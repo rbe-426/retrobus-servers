@@ -24,6 +24,36 @@ export const isValidUcSerial = (serial) => /^[A-Z0-9._\-/]{4,64}$/.test(serial) 
 
 export const newMediaId = () => crypto.randomBytes(16).toString('hex');
 
+export const MAX_INSTALLER_BYTES = 60 * 1024 * 1024;
+export const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+
+// Un installateur Windows est un exécutable PE : il commence par « MZ ». Refuse les fichiers manifestement d'un autre type.
+export const isWindowsExecutable = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 1024 && buffer[0] === 0x4d && buffer[1] === 0x5a;
+
+export function validateDesktopReleaseInput(body = {}) {
+  const version = String(body.version || '').trim();
+  if (!RELEASE_VERSION_PATTERN.test(version)) return { error: 'La version doit être au format 1.0.2.' };
+  const notes = String(body.notes || '').trim().slice(0, 500) || null;
+  const base64 = String(body.dataBase64 || '');
+  if (!base64 || !/^[A-Za-z0-9+/=\s]+$/.test(base64)) return { error: 'Fichier invalide.' };
+  const buffer = Buffer.from(base64, 'base64');
+  if (buffer.length > MAX_INSTALLER_BYTES) return { error: `L’installateur doit faire moins de ${MAX_INSTALLER_BYTES / 1024 / 1024} Mo.`, status: 413 };
+  if (!isWindowsExecutable(buffer)) return { error: 'Ce fichier n’est pas un installateur Windows (.exe).' };
+  const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+  return { value: { version, notes, buffer, sha256, size: buffer.length, fileName: `Ineo-Retrobus-Setup-${version}.exe` } };
+}
+
+// Compare deux versions « a.b.c » : positif si left est plus récente.
+export const compareVersions = (left, right) => {
+  const parse = (version) => String(version).split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const [leftParts, rightParts] = [parse(left), parse(right)];
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (difference) return difference;
+  }
+  return 0;
+};
+
 export const detectImageMime = (buffer) => {
   if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
   if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';

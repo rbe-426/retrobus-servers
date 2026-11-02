@@ -4653,8 +4653,8 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
 import {
-  MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, detectImageMime, handleDesktopSync,
-  isValidUcSerial, newMediaId, normalizeUcSerial, serializeScreenProfile, validateScreenProfileInput,
+  MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, compareVersions, detectImageMime, handleDesktopSync,
+  isValidUcSerial, newMediaId, normalizeUcSerial, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from './lib/ineoDesktop.js';
 
 const createDesktopRateLimiter = (limitPerMinute) => {
@@ -4749,6 +4749,81 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
   } catch (error) {
     console.error('GET /api/ineo/uc-devices:', error.message);
     res.status(500).json({ error: 'Impossible de charger les UC détectés' });
+  }
+});
+
+// Installateur du logiciel Inéo RétroBus (UC) : importé ici puis téléchargé depuis la page Inéo RétroBus de l'URBEX.
+const presentDesktopRelease = (release) => ({
+  id: release.id, version: release.version, fileName: release.fileName, size: release.size, sha256: release.sha256,
+  notes: release.notes, createdBy: release.createdBy, createdAt: release.createdAt,
+});
+const DESKTOP_RELEASE_LIST_LIMIT = 20;
+
+app.get(['/ineo/desktop-releases', '/api/ineo/desktop-releases'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    // Le contenu binaire n'est jamais chargé pour la liste.
+    const releases = await prisma.ineoDesktopRelease.findMany({
+      orderBy: { createdAt: 'desc' }, take: DESKTOP_RELEASE_LIST_LIMIT,
+      select: { id: true, version: true, fileName: true, size: true, sha256: true, notes: true, createdBy: true, createdAt: true },
+    });
+    const sorted = [...releases].sort((left, right) => compareVersions(right.version, left.version));
+    res.json({ releases: sorted.map(presentDesktopRelease), latestId: sorted[0]?.id || null });
+  } catch (error) {
+    console.error('GET /api/ineo/desktop-releases:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les installateurs' });
+  }
+});
+
+app.post(['/ineo/desktop-releases', '/api/ineo/desktop-releases'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const { value, error, status } = validateDesktopReleaseInput(req.body);
+  if (error) return res.status(status || 400).json({ error });
+  try {
+    const release = await prisma.ineoDesktopRelease.create({
+      data: {
+        version: value.version, fileName: value.fileName, size: value.size, sha256: value.sha256, notes: value.notes,
+        data: value.buffer, createdBy: req.user?.email || null,
+      },
+      select: { id: true, version: true, fileName: true, size: true, sha256: true, notes: true, createdBy: true, createdAt: true },
+    });
+    await logIneoOperationsActivity(req, 'INEO_DESKTOP_RELEASE_UPLOADED', true, { version: value.version, size: value.size, sha256: value.sha256 });
+    res.status(201).json({ release: presentDesktopRelease(release) });
+  } catch (saveError) {
+    if (saveError.code === 'P2002') return res.status(409).json({ error: `La version ${value.version} existe déjà : supprimez-la ou choisissez un nouveau numéro.` });
+    console.error('POST /api/ineo/desktop-releases:', saveError.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer l’installateur' });
+  }
+});
+
+app.get(['/ineo/desktop-releases/:id/download', '/api/ineo/desktop-releases/:id/download'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const release = await prisma.ineoDesktopRelease.findUnique({ where: { id: String(req.params.id || '') } });
+    if (!release) return res.status(404).json({ error: 'Installateur introuvable.' });
+    await logIneoOperationsActivity(req, 'INEO_DESKTOP_RELEASE_DOWNLOADED', true, { version: release.version });
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(release.size),
+      'Content-Disposition': `attachment; filename="${release.fileName}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'X-Installer-Sha256': release.sha256,
+      'Cache-Control': 'private, no-store',
+      'Access-Control-Expose-Headers': 'Content-Disposition, X-Installer-Sha256',
+    });
+    res.send(Buffer.from(release.data));
+  } catch (error) {
+    console.error('GET /api/ineo/desktop-releases/:id/download:', error.message);
+    res.status(500).json({ error: 'Impossible de télécharger l’installateur' });
+  }
+});
+
+app.delete(['/ineo/desktop-releases/:id', '/api/ineo/desktop-releases/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const release = await prisma.ineoDesktopRelease.delete({ where: { id: String(req.params.id || '') }, select: { version: true } });
+    await logIneoOperationsActivity(req, 'INEO_DESKTOP_RELEASE_DELETED', true, { version: release.version });
+    res.json({ ok: true });
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Installateur introuvable.' });
+    console.error('DELETE /api/ineo/desktop-releases/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer l’installateur' });
   }
 });
 

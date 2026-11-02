@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import test from 'node:test';
 import {
-  detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, serializeScreenProfile, validateScreenProfileInput,
+  compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from '../src/lib/ineoDesktop.js';
 
 const mediaA = newMediaId();
@@ -61,6 +62,30 @@ test('revision is stable, ordered by sortOrder and changes with content', () => 
 test('image detection uses magic bytes', () => {
   assert.equal(detectImageMime(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(8)])), 'image/png');
   assert.equal(detectImageMime(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')), null);
+});
+
+test('desktop release validation accepts a Windows executable and computes its hash', () => {
+  const exe = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(2048, 1)]);
+  const { value } = validateDesktopReleaseInput({ version: ' 1.0.2 ', notes: ' Correctifs ', dataBase64: exe.toString('base64') });
+  assert.equal(value.version, '1.0.2');
+  assert.equal(value.fileName, 'Ineo-Retrobus-Setup-1.0.2.exe');
+  assert.equal(value.notes, 'Correctifs');
+  assert.equal(value.size, exe.length);
+  assert.equal(value.sha256, crypto.createHash('sha256').update(exe).digest('hex'));
+});
+
+test('desktop release validation rejects bad versions and non-executables', () => {
+  const exe = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(2048, 1)]).toString('base64');
+  for (const version of ['', '1.0', 'v1.0.2', '1.0.2.0', '../1.0.2']) assert.ok(validateDesktopReleaseInput({ version, dataBase64: exe }).error, version);
+  assert.ok(validateDesktopReleaseInput({ version: '1.0.2', dataBase64: Buffer.from('#!/bin/sh\n'.repeat(200)).toString('base64') }).error);
+  assert.ok(validateDesktopReleaseInput({ version: '1.0.2', dataBase64: '' }).error);
+  assert.ok(validateDesktopReleaseInput({ version: '1.0.2', dataBase64: 'not base64 !!' }).error);
+});
+
+test('version comparison orders releases numerically', () => {
+  assert.ok(compareVersions('1.0.10', '1.0.9') > 0);
+  assert.ok(compareVersions('1.1.0', '1.0.99') > 0);
+  assert.equal(compareVersions('2.0.0', '2.0.0'), 0);
 });
 
 test('sync rejects an unusable serial', async () => {
