@@ -54,6 +54,57 @@ export const compareVersions = (left, right) => {
   return 0;
 };
 
+export const DESKTOP_INSTALLER_ID_PATTERN = /^[a-z0-9]{20,32}$/;
+const VERSION_PATTERN = /^\d+(?:\.\d+){1,3}$/;
+
+// Manifeste de mise à jour du logiciel embarqué. Deux sources possibles :
+// - les variables INEO_RBE_DESKTOP_* (installateur hébergé ailleurs, ex. GitHub Release) ;
+// - l'installateur mis en ligne dans l'URBEX, servi par cette API (seule adresse joignable depuis un Windows ancien sans TLS 1.2).
+// La version la plus récente l'emporte ; à version égale, l'installateur de l'URBEX est préféré.
+export function buildUpdateManifest({ env = {}, release = null, currentVersion, baseUrl }) {
+  if (!VERSION_PATTERN.test(String(currentVersion || ''))) return { status: 400, payload: { error: 'Version installée invalide.' } };
+
+  const envVersion = String(env.version || '').trim();
+  const envUrl = String(env.installerUrl || '').trim();
+  const envSha = String(env.sha256 || '').trim().toLowerCase();
+  const envTouched = Boolean(envVersion || envUrl || envSha);
+  let envUrlIsHttps = false;
+  try { envUrlIsHttps = new URL(envUrl).protocol === 'https:'; } catch { envUrlIsHttps = false; }
+  const envComplete = VERSION_PATTERN.test(envVersion) && envUrlIsHttps && /^[a-f0-9]{64}$/.test(envSha);
+
+  const candidates = [];
+  if (release) {
+    candidates.push({
+      version: release.version, sha256: release.sha256, releaseNotes: release.notes || '',
+      installerUrl: `${baseUrl}/api/ineo-rbe-desktop/installer/${release.id}`, source: 'urbex',
+    });
+  }
+  if (envComplete) {
+    candidates.push({
+      version: envVersion, sha256: envSha, releaseNotes: String(env.releaseNotes || '').trim().slice(0, 500),
+      installerUrl: envUrl, source: 'env',
+    });
+  }
+
+  if (!candidates.length) {
+    // Variables partiellement renseignées : erreur explicite ; rien de publié : pas de mise à jour, ce n'est pas une erreur.
+    if (envTouched) return { status: 503, payload: { error: 'Le manifeste de mise à jour Inéo RétroBus est incomplet : vérifiez les variables INEO_RBE_DESKTOP_* sur Railway.' } };
+    return { status: 200, payload: { updateAvailable: false } };
+  }
+
+  const best = candidates.reduce((winner, candidate) => {
+    const difference = compareVersions(candidate.version, winner.version);
+    return difference > 0 || (difference === 0 && candidate.source === 'urbex') ? candidate : winner;
+  });
+  return {
+    status: 200,
+    payload: {
+      updateAvailable: compareVersions(best.version, currentVersion) > 0,
+      version: best.version, installerUrl: best.installerUrl, sha256: best.sha256, releaseNotes: best.releaseNotes,
+    },
+  };
+}
+
 export const detectImageMime = (buffer) => {
   if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
   if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';

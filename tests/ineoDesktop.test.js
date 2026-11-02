@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 import {
-  compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
+  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from '../src/lib/ineoDesktop.js';
 
 const mediaA = newMediaId();
@@ -86,6 +86,42 @@ test('version comparison orders releases numerically', () => {
   assert.ok(compareVersions('1.0.10', '1.0.9') > 0);
   assert.ok(compareVersions('1.1.0', '1.0.99') > 0);
   assert.equal(compareVersions('2.0.0', '2.0.0'), 0);
+});
+
+test('update manifest: nothing published means no update and no error', () => {
+  const { status, payload } = buildUpdateManifest({ env: {}, release: null, currentVersion: '1.0.0', baseUrl: 'https://api.example' });
+  assert.equal(status, 200);
+  assert.deepEqual(payload, { updateAvailable: false });
+});
+
+test('update manifest: rejects an invalid installed version and flags half-configured variables', () => {
+  assert.equal(buildUpdateManifest({ env: {}, release: null, currentVersion: 'abc', baseUrl: 'https://api.example' }).status, 400);
+  const partial = buildUpdateManifest({ env: { version: '1.0.1' }, release: null, currentVersion: '1.0.0', baseUrl: 'https://api.example' });
+  assert.equal(partial.status, 503);
+});
+
+test('update manifest: an uploaded installer is served by the API itself', () => {
+  const release = { id: 'ckabcdefghij0123456789', version: '1.1.0', sha256: 'a'.repeat(64), notes: 'Compatible XP' };
+  const { payload } = buildUpdateManifest({ env: {}, release, currentVersion: '1.0.2', baseUrl: 'https://api.example' });
+  assert.equal(payload.updateAvailable, true);
+  assert.equal(payload.installerUrl, 'https://api.example/api/ineo-rbe-desktop/installer/ckabcdefghij0123456789');
+  assert.equal(payload.sha256, 'a'.repeat(64));
+  assert.equal(payload.releaseNotes, 'Compatible XP');
+  assert.equal(buildUpdateManifest({ env: {}, release, currentVersion: '1.1.0', baseUrl: 'https://api.example' }).payload.updateAvailable, false);
+});
+
+test('update manifest: the newest source wins and a tie prefers the API-hosted installer', () => {
+  const env = { version: '1.0.1', installerUrl: 'https://github.com/x/y/Setup.exe', sha256: 'b'.repeat(64), releaseNotes: 'GitHub' };
+  const release = (version) => ({ id: 'ckabcdefghij0123456789', version, sha256: 'a'.repeat(64), notes: null });
+  assert.equal(buildUpdateManifest({ env, release: release('1.0.0'), currentVersion: '0.9.0', baseUrl: 'https://api.example' }).payload.installerUrl, env.installerUrl);
+  assert.match(buildUpdateManifest({ env, release: release('1.0.2'), currentVersion: '1.0.0', baseUrl: 'https://api.example' }).payload.installerUrl, /\/installer\//);
+  assert.match(buildUpdateManifest({ env, release: release('1.0.1'), currentVersion: '1.0.0', baseUrl: 'https://api.example' }).payload.installerUrl, /\/installer\//);
+  assert.equal(buildUpdateManifest({ env, release: null, currentVersion: '1.0.0', baseUrl: 'https://api.example' }).payload.installerUrl, env.installerUrl);
+});
+
+test('update manifest: an http installer URL in the variables is never offered', () => {
+  const env = { version: '1.0.1', installerUrl: 'http://insecure.example/Setup.exe', sha256: 'b'.repeat(64) };
+  assert.equal(buildUpdateManifest({ env, release: null, currentVersion: '1.0.0', baseUrl: 'https://api.example' }).status, 503);
 });
 
 test('sync rejects an unusable serial', async () => {

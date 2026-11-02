@@ -4653,7 +4653,7 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
 import {
-  MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, compareVersions, detectImageMime, handleDesktopSync,
+  DESKTOP_INSTALLER_ID_PATTERN, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync,
   isValidUcSerial, newMediaId, normalizeUcSerial, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from './lib/ineoDesktop.js';
 
@@ -13734,39 +13734,57 @@ app.delete('/api/finance/articles/:id', requireAuth, async (req, res) => {
   }
 });
 
-// Poste embarqué Inéo RétroBus : manifeste de mise à jour public et vérifié par SHA-256.
-const compareDesktopVersions = (left, right) => {
-  const normalize = (version) => String(version).split('.').map((part) => Number.parseInt(part, 10) || 0);
-  const leftParts = normalize(left);
-  const rightParts = normalize(right);
-  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
-    if ((leftParts[index] || 0) !== (rightParts[index] || 0)) return (leftParts[index] || 0) - (rightParts[index] || 0);
-  }
-  return 0;
+// Poste embarqué Inéo RétroBus : manifeste de mise à jour public et vérifié par SHA-256 (logique dans lib/ineoDesktop.js).
+const desktopApiBaseUrl = (req) => {
+  const host = String(req.get('host') || '');
+  const forwarded = String(req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const protocol = forwarded || (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? 'http' : 'https');
+  return `${protocol}://${host}`;
 };
 
-app.get('/api/ineo-rbe-desktop/update', (req, res) => {
-  const version = String(process.env.INEO_RBE_DESKTOP_VERSION || '').trim();
-  const installerUrl = String(process.env.INEO_RBE_DESKTOP_INSTALLER_URL || '').trim();
-  const sha256 = String(process.env.INEO_RBE_DESKTOP_INSTALLER_SHA256 || '').trim().toLowerCase();
-  const releaseNotes = String(process.env.INEO_RBE_DESKTOP_RELEASE_NOTES || '').trim().slice(0, 500);
-  const currentVersion = String(req.query.version || '').trim();
-  const isVersion = /^\d+(?:\.\d+){1,3}$/;
-  if (!isVersion.test(currentVersion)) return res.status(400).json({ error: 'Version installée invalide.' });
-  // Aucune version publiée : rien à proposer, ce n'est pas une erreur.
-  if (!version && !installerUrl && !sha256) return res.json({ updateAvailable: false });
-  let validInstallerUrl = false;
-  try { validInstallerUrl = new URL(installerUrl).protocol === 'https:'; } catch { validInstallerUrl = false; }
-  if (!isVersion.test(version) || !validInstallerUrl || !/^[a-f0-9]{64}$/.test(sha256)) {
-    return res.status(503).json({ error: 'Le manifeste de mise à jour Inéo RétroBus est incomplet : vérifiez les variables INEO_RBE_DESKTOP_* sur Railway.' });
+app.get('/api/ineo-rbe-desktop/update', async (req, res) => {
+  try {
+    const releases = await prisma.ineoDesktopRelease.findMany({
+      orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, version: true, sha256: true, notes: true },
+    });
+    const release = releases.sort((left, right) => compareVersions(right.version, left.version))[0] || null;
+    const { status, payload } = buildUpdateManifest({
+      env: {
+        version: process.env.INEO_RBE_DESKTOP_VERSION,
+        installerUrl: process.env.INEO_RBE_DESKTOP_INSTALLER_URL,
+        sha256: process.env.INEO_RBE_DESKTOP_INSTALLER_SHA256,
+        releaseNotes: process.env.INEO_RBE_DESKTOP_RELEASE_NOTES,
+      },
+      release,
+      currentVersion: String(req.query.version || '').trim(),
+      baseUrl: desktopApiBaseUrl(req),
+    });
+    res.status(status).json(payload);
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/update:', error.message);
+    res.status(500).json({ error: 'Impossible de lire le manifeste de mise à jour.' });
   }
-  return res.json({
-    updateAvailable: compareDesktopVersions(version, currentVersion) > 0,
-    version,
-    installerUrl,
-    sha256,
-    releaseNotes,
-  });
+});
+
+// Téléchargement de l'installateur par le logiciel de l'UC (l'identifiant n'est communiqué que par le manifeste ci-dessus).
+app.get('/api/ineo-rbe-desktop/installer/:id', async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!DESKTOP_INSTALLER_ID_PATTERN.test(id)) return res.status(404).end();
+  try {
+    const release = await prisma.ineoDesktopRelease.findUnique({ where: { id } });
+    if (!release) return res.status(404).end();
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(release.size),
+      'Content-Disposition': `attachment; filename="${release.fileName}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    });
+    res.send(Buffer.from(release.data));
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/installer/:id:', error.message);
+    res.status(500).end();
+  }
 });
 
 // Calendrier : événements/rappels personnels + événements partagés (réservés à w.belaidi)
