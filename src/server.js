@@ -13470,10 +13470,13 @@ app.get('/api/ineo-rbe-desktop/update', (req, res) => {
   const releaseNotes = String(process.env.INEO_RBE_DESKTOP_RELEASE_NOTES || '').trim().slice(0, 500);
   const currentVersion = String(req.query.version || '').trim();
   const isVersion = /^\d+(?:\.\d+){1,3}$/;
+  if (!isVersion.test(currentVersion)) return res.status(400).json({ error: 'Version installée invalide.' });
+  // Aucune version publiée : rien à proposer, ce n'est pas une erreur.
+  if (!version && !installerUrl && !sha256) return res.json({ updateAvailable: false });
   let validInstallerUrl = false;
   try { validInstallerUrl = new URL(installerUrl).protocol === 'https:'; } catch { validInstallerUrl = false; }
-  if (!isVersion.test(version) || !isVersion.test(currentVersion) || !validInstallerUrl || !/^[a-f0-9]{64}$/.test(sha256)) {
-    return res.status(503).json({ error: 'Le manifeste de mise à jour Inéo RétroBus n’est pas configuré.' });
+  if (!isVersion.test(version) || !validInstallerUrl || !/^[a-f0-9]{64}$/.test(sha256)) {
+    return res.status(503).json({ error: 'Le manifeste de mise à jour Inéo RétroBus est incomplet : vérifiez les variables INEO_RBE_DESKTOP_* sur Railway.' });
   }
   return res.json({
     updateAvailable: compareDesktopVersions(version, currentVersion) > 0,
