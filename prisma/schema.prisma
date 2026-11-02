@@ -840,20 +840,91 @@ model IneoVehicleProfile {
   heightM     Float?
   options     String?
   ucSerial    String?  @unique
+  screenProfileId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   vehicle     Vehicle  @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
+  screenProfile IneoScreenProfile? @relation(fields: [screenProfileId], references: [id], onDelete: SetNull)
+
+  @@index([screenProfileId])
 }
 
 model IneoUcDevice {
-  id          String   @id @default(cuid())
-  serial      String   @unique
-  hostname    String?
-  appVersion  String?
-  firstSeenAt DateTime @default(now())
-  lastSeenAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  serial         String   @unique
+  hostname       String?
+  appVersion     String?
+  networkOnline  Boolean  @default(true)
+  screensRevision String?
+  firstSeenAt    DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
 
   @@index([lastSeenAt])
+}
+
+model IneoMedia {
+  id        String   @id
+  fileName  String
+  mimeType  String
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now())
+}
+
+model IneoScreenProfile {
+  id              String               @id @default(cuid())
+  name            String               @unique
+  description     String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  screens         IneoScreen[]
+  vehicleProfiles IneoVehicleProfile[]
+  pilots          IneoPilotVehicle[]
+}
+
+model IneoScreen {
+  id             String            @id @default(cuid())
+  profileId      String
+  name           String
+  place          String            @default("CUSTOM")
+  x              Float             @default(40)
+  y              Float             @default(60)
+  widthPct       Float             @default(16)
+  widthPx        Int               @default(1280)
+  heightPx       Int               @default(720)
+  offlineMediaId String?
+  onlineMediaId  String?
+  sortOrder      Int               @default(0)
+  profile        IneoScreenProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model IneoPilotVehicle {
+  id              String             @id @default(cuid())
+  name            String             @default("Véhicule pilote")
+  ucSerial        String?            @unique
+  screenProfileId String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  screenProfile   IneoScreenProfile? @relation(fields: [screenProfileId], references: [id], onDelete: SetNull)
+  commands        IneoPilotCommand[]
+}
+
+model IneoPilotCommand {
+  id          String           @id @default(cuid())
+  pilotId     String
+  type        String
+  status      String           @default("PENDING")
+  result      String?
+  createdBy   String?
+  createdAt   DateTime         @default(now())
+  deliveredAt DateTime?
+  completedAt DateTime?
+  pilot       IneoPilotVehicle @relation(fields: [pilotId], references: [id], onDelete: Cascade)
+
+  @@index([pilotId, status])
+  @@index([createdAt])
 }
 
 model IneoVehicleTracker {

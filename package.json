@@ -9,6 +9,7 @@
     "build": "prisma generate",
     "postinstall": "prisma generate",
     "backup": "node backup-full.mjs",
+    "test": "node --test \"tests/*.test.js\"",
     "backup:full": "node backup-full.mjs",
     "backups:list": "node list-backups.mjs",
     "restore": "node restore-backup.mjs",

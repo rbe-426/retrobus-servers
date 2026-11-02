@@ -4650,53 +4650,81 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 });
 
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
-const UC_SERIAL_PLACEHOLDERS = new Set(['TOBEFILLEDBYO.E.M.', 'DEFAULTSTRING', 'SYSTEMSERIALNUMBER', 'NOTAVAILABLE', 'NOTAPPLICABLE', 'NONE', 'UNKNOWN', 'N/A', 'NA', '123456789', '0123456789']);
-const normalizeUcSerial = (value) => String(value || '').replace(/\s+/g, '').toUpperCase();
-const isValidUcSerial = (serial) => /^[A-Z0-9._\-/]{4,64}$/.test(serial) && !UC_SERIAL_PLACEHOLDERS.has(serial) && !/^(.)\1+$/.test(serial);
+import {
+  MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, detectImageMime, handleDesktopSync,
+  isValidUcSerial, newMediaId, normalizeUcSerial, serializeScreenProfile, validateScreenProfileInput,
+} from './lib/ineoDesktop.js';
 
-const ucIdentifyHits = new Map();
-const isUcIdentifyRateLimited = (key) => {
-  const now = Date.now();
-  const entry = ucIdentifyHits.get(key);
-  if (!entry || entry.resetAt <= now) {
-    ucIdentifyHits.set(key, { count: 1, resetAt: now + 60_000 });
-    if (ucIdentifyHits.size > 5_000) for (const [hitKey, hit] of ucIdentifyHits) if (hit.resetAt <= now) ucIdentifyHits.delete(hitKey);
-    return false;
-  }
-  entry.count += 1;
-  return entry.count > 20;
+const createDesktopRateLimiter = (limitPerMinute) => {
+  const hits = new Map();
+  return (key) => {
+    const now = Date.now();
+    const entry = hits.get(key);
+    if (!entry || entry.resetAt <= now) {
+      hits.set(key, { count: 1, resetAt: now + 60_000 });
+      if (hits.size > 5_000) for (const [hitKey, hit] of hits) if (hit.resetAt <= now) hits.delete(hitKey);
+      return false;
+    }
+    entry.count += 1;
+    return entry.count > limitPerMinute;
+  };
 };
+const isUcIdentifyRateLimited = createDesktopRateLimiter(20);
+// Le logiciel interroge l'API toutes les 15 s (poste pilote) à 60 s : on laisse de la marge.
+const isUcSyncRateLimited = createDesktopRateLimiter(90);
 
-app.post('/api/ineo-rbe-desktop/identify', async (req, res) => {
-  if (isUcIdentifyRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
+const desktopSyncHandler = (isRateLimited) => async (req, res) => {
+  if (isRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
     return res.status(429).json({ error: 'Trop de demandes, réessayez dans une minute.' });
   }
-  const serial = normalizeUcSerial(req.body?.serial);
-  if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série UC invalide ou non exploitable.' });
-  const hostname = String(req.body?.hostname || '').trim().slice(0, 100) || null;
-  const appVersion = /^\d+(?:\.\d+){1,3}$/.test(String(req.body?.appVersion || '')) ? String(req.body.appVersion) : null;
   try {
-    const now = new Date();
-    await prisma.ineoUcDevice.upsert({
-      where: { serial },
-      create: { serial, hostname, appVersion, firstSeenAt: now, lastSeenAt: now },
-      update: { hostname, appVersion, lastSeenAt: now },
-    });
-    const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, include: { vehicle: true } });
-    if (!profile) return res.json({ registered: false, serial });
-    const { vehicle } = profile;
-    res.json({
-      registered: true,
-      serial,
-      vehicle: { parc: vehicle.parc, immat: vehicle.immat || null, marque: vehicle.marque || null, modele: vehicle.modele || null },
-      profile: {
-        vehicleType: profile.vehicleType, maxSpeedKmh: profile.maxSpeedKmh, lengthM: profile.lengthM,
-        widthM: profile.widthM, heightM: profile.heightM, options: profile.options,
-      },
-    });
+    const { status, payload } = await handleDesktopSync({ prisma, body: req.body });
+    res.status(status).json(payload);
   } catch (error) {
-    console.error('POST /api/ineo-rbe-desktop/identify:', error.message);
+    console.error('POST /api/ineo-rbe-desktop:', error.message);
     res.status(500).json({ error: 'Impossible d’identifier cet UC.' });
+  }
+};
+// « identify » est conservé pour les logiciels déjà installés ; « sync » ajoute l'état, les écrans et les commandes pilote.
+app.post('/api/ineo-rbe-desktop/identify', desktopSyncHandler(isUcIdentifyRateLimited));
+app.post('/api/ineo-rbe-desktop/sync', desktopSyncHandler(isUcSyncRateLimited));
+
+// Images des écrans : téléversées depuis l'URBEX, téléchargées par le logiciel de l'UC (identifiants non devinables).
+app.post(['/ineo/media', '/api/ineo/media'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const fileName = String(req.body?.fileName || 'image').trim().slice(0, 120) || 'image';
+    const base64 = String(req.body?.dataBase64 || '');
+    if (!base64 || !/^[A-Za-z0-9+/=\s]+$/.test(base64)) return res.status(400).json({ error: 'Image invalide.' });
+    const buffer = Buffer.from(base64, 'base64');
+    if (!buffer.length || buffer.length > MAX_MEDIA_BYTES) return res.status(413).json({ error: `L’image doit faire moins de ${MAX_MEDIA_BYTES / 1024 / 1024} Mo.` });
+    const mimeType = detectImageMime(buffer);
+    if (!mimeType) return res.status(400).json({ error: 'Format non pris en charge : utilisez une image PNG, JPEG, GIF ou WebP.' });
+    const media = await prisma.ineoMedia.create({ data: { id: newMediaId(), fileName, mimeType, size: buffer.length, data: buffer }, select: { id: true, fileName: true, mimeType: true, size: true } });
+    res.status(201).json({ media });
+  } catch (error) {
+    console.error('POST /api/ineo/media:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer l’image.' });
+  }
+});
+
+app.get('/api/ineo-rbe-desktop/media/:id', async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!MEDIA_ID_PATTERN.test(id)) return res.status(404).end();
+  try {
+    const media = await prisma.ineoMedia.findUnique({ where: { id } });
+    if (!media) return res.status(404).end();
+    res.set({
+      'Content-Type': media.mimeType,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'",
+      // L'interface URBEX et le logiciel de l'UC chargent l'image depuis une autre origine que l'API.
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+    });
+    res.send(Buffer.from(media.data));
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/media/:id:', error.message);
+    res.status(500).end();
   }
 });
 
@@ -4711,6 +4739,165 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
   } catch (error) {
     console.error('GET /api/ineo/uc-devices:', error.message);
     res.status(500).json({ error: 'Impossible de charger les UC détectés' });
+  }
+});
+
+// Profils d'écrans : emplacement, position sur le plan du véhicule, taille et images de chaque écran.
+const screenProfileInclude = { screens: { orderBy: { sortOrder: 'asc' } } };
+
+const cleanupOrphanMedia = async () => {
+  try {
+    const screens = await prisma.ineoScreen.findMany({ select: { offlineMediaId: true, onlineMediaId: true } });
+    const referenced = [...new Set(screens.flatMap((screen) => [screen.offlineMediaId, screen.onlineMediaId]).filter(Boolean))];
+    // Délai de grâce : une image téléversée mais pas encore enregistrée dans un profil ne doit pas disparaître.
+    await prisma.ineoMedia.deleteMany({ where: { id: { notIn: referenced }, createdAt: { lt: new Date(Date.now() - 60 * 60_000) } } });
+  } catch (error) {
+    console.error('Ineo media cleanup:', error.message);
+  }
+};
+
+const presentScreenProfile = (profile) => ({
+  ...serializeScreenProfile(profile),
+  updatedAt: profile.updatedAt,
+  usedBy: (profile.vehicleProfiles || []).map((item) => item.vehicleParc),
+  usedByPilot: (profile.pilots || []).length > 0,
+});
+
+app.get(['/ineo/screen-profiles', '/api/ineo/screen-profiles'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const profiles = await prisma.ineoScreenProfile.findMany({
+      orderBy: { name: 'asc' },
+      include: { ...screenProfileInclude, vehicleProfiles: { select: { vehicleParc: true } }, pilots: { select: { id: true } } },
+    });
+    res.json({ profiles: profiles.map(presentScreenProfile) });
+  } catch (error) {
+    console.error('GET /api/ineo/screen-profiles:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les profils écrans' });
+  }
+});
+
+const saveScreenProfile = async (req, res, id) => {
+  const { value, error } = validateScreenProfileInput(req.body);
+  if (error) return res.status(400).json({ error });
+  try {
+    const mediaIds = [...new Set(value.screens.flatMap((screen) => [screen.offlineMediaId, screen.onlineMediaId]).filter(Boolean))];
+    if (mediaIds.length && await prisma.ineoMedia.count({ where: { id: { in: mediaIds } } }) !== mediaIds.length) {
+      return res.status(400).json({ error: 'Une image du profil est introuvable : téléversez-la de nouveau.' });
+    }
+    const profile = await prisma.$transaction(async (transaction) => {
+      const saved = id
+        ? await transaction.ineoScreenProfile.update({ where: { id }, data: { name: value.name, description: value.description } })
+        : await transaction.ineoScreenProfile.create({ data: { name: value.name, description: value.description } });
+      await transaction.ineoScreen.deleteMany({ where: { profileId: saved.id } });
+      if (value.screens.length) {
+        await transaction.ineoScreen.createMany({ data: value.screens.map(({ id: _ignoredId, ...screen }) => ({ ...screen, profileId: saved.id })) });
+      }
+      return transaction.ineoScreenProfile.findUnique({
+        where: { id: saved.id },
+        include: { ...screenProfileInclude, vehicleProfiles: { select: { vehicleParc: true } }, pilots: { select: { id: true } } },
+      });
+    });
+    await logIneoOperationsActivity(req, 'INEO_SCREEN_PROFILE_SAVED', true, { id: profile.id, name: profile.name, screens: value.screens.length });
+    cleanupOrphanMedia();
+    res.status(id ? 200 : 201).json({ profile: presentScreenProfile(profile) });
+  } catch (saveError) {
+    if (saveError.code === 'P2002') return res.status(409).json({ error: 'Un profil écran porte déjà ce nom.' });
+    if (saveError.code === 'P2025') return res.status(404).json({ error: 'Profil écran introuvable.' });
+    console.error('SAVE /api/ineo/screen-profiles:', saveError.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer le profil écran' });
+  }
+};
+
+app.post(['/ineo/screen-profiles', '/api/ineo/screen-profiles'], requireAuth, requireIneoOperationsAccess, (req, res) => saveScreenProfile(req, res, null));
+app.put(['/ineo/screen-profiles/:id', '/api/ineo/screen-profiles/:id'], requireAuth, requireIneoOperationsAccess, (req, res) => saveScreenProfile(req, res, String(req.params.id || '')));
+
+app.delete(['/ineo/screen-profiles/:id', '/api/ineo/screen-profiles/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    await prisma.ineoScreenProfile.delete({ where: { id: String(req.params.id || '') } });
+    await logIneoOperationsActivity(req, 'INEO_SCREEN_PROFILE_DELETED', true, { id: req.params.id });
+    cleanupOrphanMedia();
+    res.json({ ok: true });
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Profil écran introuvable.' });
+    console.error('DELETE /api/ineo/screen-profiles/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer le profil écran' });
+  }
+});
+
+// Véhicule pilote : poste de test (borne test) propre à Inéo, hors parc RBE. Un seul véhicule pilote est géré.
+const loadPilotView = async () => {
+  const pilot = await prisma.ineoPilotVehicle.findFirst({ orderBy: { createdAt: 'asc' }, include: { screenProfile: { include: screenProfileInclude } } });
+  if (!pilot) return null;
+  const [device, commands] = await Promise.all([
+    pilot.ucSerial ? prisma.ineoUcDevice.findUnique({ where: { serial: pilot.ucSerial } }) : null,
+    prisma.ineoPilotCommand.findMany({ where: { pilotId: pilot.id }, orderBy: { createdAt: 'desc' }, take: 20 }),
+  ]);
+  const screenProfile = serializeScreenProfile(pilot.screenProfile);
+  return {
+    id: pilot.id,
+    name: pilot.name,
+    ucSerial: pilot.ucSerial,
+    screenProfileId: pilot.screenProfileId,
+    screenProfile,
+    device: device && {
+      serial: device.serial, hostname: device.hostname, appVersion: device.appVersion, networkOnline: device.networkOnline,
+      screensRevision: device.screensRevision, lastSeenAt: device.lastSeenAt,
+      online: Date.now() - new Date(device.lastSeenAt).getTime() < PILOT_ONLINE_WINDOW_MS,
+      revisionApplied: screenProfile ? device.screensRevision === screenProfile.revision : null,
+    },
+    commands,
+  };
+};
+
+app.get(['/ineo/pilot', '/api/ineo/pilot'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    res.json({ pilot: await loadPilotView() });
+  } catch (error) {
+    console.error('GET /api/ineo/pilot:', error.message);
+    res.status(500).json({ error: 'Impossible de charger le véhicule pilote' });
+  }
+});
+
+app.put(['/ineo/pilot', '/api/ineo/pilot'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    if (!name || name.length > 80) return res.status(400).json({ error: 'Le nom du véhicule pilote est obligatoire (80 caractères maximum).' });
+    const ucSerial = normalizeUcSerial(req.body?.ucSerial);
+    if (ucSerial && !isValidUcSerial(ucSerial)) return res.status(400).json({ error: 'Numéro de série UC invalide ou non exploitable (valeur générique du constructeur ?)' });
+    if (ucSerial && await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial }, select: { vehicleParc: true } })) {
+      return res.status(409).json({ error: 'Ce numéro de série est déjà rattaché à un véhicule du parc.' });
+    }
+    const screenProfileId = String(req.body?.screenProfileId || '').trim();
+    if (screenProfileId && !await prisma.ineoScreenProfile.findUnique({ where: { id: screenProfileId }, select: { id: true } })) {
+      return res.status(400).json({ error: 'Profil écran introuvable.' });
+    }
+    const data = { name, ucSerial: ucSerial || null, screenProfileId: screenProfileId || null };
+    const existing = await prisma.ineoPilotVehicle.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+    if (existing) await prisma.ineoPilotVehicle.update({ where: { id: existing.id }, data });
+    else await prisma.ineoPilotVehicle.create({ data });
+    await logIneoOperationsActivity(req, 'INEO_PILOT_SAVED', true, { name, ucSerial: data.ucSerial });
+    res.json({ pilot: await loadPilotView() });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Ce numéro de série est déjà utilisé.' });
+    console.error('PUT /api/ineo/pilot:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer le véhicule pilote' });
+  }
+});
+
+app.post(['/ineo/pilot/commands', '/api/ineo/pilot/commands'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const type = String(req.body?.type || '');
+    if (!PILOT_COMMAND_TYPES.includes(type)) return res.status(400).json({ error: 'Commande inconnue.' });
+    const pilot = await prisma.ineoPilotVehicle.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true, ucSerial: true } });
+    if (!pilot?.ucSerial) return res.status(409).json({ error: 'Renseignez d’abord le numéro de série du PC pilote.' });
+    const waiting = await prisma.ineoPilotCommand.count({ where: { pilotId: pilot.id, status: { in: ['PENDING', 'DELIVERED'] } } });
+    if (waiting >= 10) return res.status(429).json({ error: 'Trop de commandes en attente : le poste pilote ne répond pas.' });
+    const command = await prisma.ineoPilotCommand.create({ data: { pilotId: pilot.id, type, createdBy: req.user?.email || null } });
+    await logIneoOperationsActivity(req, 'INEO_PILOT_COMMAND', true, { type });
+    res.status(201).json({ command });
+  } catch (error) {
+    console.error('POST /api/ineo/pilot/commands:', error.message);
+    res.status(500).json({ error: 'Impossible d’envoyer la commande' });
   }
 });
 
@@ -4737,7 +4924,17 @@ app.put(['/ineo/vehicle-profiles/:parc', '/api/ineo/vehicle-profiles/:parc'], re
     if (req.body?.ucSerial !== undefined) {
       const ucSerial = normalizeUcSerial(req.body.ucSerial);
       if (ucSerial && !isValidUcSerial(ucSerial)) return res.status(400).json({ error: 'Numéro de série UC invalide ou non exploitable (valeur générique du constructeur ?)' });
+      if (ucSerial && await prisma.ineoPilotVehicle.findUnique({ where: { ucSerial }, select: { id: true } })) {
+        return res.status(409).json({ error: 'Ce numéro de série est celui du véhicule pilote.' });
+      }
       profileData.ucSerial = ucSerial || null;
+    }
+    if (req.body?.screenProfileId !== undefined) {
+      const screenProfileId = String(req.body.screenProfileId || '').trim();
+      if (screenProfileId && !await prisma.ineoScreenProfile.findUnique({ where: { id: screenProfileId }, select: { id: true } })) {
+        return res.status(400).json({ error: 'Profil écran introuvable.' });
+      }
+      profileData.screenProfileId = screenProfileId || null;
     }
     const profile = await prisma.ineoVehicleProfile.upsert({ where: { vehicleParc }, create: { vehicleParc, ...profileData }, update: profileData });
     await logIneoOperationsActivity(req, 'INEO_VEHICLE_PROFILE_SAVED', true, { vehicleParc, ucSerial: profileData.ucSerial });
