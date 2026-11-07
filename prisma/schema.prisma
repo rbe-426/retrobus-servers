@@ -2363,6 +2363,31 @@ model retromerch_site_config {
   @@index([isActive])
 }
 
+model AssociationProject {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  authorId    String
+  authorName  String
+  status      String   @default("PROPOSED")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  votes       AssociationProjectVote[]
+
+  @@index([createdAt])
+}
+
+model AssociationProjectVote {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+  project   AssociationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
 model UserAvailability {
   id          String   @id @default(cuid())
   userId      String

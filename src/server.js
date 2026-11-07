@@ -4440,6 +4440,78 @@ app.delete(['/procedures/documents/:id', '/api/procedures/documents/:id'], requi
   }
 });
 
+const serializeAssociationProject = (project, viewerId) => ({
+  id: project.id,
+  title: project.title,
+  description: project.description,
+  authorName: project.authorName,
+  status: project.status,
+  createdAt: project.createdAt,
+  votes: project.votes.length,
+  hasVoted: project.votes.some((vote) => vote.userId === viewerId),
+  isOwner: project.authorId === viewerId
+});
+
+app.get(['/association-projects', '/api/association-projects'], requireAuth, async (req, res) => {
+  try {
+    const viewerId = String(req.user.id);
+    const projects = await prisma.associationProject.findMany({ include: { votes: { select: { userId: true } } }, orderBy: { createdAt: 'desc' } });
+    const items = projects.map((project) => serializeAssociationProject(project, viewerId)).sort((a, b) => b.votes - a.votes || new Date(b.createdAt) - new Date(a.createdAt));
+    res.json({ projects: items, canModerate: await isAdminRequest(req) });
+  } catch (error) {
+    console.error('GET /api/association-projects:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les projets.' });
+  }
+});
+
+app.post(['/association-projects', '/api/association-projects'], requireAuth, async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim().slice(0, 150);
+    const description = String(req.body?.description || '').trim().slice(0, 4000);
+    const authorName = String(req.body?.authorName || req.user.email || 'Membre').trim().slice(0, 100);
+    if (!title || !description) return res.status(400).json({ error: 'Titre et description sont requis.' });
+    const project = await prisma.associationProject.create({
+      data: { title, description, authorName, authorId: String(req.user.id) },
+      include: { votes: { select: { userId: true } } }
+    });
+    res.status(201).json({ project: serializeAssociationProject(project, String(req.user.id)) });
+  } catch (error) {
+    console.error('POST /api/association-projects:', error.message);
+    res.status(500).json({ error: 'Impossible de soumettre le projet.' });
+  }
+});
+
+app.post(['/association-projects/:id/vote', '/api/association-projects/:id/vote'], requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user.id);
+    const projectId = req.params.id;
+    const project = await prisma.associationProject.findUnique({ where: { id: projectId }, select: { id: true } });
+    if (!project) return res.status(404).json({ error: 'Projet introuvable.' });
+    const where = { projectId_userId: { projectId, userId } };
+    const existing = await prisma.associationProjectVote.findUnique({ where });
+    if (existing) await prisma.associationProjectVote.delete({ where });
+    else await prisma.associationProjectVote.create({ data: { projectId, userId } });
+    const votes = await prisma.associationProjectVote.count({ where: { projectId } });
+    res.json({ votes, hasVoted: !existing });
+  } catch (error) {
+    console.error('POST /api/association-projects/:id/vote:', error.message);
+    res.status(500).json({ error: 'Impossible d enregistrer le vote.' });
+  }
+});
+
+app.delete(['/association-projects/:id', '/api/association-projects/:id'], requireAuth, async (req, res) => {
+  try {
+    const project = await prisma.associationProject.findUnique({ where: { id: req.params.id } });
+    if (!project) return res.status(404).json({ error: 'Projet introuvable.' });
+    if (project.authorId !== String(req.user.id) && !(await isAdminRequest(req))) return res.status(403).json({ error: 'Suppression non autorisee.' });
+    await prisma.associationProject.delete({ where: { id: project.id } });
+    res.json({ action: 'DELETED' });
+  } catch (error) {
+    console.error('DELETE /api/association-projects/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer le projet.' });
+  }
+});
+
 const getIneoAssignmentIssue = async (driverIdentifier, allowExpiredFimo = false) => {
   const identifier = String(driverIdentifier || '').trim().toLowerCase();
   const profile = await prisma.ineoDriverProfile.findUnique({ where: { driverIdentifier: identifier } });
