@@ -184,6 +184,15 @@ export function serializeScreenProfile(profile) {
 }
 
 const COMMAND_ID_PATTERN = /^[A-Za-z0-9]{10,40}$/;
+export const CONTENT_REVISION_PATTERN = /^\d{2}\.\d{2}\.\d{3}$/;
+
+// Numéro de révision de contenu AA.MM.NNN : le compteur repart à 001 chaque mois.
+export function nextContentRevision(lastRevision, now = new Date()) {
+  const prefix = `${String(now.getFullYear()).slice(-2)}.${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const last = String(lastRevision || '');
+  const counter = last.startsWith(`${prefix}.`) ? Number(last.slice(prefix.length + 1)) + 1 : 1;
+  return `${prefix}.${String(counter).padStart(3, '0')}`;
+}
 
 // Point d'entrée unique du logiciel de l'UC : identification, état, profil écran et commandes du véhicule pilote.
 export async function handleDesktopSync({ prisma, body = {}, now = new Date() }) {
@@ -194,14 +203,17 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
   const appVersion = /^\d+(?:\.\d+){1,3}$/.test(String(body.appVersion || '')) ? String(body.appVersion) : null;
   const networkOnline = body.online !== false;
   const screensRevision = /^[a-f0-9]{1,40}$/.test(String(body.screensRevision || '')) ? String(body.screensRevision) : null;
+  const contentRevision = CONTENT_REVISION_PATTERN.test(String(body.contentRevision || '')) ? String(body.contentRevision) : null;
   const results = (Array.isArray(body.commandResults) ? body.commandResults : []).slice(0, 20)
     .filter((entry) => COMMAND_ID_PATTERN.test(String(entry?.id || '')) && ['DONE', 'FAILED'].includes(entry?.status));
 
   await prisma.ineoUcDevice.upsert({
     where: { serial },
-    create: { serial, hostname, appVersion, networkOnline, screensRevision, firstSeenAt: now, lastSeenAt: now },
-    update: { hostname, appVersion, networkOnline, screensRevision, lastSeenAt: now },
+    create: { serial, hostname, appVersion, networkOnline, screensRevision, contentRevision, firstSeenAt: now, lastSeenAt: now },
+    update: { hostname, appVersion, networkOnline, screensRevision, contentRevision, lastSeenAt: now },
   });
+  const latestContent = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true } });
+  const publishedContentRevision = latestContent?.revision || null;
 
   const screenInclude = { screenProfile: { include: { screens: true } } };
   const pilot = await prisma.ineoPilotVehicle.findUnique({ where: { ucSerial: serial }, include: screenInclude });
@@ -223,7 +235,7 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
     return {
       status: 200,
       payload: {
-        registered: true, serial, isPilot: true, pilotName: pilot.name, vehicle: null, profile: null,
+        registered: true, serial, isPilot: true, pilotName: pilot.name, vehicle: null, profile: null, contentRevision: publishedContentRevision,
         screenProfile: serializeScreenProfile(pilot.screenProfile),
         commands: pending.map((command) => ({ id: command.id, type: command.type })),
       },
@@ -231,12 +243,12 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
   }
 
   const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, include: { vehicle: true, ...screenInclude } });
-  if (!profile) return { status: 200, payload: { registered: false, serial, isPilot: false } };
+  if (!profile) return { status: 200, payload: { registered: false, serial, isPilot: false, contentRevision: publishedContentRevision } };
   const { vehicle } = profile;
   return {
     status: 200,
     payload: {
-      registered: true, serial, isPilot: false,
+      registered: true, serial, isPilot: false, contentRevision: publishedContentRevision,
       vehicle: { parc: vehicle.parc, immat: vehicle.immat || null, marque: vehicle.marque || null, modele: vehicle.modele || null },
       profile: { vehicleType: profile.vehicleType, maxSpeedKmh: profile.maxSpeedKmh, lengthM: profile.lengthM, widthM: profile.widthM, heightM: profile.heightM, options: profile.options },
       screenProfile: serializeScreenProfile(profile.screenProfile),

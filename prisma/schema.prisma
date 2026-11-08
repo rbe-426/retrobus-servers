@@ -856,10 +856,21 @@ model IneoUcDevice {
   appVersion     String?
   networkOnline  Boolean  @default(true)
   screensRevision String?
+  contentRevision String?
   firstSeenAt    DateTime @default(now())
   lastSeenAt     DateTime @default(now())
 
   @@index([lastSeenAt])
+}
+
+model IneoContentRevision {
+  id        String   @id @default(cuid())
+  revision  String   @unique
+  notes     String?
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model IneoMedia {

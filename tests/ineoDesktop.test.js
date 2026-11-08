@@ -18,6 +18,7 @@ function createFakePrisma({ pilot = null, vehicleProfile = null, commands = [] }
   return {
     state,
     ineoUcDevice: { upsert: async ({ where, create, update }) => { state.devices.set(where.serial, { ...(state.devices.get(where.serial) || create), ...update }); } },
+    ineoContentRevision: { findFirst: async () => (state.contentRevision ? { revision: state.contentRevision } : null) },
     ineoPilotVehicle: { findUnique: async ({ where }) => (pilot && pilot.ucSerial === where.ucSerial ? pilot : null) },
     ineoVehicleProfile: { findUnique: async ({ where }) => (vehicleProfile && vehicleProfile.ucSerial === where.ucSerial ? vehicleProfile : null) },
     ineoPilotCommand: {
@@ -145,8 +146,22 @@ test('sync rejects an unusable serial', async () => {
 test('sync reports an unregistered UC and records it', async () => {
   const prisma = createFakePrisma();
   const result = await handleDesktopSync({ prisma, body: { serial: 'abc 12345', hostname: 'PC-BUS', appVersion: '1.0.1', online: false } });
-  assert.deepEqual(result.payload, { registered: false, serial: 'ABC12345', isPilot: false });
+  assert.deepEqual(result.payload, { registered: false, serial: 'ABC12345', isPilot: false, contentRevision: null });
   assert.equal(prisma.state.devices.get('ABC12345').networkOnline, false);
+});
+
+test('sync exposes the published content revision and records the one applied by the UC', async () => {
+  const prisma = createFakePrisma();
+  prisma.state.contentRevision = '26.11.002';
+  const { payload } = await handleDesktopSync({ prisma, body: { serial: 'abc 12345', contentRevision: '26.11.001' } });
+  assert.equal(payload.contentRevision, '26.11.002');
+  assert.equal(prisma.state.devices.get('ABC12345').contentRevision, '26.11.001');
+});
+
+test('content revisions are numbered AA.MM.NNN and restart each month', () => {
+  assert.equal(nextContentRevision(null, new Date('2026-11-08T10:00:00')), '26.11.001');
+  assert.equal(nextContentRevision('26.11.009', new Date('2026-11-20T10:00:00')), '26.11.010');
+  assert.equal(nextContentRevision('26.11.010', new Date('2026-12-01T10:00:00')), '26.12.001');
 });
 
 test('sync returns the vehicle profile and its screen profile', async () => {

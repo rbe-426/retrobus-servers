@@ -4726,7 +4726,7 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
 import {
   DESKTOP_INSTALLER_ID_PATTERN, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync,
-  isValidUcSerial, newMediaId, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
+  isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from './lib/ineoDesktop.js';
 
 const createDesktopRateLimiter = (limitPerMinute) => {
@@ -4821,6 +4821,43 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
   } catch (error) {
     console.error('GET /api/ineo/uc-devices:', error.message);
     res.status(500).json({ error: 'Impossible de charger les UC détectés' });
+  }
+});
+
+// Révisions de contenu : publier un contenu crée un nouveau numéro ; les UC connectés l'appliquent d'eux-mêmes à leur prochaine synchronisation.
+app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const [revisions, devices] = await Promise.all([
+      prisma.ineoContentRevision.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
+      prisma.ineoUcDevice.findMany({ select: { contentRevision: true } }),
+    ]);
+    const current = revisions[0]?.revision || null;
+    res.json({ current, revisions, devices: devices.length, devicesUpToDate: current ? devices.filter((device) => device.contentRevision === current).length : 0 });
+  } catch (error) {
+    console.error('GET /api/ineo/content-revisions:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les révisions de contenu' });
+  }
+});
+
+app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const notes = String(req.body?.notes || '').trim().slice(0, 500) || null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const last = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true } });
+      try {
+        const revision = await prisma.ineoContentRevision.create({
+          data: { revision: nextContentRevision(last?.revision), notes, createdBy: req.user?.username || req.user?.email || null },
+        });
+        await logIneoOperationsActivity(req, 'INEO_CONTENT_REVISION_PUBLISHED', true, { revision: revision.revision });
+        return res.status(201).json({ revision });
+      } catch (error) {
+        if (error.code !== 'P2002') throw error;
+      }
+    }
+    res.status(409).json({ error: 'Publication simultanée, réessayez.' });
+  } catch (error) {
+    console.error('POST /api/ineo/content-revisions:', error.message);
+    res.status(500).json({ error: 'Impossible de publier la révision de contenu' });
   }
 });
 
