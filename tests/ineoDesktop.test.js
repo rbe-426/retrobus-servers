@@ -66,9 +66,9 @@ test('image detection uses magic bytes', () => {
 
 test('desktop release validation accepts a Windows executable and computes its hash', () => {
   const exe = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(2048, 1)]);
-  const { value } = validateDesktopReleaseInput({ version: ' 1.0.2 ', notes: ' Correctifs ', dataBase64: exe.toString('base64') });
-  assert.equal(value.version, '1.0.2');
-  assert.equal(value.fileName, 'Ineo-Retrobus-Setup-1.0.2.exe');
+  const { value } = validateDesktopReleaseInput({ version: ' 26.11.001 ', notes: ' Correctifs ', dataBase64: exe.toString('base64') });
+  assert.equal(value.version, '26.11.001');
+  assert.equal(value.fileName, 'Ineo-Retrobus-Setup-26.11.001.exe');
   assert.equal(value.notes, 'Correctifs');
   assert.equal(value.size, exe.length);
   assert.equal(value.sha256, crypto.createHash('sha256').update(exe).digest('hex'));
@@ -76,16 +76,19 @@ test('desktop release validation accepts a Windows executable and computes its h
 
 test('desktop release validation rejects bad versions and non-executables', () => {
   const exe = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(2048, 1)]).toString('base64');
-  for (const version of ['', '1.0', 'v1.0.2', '1.0.2.0', '../1.0.2']) assert.ok(validateDesktopReleaseInput({ version, dataBase64: exe }).error, version);
-  assert.ok(validateDesktopReleaseInput({ version: '1.0.2', dataBase64: Buffer.from('#!/bin/sh\n'.repeat(200)).toString('base64') }).error);
-  assert.ok(validateDesktopReleaseInput({ version: '1.0.2', dataBase64: '' }).error);
-  assert.ok(validateDesktopReleaseInput({ version: '1.0.2', dataBase64: 'not base64 !!' }).error);
+  for (const version of ['', '1.0', 'v26.11.001', '26.11.1', '26.13.001', '26.00.001', '1.0.3', '26.11.001.0', '../26.11.001']) assert.ok(validateDesktopReleaseInput({ version, dataBase64: exe }).error, version);
+  assert.ok(validateDesktopReleaseInput({ version: '26.11.001', dataBase64: Buffer.from('#!/bin/sh\n'.repeat(200)).toString('base64') }).error);
+  assert.ok(validateDesktopReleaseInput({ version: '26.11.001', dataBase64: '' }).error);
+  assert.ok(validateDesktopReleaseInput({ version: '26.11.001', dataBase64: 'not base64 !!' }).error);
 });
 
 test('version comparison orders releases numerically', () => {
   assert.ok(compareVersions('1.0.10', '1.0.9') > 0);
   assert.ok(compareVersions('1.1.0', '1.0.99') > 0);
   assert.equal(compareVersions('2.0.0', '2.0.0'), 0);
+  assert.ok(compareVersions('26.11.002', '26.11.001') > 0);
+  assert.ok(compareVersions('26.11.001', '1.0.3') > 0);
+  assert.equal(compareVersions('26.11.001', '26.11.1'), 0);
 });
 
 test('update manifest: nothing published means no update and no error', () => {

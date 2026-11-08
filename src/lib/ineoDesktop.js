@@ -25,14 +25,15 @@ export const isValidUcSerial = (serial) => /^[A-Z0-9._\-/]{4,64}$/.test(serial) 
 export const newMediaId = () => crypto.randomBytes(16).toString('hex');
 
 export const MAX_INSTALLER_BYTES = 60 * 1024 * 1024;
-export const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+// Format ANNEE.MOIS.REVISION (ex. 26.11.001 : première révision de novembre 2026).
+export const RELEASE_VERSION_PATTERN = /^\d{2}\.(?:0[1-9]|1[0-2])\.\d{3}$/;
 
 // Un installateur Windows est un exécutable PE : il commence par « MZ ». Refuse les fichiers manifestement d'un autre type.
 export const isWindowsExecutable = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 1024 && buffer[0] === 0x4d && buffer[1] === 0x5a;
 
 export function validateDesktopReleaseInput(body = {}) {
   const version = String(body.version || '').trim();
-  if (!RELEASE_VERSION_PATTERN.test(version)) return { error: 'La version doit être au format 1.0.2.' };
+  if (!RELEASE_VERSION_PATTERN.test(version)) return { error: 'La version doit être au format ANNEE.MOIS.REVISION, par exemple 26.11.001.' };
   const notes = String(body.notes || '').trim().slice(0, 500) || null;
   const base64 = String(body.dataBase64 || '');
   if (!base64 || !/^[A-Za-z0-9+/=\s]+$/.test(base64)) return { error: 'Fichier invalide.' };
