@@ -31,16 +31,16 @@ export const RELEASE_VERSION_PATTERN = /^\d{2}\.(?:0[1-9]|1[0-2])\.\d{3}$/;
 // Un installateur Windows est un exécutable PE : il commence par « MZ ». Refuse les fichiers manifestement d'un autre type.
 export const isWindowsExecutable = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 1024 && buffer[0] === 0x4d && buffer[1] === 0x5a;
 
-export const RELEASE_PRODUCTS = ['UC', 'MAINTENANCE'];
+export const RELEASE_PRODUCTS = ['UC', 'MAINTENANCE', 'PLANNING'];
 export const normalizeProduct = (value) => {
   const product = String(value || 'UC').trim().toUpperCase();
   return RELEASE_PRODUCTS.includes(product) ? product : null;
 };
-const INSTALLER_FILE_PREFIX = { UC: 'Ineo-Retrobus-Setup', MAINTENANCE: 'Ineo-Maintenance-Setup' };
+const INSTALLER_FILE_PREFIX = { UC: 'Ineo-Retrobus-Setup', MAINTENANCE: 'Ineo-Maintenance-Setup', PLANNING: 'Ineo-Planning-Setup' };
 
 export function validateDesktopReleaseInput(body = {}) {
   const product = normalizeProduct(body.product);
-  if (!product) return { error: 'Logiciel inconnu : UC ou MAINTENANCE.' };
+  if (!product) return { error: 'Logiciel inconnu : UC, MAINTENANCE ou PLANNING.' };
   const version = String(body.version || '').trim();
   if (!RELEASE_VERSION_PATTERN.test(version)) return { error: 'La version doit être au format ANNEE.MOIS.REVISION, par exemple 26.11.001.' };
   const notes = String(body.notes || '').trim().slice(0, 500) || null;

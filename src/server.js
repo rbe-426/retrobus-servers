@@ -13890,6 +13890,35 @@ const presentMaintenancePc = (pc) => ({
   appVersion: pc.appVersion, lastSeenAt: pc.lastSeenAt, createdBy: pc.createdBy, createdAt: pc.createdAt,
 });
 
+// Fonds de carte OpenStreetMap relayés pour l'application Planification (anciens Windows sans TLS 1.2 : seul le serveur RétroBus est joignable).
+const ineoTileCache = new Map();
+app.get(['/ineo/map-tiles/:z/:x/:y.png', '/api/ineo/map-tiles/:z/:x/:y.png'], requireAuth, async (req, res) => {
+  if (!isIneoOperationsUser(req)) return res.status(403).end();
+  const z = Number.parseInt(req.params.z, 10);
+  const x = Number.parseInt(req.params.x, 10);
+  const y = Number.parseInt(req.params.y, 10);
+  const limit = 2 ** z;
+  if (![z, x, y].every(Number.isInteger) || z < 0 || z > 18 || x < 0 || y < 0 || x >= limit || y >= limit) return res.status(400).end();
+  const key = `${z}/${x}/${y}`;
+  try {
+    let tile = ineoTileCache.get(key);
+    if (!tile) {
+      const upstream = await fetch(`https://tile.openstreetmap.org/${key}.png`, {
+        headers: { 'User-Agent': 'RetroBusEssonne-IneoPlanning/1.0 (contact: retrobus-essonne.fr)' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!upstream.ok) return res.status(502).end();
+      tile = Buffer.from(await upstream.arrayBuffer());
+      if (ineoTileCache.size >= 800) ineoTileCache.delete(ineoTileCache.keys().next().value);
+      ineoTileCache.set(key, tile);
+    }
+    res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=86400' });
+    res.send(tile);
+  } catch (error) {
+    res.status(502).end();
+  }
+});
+
 app.get(['/ineo/maintenance-pcs', '/api/ineo/maintenance-pcs'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
     const pcs = await prisma.maintenancePc.findMany({ orderBy: { createdAt: 'desc' }, take: 200 });
