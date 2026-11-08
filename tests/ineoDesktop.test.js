@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 import {
-  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, normalizeProduct, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
+  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from '../src/lib/ineoDesktop.js';
 
 const mediaA = newMediaId();
