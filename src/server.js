@@ -13919,6 +13919,22 @@ app.get(['/ineo/map-tiles/:z/:x/:y.png', '/api/ineo/map-tiles/:z/:x/:y.png'], re
   }
 });
 
+app.get(['/ineo/geocode', '/api/ineo/geocode'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 200);
+  if (query.length < 3) return res.json({ results: [] });
+  try {
+    const upstream = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=fr&q=${encodeURIComponent(query)}`, {
+      headers: { 'User-Agent': 'RetroBusEssonne-IneoPlanning/1.0 (contact: retrobus-essonne.fr)', 'Accept-Language': 'fr' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!upstream.ok) return res.status(502).json({ error: 'Recherche de lieu indisponible' });
+    const places = await upstream.json();
+    res.json({ results: (Array.isArray(places) ? places : []).map((place) => ({ label: place.display_name, lat: Number(place.lat), lng: Number(place.lon) })) });
+  } catch (error) {
+    res.status(502).json({ error: 'Recherche de lieu indisponible' });
+  }
+});
+
 app.get(['/ineo/maintenance-pcs', '/api/ineo/maintenance-pcs'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
     const pcs = await prisma.maintenancePc.findMany({ orderBy: { createdAt: 'desc' }, take: 200 });
