@@ -868,6 +868,8 @@ model IneoContentRevision {
   revision  String   @unique
   notes     String?
   createdBy String?
+  // Parc du véhicule ciblé ; null = révision publiée pour tous les véhicules.
+  targetParc String?
   createdAt DateTime @default(now())
 
   @@index([createdAt])

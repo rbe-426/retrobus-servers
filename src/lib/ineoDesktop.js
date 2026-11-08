@@ -212,8 +212,16 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
     create: { serial, hostname, appVersion, networkOnline, screensRevision, contentRevision, firstSeenAt: now, lastSeenAt: now },
     update: { hostname, appVersion, networkOnline, screensRevision, contentRevision, lastSeenAt: now },
   });
-  const latestContent = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true } });
-  const publishedContentRevision = latestContent?.revision || null;
+  // Révision applicable à cet UC : publiée pour tous les véhicules, ou ciblant uniquement son véhicule.
+  const latestContentFor = async (parc) => {
+    const latest = await prisma.ineoContentRevision.findFirst({
+      where: { OR: [{ targetParc: null }, ...(parc ? [{ targetParc: parc }] : [])] },
+      orderBy: { createdAt: 'desc' },
+      select: { revision: true },
+    });
+    return latest?.revision || null;
+  };
+  const publishedContentRevision = await latestContentFor(null);
 
   const screenInclude = { screenProfile: { include: { screens: true } } };
   const pilot = await prisma.ineoPilotVehicle.findUnique({ where: { ucSerial: serial }, include: screenInclude });
@@ -245,10 +253,11 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
   const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, include: { vehicle: true, ...screenInclude } });
   if (!profile) return { status: 200, payload: { registered: false, serial, isPilot: false, contentRevision: publishedContentRevision } };
   const { vehicle } = profile;
+  const vehicleContentRevision = await latestContentFor(profile.vehicleParc);
   return {
     status: 200,
     payload: {
-      registered: true, serial, isPilot: false, contentRevision: publishedContentRevision,
+      registered: true, serial, isPilot: false, contentRevision: vehicleContentRevision,
       vehicle: { parc: vehicle.parc, immat: vehicle.immat || null, marque: vehicle.marque || null, modele: vehicle.modele || null },
       profile: { vehicleType: profile.vehicleType, maxSpeedKmh: profile.maxSpeedKmh, lengthM: profile.lengthM, widthM: profile.widthM, heightM: profile.heightM, options: profile.options },
       screenProfile: serializeScreenProfile(profile.screenProfile),

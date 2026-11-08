@@ -4771,9 +4771,15 @@ const desktopSyncHandler = (isRateLimited) => async (req, res) => {
 app.post('/api/ineo-rbe-desktop/identify', desktopSyncHandler(isUcIdentifyRateLimited));
 app.post('/api/ineo-rbe-desktop/sync', desktopSyncHandler(isUcSyncRateLimited));
 // Numéro de révision de contenu publié : lu par l'outil Maintenance pour comparer avec celui de l'UC.
-app.get('/api/ineo-rbe-desktop/content-revision', async (_req, res) => {
+app.get('/api/ineo-rbe-desktop/content-revision', async (req, res) => {
   try {
-    const latest = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true, createdAt: true } });
+    const serial = normalizeUcSerial(req.query?.serial);
+    const profile = serial && isValidUcSerial(serial) ? await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, select: { vehicleParc: true } }) : null;
+    const latest = await prisma.ineoContentRevision.findFirst({
+      where: { OR: [{ targetParc: null }, ...(profile ? [{ targetParc: profile.vehicleParc }] : [])] },
+      orderBy: { createdAt: 'desc' },
+      select: { revision: true, createdAt: true },
+    });
     res.json({ revision: latest?.revision || null, publishedAt: latest?.createdAt || null });
   } catch (error) {
     console.error('GET /api/ineo-rbe-desktop/content-revision:', error.message);
@@ -4837,12 +4843,17 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
 // Révisions de contenu : publier un contenu crée un nouveau numéro ; les UC connectés l'appliquent d'eux-mêmes à leur prochaine synchronisation.
 app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
-    const [revisions, devices] = await Promise.all([
+    const [revisions, devices, profiles] = await Promise.all([
       prisma.ineoContentRevision.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
-      prisma.ineoUcDevice.findMany({ select: { contentRevision: true } }),
+      prisma.ineoUcDevice.findMany({ select: { serial: true, contentRevision: true } }),
+      prisma.ineoVehicleProfile.findMany({ where: { ucSerial: { not: null } }, select: { vehicleParc: true, ucSerial: true } }),
     ]);
     const current = revisions[0]?.revision || null;
-    res.json({ current, revisions, devices: devices.length, devicesUpToDate: current ? devices.filter((device) => device.contentRevision === current).length : 0 });
+    const parcBySerial = new Map(profiles.map((profile) => [profile.ucSerial, profile.vehicleParc]));
+    // Révision attendue par chaque UC : la dernière publiée pour tous ou ciblant son véhicule.
+    const expectedFor = (serial) => revisions.find((item) => !item.targetParc || item.targetParc === parcBySerial.get(serial))?.revision || null;
+    const upToDate = devices.filter((device) => expectedFor(device.serial) && device.contentRevision === expectedFor(device.serial)).length;
+    res.json({ current, revisions, devices: devices.length, devicesUpToDate: upToDate });
   } catch (error) {
     console.error('GET /api/ineo/content-revisions:', error.message);
     res.status(500).json({ error: 'Impossible de charger les révisions de contenu' });
@@ -4852,13 +4863,18 @@ app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth,
 app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const notes = String(req.body?.notes || '').trim().slice(0, 500) || null;
+    const targetParc = String(req.body?.targetParc || '').trim().slice(0, 100) || null;
+    if (targetParc) {
+      const target = await prisma.ineoVehicleProfile.findUnique({ where: { vehicleParc: targetParc }, select: { ucSerial: true } });
+      if (!target?.ucSerial) return res.status(400).json({ error: 'Ce véhicule n’a pas d’UC associé : renseignez son numéro de série dans son profil.' });
+    }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const last = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true } });
       try {
         const revision = await prisma.ineoContentRevision.create({
-          data: { revision: nextContentRevision(last?.revision), notes, createdBy: req.user?.username || req.user?.email || null },
+          data: { revision: nextContentRevision(last?.revision), notes, targetParc, createdBy: req.user?.username || req.user?.email || null },
         });
-        await logIneoOperationsActivity(req, 'INEO_CONTENT_REVISION_PUBLISHED', true, { revision: revision.revision });
+        await logIneoOperationsActivity(req, 'INEO_CONTENT_REVISION_PUBLISHED', true, { revision: revision.revision, targetParc });
         return res.status(201).json({ revision });
       } catch (error) {
         if (error.code !== 'P2002') throw error;
