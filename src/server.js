@@ -4770,6 +4770,16 @@ const desktopSyncHandler = (isRateLimited) => async (req, res) => {
 // « identify » est conservé pour les logiciels déjà installés ; « sync » ajoute l'état, les écrans et les commandes pilote.
 app.post('/api/ineo-rbe-desktop/identify', desktopSyncHandler(isUcIdentifyRateLimited));
 app.post('/api/ineo-rbe-desktop/sync', desktopSyncHandler(isUcSyncRateLimited));
+// Numéro de révision de contenu publié : lu par l'outil Maintenance pour comparer avec celui de l'UC.
+app.get('/api/ineo-rbe-desktop/content-revision', async (_req, res) => {
+  try {
+    const latest = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true, createdAt: true } });
+    res.json({ revision: latest?.revision || null, publishedAt: latest?.createdAt || null });
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/content-revision:', error.message);
+    res.status(500).json({ error: 'Révision de contenu indisponible.' });
+  }
+});
 
 // Images des écrans : téléversées depuis l'URBEX, téléchargées par le logiciel de l'UC (identifiants non devinables).
 app.post(['/ineo/media', '/api/ineo/media'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
