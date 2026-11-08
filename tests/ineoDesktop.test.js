@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 import {
-  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
+  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, normalizeProduct, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from '../src/lib/ineoDesktop.js';
 
 const mediaA = newMediaId();
@@ -72,6 +72,16 @@ test('desktop release validation accepts a Windows executable and computes its h
   assert.equal(value.notes, 'Correctifs');
   assert.equal(value.size, exe.length);
   assert.equal(value.sha256, crypto.createHash('sha256').update(exe).digest('hex'));
+});
+
+test('desktop release validation handles the maintenance product', () => {
+  const exe = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(2048, 1)]).toString('base64');
+  const { value } = validateDesktopReleaseInput({ product: 'maintenance', version: '26.11.001', dataBase64: exe });
+  assert.equal(value.product, 'MAINTENANCE');
+  assert.equal(value.fileName, 'Ineo-Maintenance-Setup-26.11.001.exe');
+  assert.equal(normalizeProduct(undefined), 'UC');
+  assert.equal(normalizeProduct('autre'), null);
+  assert.ok(validateDesktopReleaseInput({ product: 'autre', version: '26.11.001', dataBase64: exe }).error);
 });
 
 test('desktop release validation rejects bad versions and non-executables', () => {

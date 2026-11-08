@@ -4726,7 +4726,7 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
 import {
   DESKTOP_INSTALLER_ID_PATTERN, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync,
-  isValidUcSerial, newMediaId, normalizeUcSerial, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
+  isValidUcSerial, newMediaId, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
 } from './lib/ineoDesktop.js';
 
 const createDesktopRateLimiter = (limitPerMinute) => {
@@ -4826,17 +4826,20 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
 
 // Installateur du logiciel Inéo RétroBus (UC) : importé ici puis téléchargé depuis la page Inéo RétroBus de l'URBEX.
 const presentDesktopRelease = (release) => ({
-  id: release.id, version: release.version, fileName: release.fileName, size: release.size, sha256: release.sha256,
+  id: release.id, product: release.product, version: release.version, fileName: release.fileName, size: release.size, sha256: release.sha256,
   notes: release.notes, createdBy: release.createdBy, createdAt: release.createdAt,
 });
 const DESKTOP_RELEASE_LIST_LIMIT = 20;
 
-app.get(['/ineo/desktop-releases', '/api/ineo/desktop-releases'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+app.get(['/ineo/desktop-releases', '/api/ineo/desktop-releases'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const product = normalizeProduct(req.query.product);
+  if (!product) return res.status(400).json({ error: 'Logiciel inconnu.' });
   try {
     // Le contenu binaire n'est jamais chargé pour la liste.
     const releases = await prisma.ineoDesktopRelease.findMany({
+      where: { product },
       orderBy: { createdAt: 'desc' }, take: DESKTOP_RELEASE_LIST_LIMIT,
-      select: { id: true, version: true, fileName: true, size: true, sha256: true, notes: true, createdBy: true, createdAt: true },
+      select: { id: true, product: true, version: true, fileName: true, size: true, sha256: true, notes: true, createdBy: true, createdAt: true },
     });
     const sorted = [...releases].sort((left, right) => compareVersions(right.version, left.version));
     res.json({ releases: sorted.map(presentDesktopRelease), latestId: sorted[0]?.id || null });
@@ -4852,12 +4855,12 @@ app.post(['/ineo/desktop-releases', '/api/ineo/desktop-releases'], requireAuth, 
   try {
     const release = await prisma.ineoDesktopRelease.create({
       data: {
-        version: value.version, fileName: value.fileName, size: value.size, sha256: value.sha256, notes: value.notes,
+        product: value.product, version: value.version, fileName: value.fileName, size: value.size, sha256: value.sha256, notes: value.notes,
         data: value.buffer, createdBy: req.user?.email || null,
       },
-      select: { id: true, version: true, fileName: true, size: true, sha256: true, notes: true, createdBy: true, createdAt: true },
+      select: { id: true, product: true, version: true, fileName: true, size: true, sha256: true, notes: true, createdBy: true, createdAt: true },
     });
-    await logIneoOperationsActivity(req, 'INEO_DESKTOP_RELEASE_UPLOADED', true, { version: value.version, size: value.size, sha256: value.sha256 });
+    await logIneoOperationsActivity(req, 'INEO_DESKTOP_RELEASE_UPLOADED', true, { product: value.product, version: value.version, size: value.size, sha256: value.sha256 });
     res.status(201).json({ release: presentDesktopRelease(release) });
   } catch (saveError) {
     if (saveError.code === 'P2002') return res.status(409).json({ error: `La version ${value.version} existe déjà : supprimez-la ou choisissez un nouveau numéro.` });
@@ -13816,17 +13819,25 @@ const desktopApiBaseUrl = (req) => {
 
 app.get('/api/ineo-rbe-desktop/update', async (req, res) => {
   try {
+    const product = normalizeProduct(req.query.product);
+    if (!product) return res.status(400).json({ error: 'Logiciel inconnu.' });
+    if (product === 'MAINTENANCE') {
+      const access = await authorizeMaintenancePc(req.query.serial, { version: req.query.version });
+      if (access.status !== 200) return res.status(access.status).json(access.payload);
+    }
     const releases = await prisma.ineoDesktopRelease.findMany({
+      where: { product },
       orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, version: true, sha256: true, notes: true },
     });
     const release = releases.sort((left, right) => compareVersions(right.version, left.version))[0] || null;
     const { status, payload } = buildUpdateManifest({
-      env: {
+      // Les variables INEO_RBE_DESKTOP_* ne concernent que le logiciel embarqué (UC).
+      env: product === 'UC' ? {
         version: process.env.INEO_RBE_DESKTOP_VERSION,
         installerUrl: process.env.INEO_RBE_DESKTOP_INSTALLER_URL,
         sha256: process.env.INEO_RBE_DESKTOP_INSTALLER_SHA256,
         releaseNotes: process.env.INEO_RBE_DESKTOP_RELEASE_NOTES,
-      },
+      } : {},
       release,
       currentVersion: String(req.query.version || '').trim(),
       baseUrl: desktopApiBaseUrl(req),
@@ -13835,6 +13846,106 @@ app.get('/api/ineo-rbe-desktop/update', async (req, res) => {
   } catch (error) {
     console.error('GET /api/ineo-rbe-desktop/update:', error.message);
     res.status(500).json({ error: 'Impossible de lire le manifeste de mise à jour.' });
+  }
+});
+
+// PC de maintenance : un poste dont le numéro de série n'est pas enregistré dans l'URBEX ne peut ni se connecter ni se mettre à jour.
+const isMaintenanceCheckRateLimited = createDesktopRateLimiter(30);
+
+async function authorizeMaintenancePc(serialInput, { hostname, version } = {}) {
+  const serial = normalizeUcSerial(serialInput);
+  if (!isValidUcSerial(serial)) {
+    return { status: 400, payload: { allowed: false, error: 'Numéro de série de ce PC illisible ou générique : il ne peut pas être enregistré.' } };
+  }
+  const pc = await prisma.maintenancePc.findUnique({ where: { serial } });
+  if (!pc || !pc.active) {
+    return { status: 403, payload: { allowed: false, serial, error: pc ? 'Ce PC de maintenance est désactivé dans l’URBEX.' : 'Ce PC de maintenance n’est pas enregistré dans l’URBEX.' } };
+  }
+  await prisma.maintenancePc.update({
+    where: { id: pc.id },
+    data: {
+      lastSeenAt: new Date(),
+      hostname: hostname ? String(hostname).trim().slice(0, 120) : pc.hostname,
+      appVersion: version ? String(version).trim().slice(0, 32) : pc.appVersion,
+    },
+  });
+  return { status: 200, payload: { allowed: true, serial, name: pc.name } };
+}
+
+app.post('/api/ineo-rbe-desktop/maintenance/check', async (req, res) => {
+  if (isMaintenanceCheckRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
+    return res.status(429).json({ error: 'Trop de demandes, réessayez dans une minute.' });
+  }
+  try {
+    const { status, payload } = await authorizeMaintenancePc(req.body?.serial, { hostname: req.body?.hostname, version: req.body?.version });
+    res.status(status).json(payload);
+  } catch (error) {
+    console.error('POST /api/ineo-rbe-desktop/maintenance/check:', error.message);
+    res.status(500).json({ allowed: false, error: 'Vérification impossible, réessayez.' });
+  }
+});
+
+const presentMaintenancePc = (pc) => ({
+  id: pc.id, serial: pc.serial, name: pc.name, notes: pc.notes, active: pc.active, hostname: pc.hostname,
+  appVersion: pc.appVersion, lastSeenAt: pc.lastSeenAt, createdBy: pc.createdBy, createdAt: pc.createdAt,
+});
+
+app.get(['/ineo/maintenance-pcs', '/api/ineo/maintenance-pcs'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const pcs = await prisma.maintenancePc.findMany({ orderBy: { createdAt: 'desc' }, take: 200 });
+    res.json({ pcs: pcs.map(presentMaintenancePc) });
+  } catch (error) {
+    console.error('GET /api/ineo/maintenance-pcs:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les ordinateurs de maintenance' });
+  }
+});
+
+app.post(['/ineo/maintenance-pcs', '/api/ineo/maintenance-pcs'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const serial = normalizeUcSerial(req.body?.serial);
+  const name = String(req.body?.name || '').trim().slice(0, 80);
+  if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série invalide (4 à 64 caractères, ni générique ni répété).' });
+  if (!name) return res.status(400).json({ error: 'Le nom du technicien ou du poste est obligatoire.' });
+  try {
+    const pc = await prisma.maintenancePc.create({
+      data: { serial, name, notes: String(req.body?.notes || '').trim().slice(0, 300) || null, createdBy: req.user?.email || null },
+    });
+    await logIneoOperationsActivity(req, 'INEO_MAINTENANCE_PC_CREATED', true, { serial });
+    res.status(201).json({ pc: presentMaintenancePc(pc) });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Ce numéro de série est déjà enregistré.' });
+    console.error('POST /api/ineo/maintenance-pcs:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer ce PC de maintenance' });
+  }
+});
+
+app.patch(['/ineo/maintenance-pcs/:id', '/api/ineo/maintenance-pcs/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const data = {};
+  if (req.body?.name !== undefined) {
+    data.name = String(req.body.name || '').trim().slice(0, 80);
+    if (!data.name) return res.status(400).json({ error: 'Le nom est obligatoire.' });
+  }
+  if (req.body?.notes !== undefined) data.notes = String(req.body.notes || '').trim().slice(0, 300) || null;
+  if (req.body?.active !== undefined) data.active = Boolean(req.body.active);
+  try {
+    const pc = await prisma.maintenancePc.update({ where: { id: String(req.params.id || '') }, data });
+    await logIneoOperationsActivity(req, 'INEO_MAINTENANCE_PC_UPDATED', true, { serial: pc.serial, active: pc.active });
+    res.json({ pc: presentMaintenancePc(pc) });
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'PC de maintenance introuvable.' });
+    console.error('PATCH /api/ineo/maintenance-pcs/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de modifier ce PC de maintenance' });
+  }
+});
+
+app.delete(['/ineo/maintenance-pcs/:id', '/api/ineo/maintenance-pcs/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const pc = await prisma.maintenancePc.delete({ where: { id: String(req.params.id || '') }, select: { serial: true } });
+    await logIneoOperationsActivity(req, 'INEO_MAINTENANCE_PC_DELETED', true, { serial: pc.serial });
+    res.json({ success: true });
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'PC de maintenance introuvable.' });
+    console.error('DELETE /api/ineo/maintenance-pcs/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer ce PC de maintenance' });
   }
 });
 

@@ -873,7 +873,9 @@ model IneoMedia {
 
 model IneoDesktopRelease {
   id        String   @id @default(cuid())
-  version   String   @unique
+  // UC = logiciel embarqué ; MAINTENANCE = outil des PC de maintenance.
+  product   String   @default("UC")
+  version   String
   fileName  String
   size      Int
   sha256    String
@@ -882,7 +884,23 @@ model IneoDesktopRelease {
   createdBy String?
   createdAt DateTime @default(now())
 
+  @@unique([product, version])
   @@index([createdAt])
+}
+
+// PC de maintenance autorisés à se connecter aux serveurs (identifiés par leur numéro de série).
+model MaintenancePc {
+  id         String    @id @default(cuid())
+  serial     String    @unique
+  name       String
+  notes      String?
+  active     Boolean   @default(true)
+  hostname   String?
+  appVersion String?
+  lastSeenAt DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }
 
 model IneoScreenProfile {
