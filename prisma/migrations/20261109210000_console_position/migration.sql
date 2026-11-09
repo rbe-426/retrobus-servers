@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "IneoConsoleDevice" ADD COLUMN "lastLatitude" DOUBLE PRECISION,
+ADD COLUMN "lastLongitude" DOUBLE PRECISION,
+ADD COLUMN "lastSpeedKmh" DOUBLE PRECISION,
+ADD COLUMN "lastAccuracy" DOUBLE PRECISION,
+ADD COLUMN "lastPositionAt" TIMESTAMP(3);

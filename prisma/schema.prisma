@@ -869,6 +869,11 @@ model IneoConsoleDevice {
   deviceId    String?
   model       String?
   appVersion  String?
+  lastLatitude   Float?
+  lastLongitude  Float?
+  lastSpeedKmh   Float?
+  lastAccuracy   Float?
+  lastPositionAt DateTime?
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
 

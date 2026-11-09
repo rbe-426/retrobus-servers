@@ -4956,6 +4956,20 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
   }
 });
 
+app.get(['/ineo/console-devices', '/api/ineo/console-devices'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const [devices, trackers] = await Promise.all([
+      prisma.ineoConsoleDevice.findMany({ orderBy: { lastSeenAt: 'desc' }, take: 200 }),
+      prisma.ineoVehicleTracker.findMany({ select: { imei: true, vehicleParc: true } }),
+    ]);
+    const parcByImei = new Map(trackers.map((tracker) => [tracker.imei, tracker.vehicleParc]));
+    res.json({ devices: devices.map((device) => ({ ...device, vehicleParc: parcByImei.get(device.imei) || null })) });
+  } catch (error) {
+    console.error('GET /api/ineo/console-devices:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les consoles' });
+  }
+});
+
 // Révisions de contenu : publier un contenu crée un nouveau numéro ; les UC connectés l'appliquent d'eux-mêmes à leur prochaine synchronisation.
 app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
@@ -5847,10 +5861,15 @@ app.post(['/ineo/missions/:id/position', '/api/ineo/missions/:id/position'], req
       return res.status(400).json({ error: 'Coordonnées GPS invalides' });
     }
     const recordedAt = req.body?.recordedAt ? new Date(req.body.recordedAt) : new Date();
+    // Une position envoyée par la console mobile (IMEI fourni) est conservée à part : celle de la balise/UC reste distincte.
+    const consoleImei = normalizeImei(req.body?.imei);
+    const fromConsole = /^\d{14,17}$/.test(consoleImei);
     const [, mission] = await prisma.$transaction([
       prisma.ineoPosition.create({ data: { missionId: result.mission.id, latitude, longitude, speedKmh, accuracy, recordedAt } }),
       prisma.ineoMission.update({ where: { id: result.mission.id }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
-      prisma.ineoVehicleTracker.updateMany({ where: { vehicleParc: result.mission.vehicleParc }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
+      fromConsole
+        ? prisma.ineoConsoleDevice.updateMany({ where: { imei: consoleImei }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt, lastSeenAt: new Date() } })
+        : prisma.ineoVehicleTracker.updateMany({ where: { vehicleParc: result.mission.vehicleParc }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
     ]);
     const freeTracking = await syncIneoFreeTrackingPosition(mission, { latitude, longitude, speedKmh, accuracy, recordedAt });
     res.json({ mission, freeTracking });
