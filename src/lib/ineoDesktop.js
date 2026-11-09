@@ -24,6 +24,52 @@ export const isValidUcSerial = (serial) => /^[A-Z0-9._\-/]{4,64}$/.test(serial) 
 
 export const newMediaId = () => crypto.randomBytes(16).toString('hex');
 
+// Contenu SAEIV d'une révision : annonces sonores et écrans, avec leurs fichiers (nom aléatoire + extension).
+export const CONTENT_FILE_PATTERN = /^[a-f0-9]{32}\.(wav|mp3|wma|png|jpe?g|bmp|gif)$/;
+export const MAX_CONTENT_FILE_BYTES = 25 * 1024 * 1024;
+export const contentFolderOf = (name) => (/\.(wav|mp3|wma)$/.test(name) ? 'sounds' : 'screens');
+const ANNOUNCEMENT_TRIGGERS = ['GPS', 'PRE', 'START'];
+
+const finiteOr = (value, fallback) => (Number.isFinite(Number(value)) && value !== null && value !== '' ? Number(value) : fallback);
+const textOf = (value, max) => String(value ?? '').trim().slice(0, max);
+const contentFileOrNull = (value) => (CONTENT_FILE_PATTERN.test(String(value || '')) ? String(value) : null);
+
+// Ne garde que les champs connus : le logiciel de l'UC applique tel quel ce qui est publié ici.
+export function validateContentConfig(config) {
+  if (config === undefined || config === null) return { value: null };
+  if (typeof config !== 'object' || Array.isArray(config)) return { error: 'Contenu SAEIV invalide.' };
+  const rawAnnouncements = Array.isArray(config.announcements) ? config.announcements : [];
+  const rawScreens = Array.isArray(config.screens) ? config.screens : [];
+  if (rawAnnouncements.length > 300 || rawScreens.length > 60) return { error: 'Le contenu SAEIV contient trop d’éléments.' };
+  const announcements = rawAnnouncements.map((item) => ({
+    id: textOf(item?.id, 40),
+    name: textOf(item?.name, 120),
+    trigger: ANNOUNCEMENT_TRIGGERS.includes(item?.trigger) ? item.trigger : 'PRE',
+    latitude: finiteOr(item?.latitude, 0),
+    longitude: finiteOr(item?.longitude, 0),
+    distanceMeters: Math.min(5000, Math.max(0, Math.round(finiteOr(item?.distanceMeters, 100)))),
+    soundFile: contentFileOrNull(item?.soundFile),
+    soundName: textOf(item?.soundName, 120),
+    enabled: item?.enabled !== false,
+  }));
+  const screens = rawScreens.map((item) => ({
+    id: textOf(item?.id, 40),
+    name: textOf(item?.name, 120),
+    place: Object.prototype.hasOwnProperty.call(SCREEN_PLACES, item?.place) ? item.place : 'CUSTOM',
+    x: Math.min(100, Math.max(0, finiteOr(item?.x, 0))),
+    y: Math.min(100, Math.max(0, finiteOr(item?.y, 0))),
+    widthPct: Math.min(100, Math.max(1, finiteOr(item?.widthPct, 16))),
+    widthPx: Math.min(8192, Math.max(16, Math.round(finiteOr(item?.widthPx, 1280)))),
+    heightPx: Math.min(8192, Math.max(16, Math.round(finiteOr(item?.heightPx, 720)))),
+    offlineImage: contentFileOrNull(item?.offlineImage),
+    offlineName: textOf(item?.offlineName, 120),
+    onlineImage: contentFileOrNull(item?.onlineImage),
+    onlineName: textOf(item?.onlineName, 120),
+  }));
+  const files = [...new Set([...announcements.map((item) => item.soundFile), ...screens.flatMap((item) => [item.offlineImage, item.onlineImage])].filter(Boolean))];
+  return { value: { announcements, screens, files } };
+}
+
 export const MAX_INSTALLER_BYTES = 60 * 1024 * 1024;
 // Format ANNEE.MOIS.REVISION (ex. 26.11.001 : première révision de novembre 2026).
 export const RELEASE_VERSION_PATTERN = /^\d{2}\.(?:0[1-9]|1[0-2])\.\d{3}$/;

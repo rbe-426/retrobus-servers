@@ -2,8 +2,29 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 import {
-  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
+  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, serializeScreenProfile, validateContentConfig, validateDesktopReleaseInput, validateScreenProfileInput,
 } from '../src/lib/ineoDesktop.js';
+
+test('content config keeps the startup announcement and lists the files it needs', () => {
+  const sound = `${newMediaId()}.mp3`;
+  const image = `${newMediaId()}.png`;
+  const { value, error } = validateContentConfig({
+    announcements: [{ id: 'a1', name: 'Bienvenue', trigger: 'START', soundFile: sound, enabled: true, evil: 'x' }, { name: 'Autre', trigger: '??', soundFile: '../secret.mp3' }],
+    screens: [{ id: 's1', name: 'Avant', place: 'FRONT_DESTINATION', x: 500, widthPx: 1920, heightPx: 480, onlineImage: image }],
+  });
+  assert.equal(error, undefined);
+  assert.equal(value.announcements[0].trigger, 'START');
+  assert.equal('evil' in value.announcements[0], false);
+  assert.equal(value.announcements[1].trigger, 'PRE');
+  assert.equal(value.announcements[1].soundFile, null);
+  assert.equal(value.screens[0].x, 100);
+  assert.deepEqual(value.files.sort(), [sound, image].sort());
+});
+
+test('content config is optional and rejects non-objects', () => {
+  assert.equal(validateContentConfig(undefined).value, null);
+  assert.ok(validateContentConfig([]).error);
+});
 
 const mediaA = newMediaId();
 const mediaB = newMediaId();

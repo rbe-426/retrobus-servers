@@ -4725,8 +4725,8 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
 import {
-  DESKTOP_INSTALLER_ID_PATTERN, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync,
-  isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateDesktopReleaseInput, validateScreenProfileInput,
+  CONTENT_FILE_PATTERN, DESKTOP_INSTALLER_ID_PATTERN, MAX_CONTENT_FILE_BYTES, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, buildUpdateManifest, compareVersions, contentFolderOf, detectImageMime, handleDesktopSync,
+  isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateContentConfig, validateDesktopReleaseInput, validateScreenProfileInput,
 } from './lib/ineoDesktop.js';
 
 const createDesktopRateLimiter = (limitPerMinute) => {
@@ -4787,6 +4787,78 @@ app.get('/api/ineo-rbe-desktop/content-revision', async (req, res) => {
   }
 });
 
+// Contenu SAEIV (annonces et écrans) de la révision applicable à cet UC : appliqué par le logiciel de l'UC à sa synchronisation.
+app.get('/api/ineo-rbe-desktop/content', async (req, res) => {
+  try {
+    const serial = normalizeUcSerial(req.query?.serial);
+    if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série UC invalide.' });
+    const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, select: { vehicleParc: true } });
+    const latest = await prisma.ineoContentRevision.findFirst({
+      where: { OR: [{ targetParc: null }, ...(profile ? [{ targetParc: profile.vehicleParc }] : [])] },
+      orderBy: { createdAt: 'desc' },
+      select: { revision: true, payload: true },
+    });
+    let content = null;
+    try { content = latest?.payload ? JSON.parse(latest.payload) : null; } catch { content = null; }
+    res.json({ revision: latest?.revision || null, hasContent: Boolean(content), announcements: content?.announcements || [], screens: content?.screens || [] });
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/content:', error.message);
+    res.status(500).json({ error: 'Contenu indisponible.' });
+  }
+});
+
+app.get('/api/ineo-rbe-desktop/content-file/:name', async (req, res) => {
+  const name = String(req.params.name || '');
+  if (!CONTENT_FILE_PATTERN.test(name)) return res.status(404).end();
+  try {
+    const file = await prisma.ineoContentFile.findUnique({ where: { id: name } });
+    if (!file) return res.status(404).end();
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(file.size),
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.send(Buffer.from(file.data));
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/content-file:', error.message);
+    res.status(500).end();
+  }
+});
+
+// Fichiers du contenu SAEIV : le configurateur envoie ceux que le serveur n'a pas encore, puis publie la révision qui les référence.
+app.post(['/ineo/content-files/missing', '/api/ineo/content-files/missing'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const names = (Array.isArray(req.body?.names) ? req.body.names : []).map(String).filter((name) => CONTENT_FILE_PATTERN.test(name)).slice(0, 400);
+    const known = await prisma.ineoContentFile.findMany({ where: { id: { in: names } }, select: { id: true } });
+    const knownIds = new Set(known.map((file) => file.id));
+    res.json({ missing: names.filter((name) => !knownIds.has(name)) });
+  } catch (error) {
+    console.error('POST /api/ineo/content-files/missing:', error.message);
+    res.status(500).json({ error: 'Impossible de vérifier les fichiers du contenu' });
+  }
+});
+
+app.put(['/ineo/content-files/:name', '/api/ineo/content-files/:name'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const name = String(req.params.name || '');
+  if (!CONTENT_FILE_PATTERN.test(name)) return res.status(400).json({ error: 'Nom de fichier invalide.' });
+  try {
+    const base64 = String(req.body?.dataBase64 || '');
+    if (!base64 || !/^[A-Za-z0-9+/=\s]+$/.test(base64)) return res.status(400).json({ error: 'Fichier invalide.' });
+    const buffer = Buffer.from(base64, 'base64');
+    if (!buffer.length || buffer.length > MAX_CONTENT_FILE_BYTES) return res.status(413).json({ error: `Chaque fichier doit faire moins de ${MAX_CONTENT_FILE_BYTES / 1024 / 1024} Mo.` });
+    await prisma.ineoContentFile.upsert({
+      where: { id: name },
+      create: { id: name, folder: contentFolderOf(name), size: buffer.length, data: buffer },
+      update: {},
+    });
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    console.error('PUT /api/ineo/content-files:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer le fichier' });
+  }
+});
+
 // Images des écrans : téléversées depuis l'URBEX, téléchargées par le logiciel de l'UC (identifiants non devinables).
 app.post(['/ineo/media', '/api/ineo/media'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
@@ -4844,7 +4916,7 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
 app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
     const [revisions, devices, profiles] = await Promise.all([
-      prisma.ineoContentRevision.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
+      prisma.ineoContentRevision.findMany({ orderBy: { createdAt: 'desc' }, take: 50, select: { id: true, revision: true, notes: true, createdBy: true, targetParc: true, createdAt: true } }),
       prisma.ineoUcDevice.findMany({ select: { serial: true, contentRevision: true } }),
       prisma.ineoVehicleProfile.findMany({ where: { ucSerial: { not: null } }, select: { vehicleParc: true, ucSerial: true } }),
     ]);
@@ -4868,13 +4940,21 @@ app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth
       const target = await prisma.ineoVehicleProfile.findUnique({ where: { vehicleParc: targetParc }, select: { ucSerial: true } });
       if (!target?.ucSerial) return res.status(400).json({ error: 'Ce véhicule n’a pas d’UC associé : renseignez son numéro de série dans son profil.' });
     }
+    const { value: content, error: contentError } = validateContentConfig(req.body?.config);
+    if (contentError) return res.status(400).json({ error: contentError });
+    if (content?.files.length) {
+      const known = await prisma.ineoContentFile.findMany({ where: { id: { in: content.files } }, select: { id: true } });
+      if (known.length !== content.files.length) return res.status(400).json({ error: 'Des fichiers du contenu (sons ou images) n’ont pas été envoyés au serveur.' });
+    }
+    const payload = content ? JSON.stringify({ announcements: content.announcements, screens: content.screens }) : null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const last = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true } });
       try {
-        const revision = await prisma.ineoContentRevision.create({
-          data: { revision: nextContentRevision(last?.revision), notes, targetParc, createdBy: req.user?.username || req.user?.email || null },
+        const created = await prisma.ineoContentRevision.create({
+          data: { revision: nextContentRevision(last?.revision), notes, targetParc, payload, createdBy: req.user?.username || req.user?.email || null },
         });
-        await logIneoOperationsActivity(req, 'INEO_CONTENT_REVISION_PUBLISHED', true, { revision: revision.revision, targetParc });
+        const { payload: _payload, ...revision } = created;
+        await logIneoOperationsActivity(req, 'INEO_CONTENT_REVISION_PUBLISHED', true, { revision: revision.revision, targetParc, announcements: content?.announcements.length ?? 0, screens: content?.screens.length ?? 0 });
         return res.status(201).json({ revision });
       } catch (error) {
         if (error.code !== 'P2002') throw error;

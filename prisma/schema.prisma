@@ -870,9 +870,20 @@ model IneoContentRevision {
   createdBy String?
   // Parc du véhicule ciblé ; null = révision publiée pour tous les véhicules.
   targetParc String?
+  // Contenu SAEIV publié (annonces et écrans, au format JSON) ; null pour les anciennes révisions qui ne portaient que le numéro.
+  payload   String?
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// Fichiers (annonces sonores, images d'écran) référencés par le contenu d'une révision ; le nom est l'identifiant.
+model IneoContentFile {
+  id        String   @id
+  folder    String
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now())
 }
 
 model IneoMedia {
