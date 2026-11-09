@@ -840,8 +840,6 @@ model IneoVehicleProfile {
   heightM     Float?
   options     String?
   ucSerial    String?  @unique
-  // IMEI de la console mobile (tablette/téléphone Android) rattachée au véhicule ; la console n'a de sens qu'avec un UC associé.
-  consoleImei String?  @unique
   screenProfileId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

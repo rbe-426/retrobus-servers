@@ -89,17 +89,19 @@ export const RELEASE_VERSION_PATTERN = /^\d{2}\.(?:0[1-9]|1[0-2])\.\d{3}$/;
 
 // Un installateur Windows est un exécutable PE : il commence par « MZ ». Refuse les fichiers manifestement d'un autre type.
 export const isWindowsExecutable = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 1024 && buffer[0] === 0x4d && buffer[1] === 0x5a;
+// Un APK est une archive ZIP : elle commence par « PK\x03\x04 ».
+export const isAndroidPackage = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 1024 && buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04;
 
-export const RELEASE_PRODUCTS = ['UC', 'MAINTENANCE', 'PLANNING'];
+export const RELEASE_PRODUCTS = ['UC', 'MAINTENANCE', 'PLANNING', 'CONSOLE'];
 export const normalizeProduct = (value) => {
   const product = String(value || 'UC').trim().toUpperCase();
   return RELEASE_PRODUCTS.includes(product) ? product : null;
 };
-const INSTALLER_FILE_PREFIX = { UC: 'Ineo-Retrobus-Setup', MAINTENANCE: 'Ineo-Maintenance-Setup', PLANNING: 'Ineo-Planning-Setup' };
+const INSTALLER_FILE_PREFIX = { UC: 'Ineo-Retrobus-Setup', MAINTENANCE: 'Ineo-Maintenance-Setup', PLANNING: 'Ineo-Planning-Setup', CONSOLE: 'Ineo-Console' };
 
 export function validateDesktopReleaseInput(body = {}) {
   const product = normalizeProduct(body.product);
-  if (!product) return { error: 'Logiciel inconnu : UC, MAINTENANCE ou PLANNING.' };
+  if (!product) return { error: 'Logiciel inconnu : UC, MAINTENANCE, PLANNING ou CONSOLE.' };
   const version = String(body.version || '').trim();
   if (!RELEASE_VERSION_PATTERN.test(version)) return { error: 'La version doit être au format ANNEE.MOIS.REVISION, par exemple 26.11.001.' };
   const notes = String(body.notes || '').trim().slice(0, 500) || null;
@@ -107,9 +109,10 @@ export function validateDesktopReleaseInput(body = {}) {
   if (!base64 || !/^[A-Za-z0-9+/=\s]+$/.test(base64)) return { error: 'Fichier invalide.' };
   const buffer = Buffer.from(base64, 'base64');
   if (buffer.length > MAX_INSTALLER_BYTES) return { error: `L’installateur doit faire moins de ${MAX_INSTALLER_BYTES / 1024 / 1024} Mo.`, status: 413 };
-  if (!isWindowsExecutable(buffer)) return { error: 'Ce fichier n’est pas un installateur Windows (.exe).' };
+  const isApk = product === 'CONSOLE';
+  if (isApk ? !isAndroidPackage(buffer) : !isWindowsExecutable(buffer)) return { error: isApk ? 'Ce fichier n’est pas un APK Android (.apk).' : 'Ce fichier n’est pas un installateur Windows (.exe).' };
   const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
-  return { value: { product, version, notes, buffer, sha256, size: buffer.length, fileName: `${INSTALLER_FILE_PREFIX[product]}-${version}.exe` } };
+  return { value: { product, version, notes, buffer, sha256, size: buffer.length, fileName: `${INSTALLER_FILE_PREFIX[product]}-${version}.${isApk ? 'apk' : 'exe'}` } };
 }
 
 // Compare deux versions « a.b.c » : positif si left est plus récente.

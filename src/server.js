@@ -4726,7 +4726,7 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
 import {
   CONTENT_FILE_PATTERN, DESKTOP_INSTALLER_ID_PATTERN, MAX_CONTENT_FILE_BYTES, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, buildUpdateManifest, compareVersions, contentFolderOf, detectImageMime, handleDesktopSync,
-  isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateContentConfig, validateDesktopReleaseInput, validateScreenProfileInput,
+  isValidImei, isValidUcSerial, newMediaId, nextContentRevision, normalizeImei, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateContentConfig, validateDesktopReleaseInput, validateScreenProfileInput,
 } from './lib/ineoDesktop.js';
 
 const createDesktopRateLimiter = (limitPerMinute) => {
@@ -4770,6 +4770,50 @@ const desktopSyncHandler = (isRateLimited) => async (req, res) => {
 // « identify » est conservé pour les logiciels déjà installés ; « sync » ajoute l'état, les écrans et les commandes pilote.
 app.post('/api/ineo-rbe-desktop/identify', desktopSyncHandler(isUcIdentifyRateLimited));
 app.post('/api/ineo-rbe-desktop/sync', desktopSyncHandler(isUcSyncRateLimited));
+// Console mobile (APK) : n'est activée que si son IMEI est rattaché à un véhicule qui a lui-même un UC associé.
+// Réponse identique pour « IMEI inconnu » et « véhicule sans UC », pour ne pas révéler quels IMEI existent.
+const isConsoleActivationRateLimited = createDesktopRateLimiter(10);
+app.post('/api/ineo-rbe-desktop/console/activate', async (req, res) => {
+  if (isConsoleActivationRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
+    return res.status(429).json({ error: 'Trop de demandes, réessayez dans une minute.' });
+  }
+  try {
+    const imei = normalizeImei(req.body?.imei);
+    if (!/^\d{14,17}$/.test(imei)) return res.status(400).json({ error: 'IMEI invalide.' });
+    const refused = () => res.status(403).json({ activated: false, error: 'Cette console n’est rattachée à aucun véhicule équipé d’un UC.' });
+    // L'IMEI est celui déjà saisi dans le profil SAEIV du véhicule.
+    const tracker = await prisma.ineoVehicleTracker.findUnique({ where: { imei }, select: { vehicleParc: true } });
+    const profile = tracker ? await prisma.ineoVehicleProfile.findUnique({ where: { vehicleParc: tracker.vehicleParc }, include: { vehicle: true } }) : null;
+    if (!profile?.ucSerial) return refused();
+    const now = new Date();
+    const info = {
+      deviceId: textOfBody(req.body?.deviceId, 64),
+      model: textOfBody(req.body?.model, 80),
+      appVersion: textOfBody(req.body?.appVersion, 32),
+    };
+    await prisma.ineoConsoleDevice.upsert({
+      where: { imei },
+      create: { imei, ...info, firstSeenAt: now, lastSeenAt: now },
+      update: { ...info, lastSeenAt: now },
+    });
+    const latest = await prisma.ineoContentRevision.findFirst({
+      where: { OR: [{ targetParc: null }, { targetParc: profile.vehicleParc }] },
+      orderBy: { createdAt: 'desc' },
+      select: { revision: true },
+    });
+    res.json({
+      activated: true,
+      vehicle: { parc: profile.vehicleParc, type: profile.vehicleType, label: profile.vehicle?.modele || null },
+      ucSerial: profile.ucSerial,
+      contentRevision: latest?.revision || null,
+    });
+  } catch (error) {
+    console.error('POST /api/ineo-rbe-desktop/console/activate:', error.message);
+    res.status(500).json({ error: 'Activation impossible.' });
+  }
+});
+const textOfBody = (value, max) => String(value ?? '').trim().slice(0, max) || null;
+
 // Numéro de révision de contenu publié : lu par l'outil Maintenance pour comparer avec celui de l'UC.
 app.get('/api/ineo-rbe-desktop/content-revision', async (req, res) => {
   try {
@@ -5018,7 +5062,7 @@ app.get(['/ineo/desktop-releases/:id/download', '/api/ineo/desktop-releases/:id/
     if (!release) return res.status(404).json({ error: 'Installateur introuvable.' });
     await logIneoOperationsActivity(req, 'INEO_DESKTOP_RELEASE_DOWNLOADED', true, { version: release.version });
     res.set({
-      'Content-Type': 'application/octet-stream',
+      'Content-Type': release.fileName.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'application/octet-stream',
       'Content-Length': String(release.size),
       'Content-Disposition': `attachment; filename="${release.fileName}"`,
       'X-Content-Type-Options': 'nosniff',
@@ -5231,11 +5275,6 @@ app.put(['/ineo/vehicle-profiles/:parc', '/api/ineo/vehicle-profiles/:parc'], re
         return res.status(409).json({ error: 'Ce numéro de série est celui du véhicule pilote.' });
       }
       profileData.ucSerial = ucSerial || null;
-    }
-    if (req.body?.consoleImei !== undefined) {
-      const consoleImei = normalizeImei(req.body.consoleImei);
-      if (consoleImei && !isValidImei(consoleImei)) return res.status(400).json({ error: 'IMEI invalide : 15 chiffres attendus (clé de contrôle incorrecte).' });
-      profileData.consoleImei = consoleImei || null;
     }
     if (req.body?.screenProfileId !== undefined) {
       const screenProfileId = String(req.body.screenProfileId || '').trim();
@@ -14150,7 +14189,7 @@ app.get('/api/ineo-rbe-desktop/installer/:id', async (req, res) => {
     const release = await prisma.ineoDesktopRelease.findUnique({ where: { id } });
     if (!release) return res.status(404).end();
     res.set({
-      'Content-Type': 'application/octet-stream',
+      'Content-Type': release.fileName.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'application/octet-stream',
       'Content-Length': String(release.size),
       'Content-Disposition': `attachment; filename="${release.fileName}"`,
       'X-Content-Type-Options': 'nosniff',

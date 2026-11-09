@@ -2,8 +2,13 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
 import {
-  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidUcSerial, newMediaId, nextContentRevision, normalizeProduct, serializeScreenProfile, validateContentConfig, validateDesktopReleaseInput, validateScreenProfileInput,
+  buildUpdateManifest, compareVersions, detectImageMime, handleDesktopSync, isValidImei, isValidUcSerial, newMediaId, nextContentRevision, normalizeImei, normalizeProduct, serializeScreenProfile, validateContentConfig, validateDesktopReleaseInput, validateScreenProfileInput,
 } from '../src/lib/ineoDesktop.js';
+
+test('IMEI de console : 15 chiffres avec clé de Luhn', () => {
+  assert.equal(isValidImei(normalizeImei('49-015420 323751 8')), true);
+  for (const bad of ['490154203237519', '12345', '49015420323751A', '']) assert.equal(isValidImei(bad), false);
+});
 
 test('content config keeps the startup announcement and lists the files it needs', () => {
   const sound = `${newMediaId()}.mp3`;

@@ -151,7 +151,7 @@ export const csrfProtection = (req, res, next) => {
   const isExpenseReportsRoute = /^\/(api\/)?finance\/expense-reports/.test(req.path);
   const isBot920ServiceRoute = /^\/api\/bot920\/(?:guild-context|moderation-cases|guilds\/\d{17,20}\/(?:birthdays(?:\/\d{17,20})?|log-events|collection\/draw|feedback|moderator-roles(?:\/\d{17,20})?)|temp-bans(?:\/due|\/[^/]+\/complete|\/guilds\/\d{17,20}\/users\/\d{17,20})?)$/.test(req.path);
   // Le logiciel embarqué Inéo RétroBus (UC) s'identifie sans session ni cookie : il ne peut pas fournir de jeton CSRF.
-  const isIneoUcIdentify = req.path === '/api/ineo-rbe-desktop/identify' || req.path === '/api/ineo-rbe-desktop/sync' || req.path === '/api/ineo-rbe-desktop/maintenance/check';
+  const isIneoUcIdentify = req.path === '/api/ineo-rbe-desktop/identify' || req.path === '/api/ineo-rbe-desktop/sync' || req.path === '/api/ineo-rbe-desktop/maintenance/check' || req.path === '/api/ineo-rbe-desktop/console/activate';
   
   if (publicRoutes.some(route => req.path === route) || isPublicBulletinTokenMutation || isExpenseReportsRoute || isBot920ServiceRoute || isIneoUcIdentify) {
     console.log(`✅ Bypassing CSRF for public route: ${req.path}`);
