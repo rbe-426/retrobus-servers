@@ -24,6 +24,19 @@ export const isValidUcSerial = (serial) => /^[A-Z0-9._\-/]{4,64}$/.test(serial) 
 
 export const newMediaId = () => crypto.randomBytes(16).toString('hex');
 
+// IMEI d'une console mobile : 15 chiffres, clé de Luhn valide.
+export const normalizeImei = (value) => String(value || '').replace(/[\s-]/g, '');
+export function isValidImei(imei) {
+  if (!/^\d{15}$/.test(imei)) return false;
+  let sum = 0;
+  for (let index = 0; index < 15; index += 1) {
+    let digit = Number(imei[14 - index]);
+    if (index % 2 === 1) { digit *= 2; if (digit > 9) digit -= 9; }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+
 // Contenu SAEIV d'une révision : annonces sonores et écrans, avec leurs fichiers (nom aléatoire + extension).
 export const CONTENT_FILE_PATTERN = /^[a-f0-9]{32}\.(wav|mp3|wma|png|jpe?g|bmp|gif)$/;
 export const MAX_CONTENT_FILE_BYTES = 25 * 1024 * 1024;

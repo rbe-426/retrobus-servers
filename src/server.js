@@ -5232,6 +5232,11 @@ app.put(['/ineo/vehicle-profiles/:parc', '/api/ineo/vehicle-profiles/:parc'], re
       }
       profileData.ucSerial = ucSerial || null;
     }
+    if (req.body?.consoleImei !== undefined) {
+      const consoleImei = normalizeImei(req.body.consoleImei);
+      if (consoleImei && !isValidImei(consoleImei)) return res.status(400).json({ error: 'IMEI invalide : 15 chiffres attendus (clé de contrôle incorrecte).' });
+      profileData.consoleImei = consoleImei || null;
+    }
     if (req.body?.screenProfileId !== undefined) {
       const screenProfileId = String(req.body.screenProfileId || '').trim();
       if (screenProfileId && !await prisma.ineoScreenProfile.findUnique({ where: { id: screenProfileId }, select: { id: true } })) {
