@@ -5018,6 +5018,40 @@ const presentDesktopRelease = (release) => ({
 });
 const DESKTOP_RELEASE_LIST_LIMIT = 20;
 
+app.get(['/ineo/console-apk', '/api/ineo/console-apk'], requireAuth, async (req, res) => {
+  try {
+    const releases = await prisma.ineoDesktopRelease.findMany({
+      where: { product: 'CONSOLE' }, orderBy: { createdAt: 'desc' }, take: DESKTOP_RELEASE_LIST_LIMIT,
+      select: { id: true, product: true, version: true, fileName: true, size: true, sha256: true, notes: true, createdBy: true, createdAt: true },
+    });
+    const latest = [...releases].sort((left, right) => compareVersions(right.version, left.version))[0];
+    res.json({ release: latest ? presentDesktopRelease(latest) : null });
+  } catch (error) {
+    console.error('GET /api/ineo/console-apk:', error.message);
+    res.status(500).json({ error: 'Impossible de charger l’application console' });
+  }
+});
+
+app.get(['/ineo/console-apk/:id/download', '/api/ineo/console-apk/:id/download'], requireAuth, async (req, res) => {
+  try {
+    const release = await prisma.ineoDesktopRelease.findFirst({ where: { id: String(req.params.id || ''), product: 'CONSOLE' } });
+    if (!release) return res.status(404).json({ error: 'Application introuvable.' });
+    res.set({
+      'Content-Type': 'application/vnd.android.package-archive',
+      'Content-Length': String(release.size),
+      'Content-Disposition': `attachment; filename="${release.fileName}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'X-Installer-Sha256': release.sha256,
+      'Cache-Control': 'private, no-store',
+      'Access-Control-Expose-Headers': 'Content-Disposition, X-Installer-Sha256',
+    });
+    res.send(Buffer.from(release.data));
+  } catch (error) {
+    console.error('GET /api/ineo/console-apk/:id/download:', error.message);
+    res.status(500).json({ error: 'Impossible de télécharger l’application' });
+  }
+});
+
 app.get(['/ineo/desktop-releases', '/api/ineo/desktop-releases'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   const product = normalizeProduct(req.query.product);
   if (!product) return res.status(400).json({ error: 'Logiciel inconnu.' });
