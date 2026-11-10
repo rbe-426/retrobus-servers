@@ -792,6 +792,8 @@ model IneoMission {
   lastAccuracy       Float?
   lastPositionAt     DateTime?
   notes              String?
+  courses            Json?
+  courseIndex        Int                @default(0)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
   vehicle            Vehicle            @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
@@ -1076,6 +1078,20 @@ model IneoFreeTrackingStop {
 
   @@unique([sessionId, sequence])
   @@index([sessionId, recordedAt])
+}
+
+model IneoLine {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  color         String   @default("#9F063A")
+  destination1  String
+  destination2  String
+  outboundStops Json?
+  outboundPath  Json?
+  returnStops   Json?
+  returnPath    Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model IneoRoute {

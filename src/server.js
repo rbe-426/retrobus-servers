@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs';
@@ -4562,6 +4562,140 @@ app.put(['/ineo/driver-profiles/:identifier', '/api/ineo/driver-profiles/:identi
   }
 });
 
+const INEO_COURSE_DIRECTIONS = ['ALLER', 'RETOUR', 'HLP'];
+
+const normalizeIneoLineStops = (raw) => (Array.isArray(raw) ? raw.slice(0, 300) : []).map((stop, index) => ({
+  order: index,
+  city: String(stop?.city || '').trim().slice(0, 80),
+  label: String(stop?.label || '').trim().slice(0, 120),
+  lat: Number(stop?.lat),
+  lng: Number(stop?.lng),
+})).filter((stop) => stop.label && Number.isFinite(stop.lat) && Number.isFinite(stop.lng) && Math.abs(stop.lat) <= 90 && Math.abs(stop.lng) <= 180);
+
+const normalizeIneoLinePath = (raw) => (Array.isArray(raw) ? raw.slice(0, 5000) : [])
+  .map((point) => [Number(point?.[0]), Number(point?.[1])])
+  .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180);
+
+// Courses d'un service : chaque course = une ligne + un sens (ALLER, RETOUR) ou un haut-le-pied (HLP), avec une heure de départ facultative.
+const normalizeIneoMissionCourses = (raw) => (Array.isArray(raw) ? raw.slice(0, 200) : []).map((course) => ({
+  lineId: String(course?.lineId || '').trim(),
+  direction: String(course?.direction || '').trim().toUpperCase(),
+  departureTime: /^\d{2}:\d{2}$/.test(String(course?.departureTime || '').trim()) ? String(course.departureTime).trim() : null,
+})).filter((course) => INEO_COURSE_DIRECTIONS.includes(course.direction) && (course.direction === 'HLP' || course.lineId));
+
+const resolveIneoMissionPlan = async (body, serviceReference, courseReference) => {
+  if (!serviceReference) return { error: 'Le numéro de service est requis' };
+  if (serviceReference.length > 40) return { error: 'Numéro de service trop long (40 caractères maximum)' };
+  if (Array.isArray(body?.courses) && body.courses.length) {
+    const courses = normalizeIneoMissionCourses(body.courses);
+    if (courses.length !== body.courses.length) return { error: 'Courses invalides : choisissez une ligne et un sens pour chaque course' };
+    const ids = [...new Set(courses.filter((course) => course.lineId).map((course) => course.lineId))];
+    const lines = ids.length ? await prisma.ineoLine.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : [];
+    if (lines.length !== ids.length) return { error: 'Une ligne choisie n’existe plus' };
+    const names = new Map(lines.map((line) => [line.id, line.name]));
+    return { courses: courses.map((course) => ({ ...course, lineName: names.get(course.lineId) || null })), courseReference: null, legacy: false };
+  }
+  if (!courseReference) return { error: 'Ajoutez au moins une course au service' };
+  if (!/^RBE-\d{3}-\d{3}$/.test(serviceReference)) return { error: 'Format code service attendu: RBE-999-999' };
+  if (!/^\d{3}-\d{5}-\d{3,4}$/.test(courseReference)) return { error: 'Format code course attendu: 999-26726-920' };
+  const route = await prisma.ineoRoute.findFirst({
+    where: { courseReference, serviceReference: { equals: serviceReference, mode: 'insensitive' } },
+  });
+  if (!route) return { error: 'Le code course doit être configuré et rattaché au code service indiqué' };
+  return { courseReference, legacy: true };
+};
+
+// Itinéraire de la course en cours, au format attendu par la console (route.stops) ; repli sur l'ancien trajet à code course.
+const buildIneoMissionRoute = async (mission) => {
+  const courses = Array.isArray(mission?.courses) ? mission.courses : null;
+  if (!courses || !courses.length) {
+    if (!mission?.courseReference) return null;
+    return prisma.ineoRoute.findFirst({ where: { courseReference: { equals: mission.courseReference, mode: 'insensitive' } }, orderBy: { updatedAt: 'desc' } });
+  }
+  const index = Math.max(0, Math.min(Number(mission.courseIndex) || 0, courses.length - 1));
+  const course = courses[index];
+  const base = { courseNumber: index + 1, courseCount: courses.length, direction: course.direction, scheduledDeparture: course.departureTime || null };
+  if (course.direction === 'HLP' || !course.lineId) return { ...base, routeName: 'Haut-le-pied', lineName: course.lineName || null, color: null, stops: [], path: [] };
+  const line = await prisma.ineoLine.findUnique({ where: { id: course.lineId } });
+  if (!line) return { ...base, routeName: course.lineName || 'Ligne supprimée', lineName: course.lineName || null, color: null, stops: [], path: [] };
+  const outbound = course.direction === 'ALLER';
+  const stops = (Array.isArray(outbound ? line.outboundStops : line.returnStops) ? (outbound ? line.outboundStops : line.returnStops) : [])
+    .map((stop) => ({ ...stop, label: stop.city ? `${stop.city} – ${stop.label}` : stop.label, scheduledTime: null }));
+  const path = Array.isArray(outbound ? line.outboundPath : line.returnPath) ? (outbound ? line.outboundPath : line.returnPath) : [];
+  return { ...base, routeName: `${line.name} → ${outbound ? line.destination2 : line.destination1}`, lineName: line.name, color: line.color, stops, path };
+};
+
+app.get(['/ineo/lines', '/api/ineo/lines'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const lines = await prisma.ineoLine.findMany({ orderBy: { name: 'asc' } });
+    res.json({ lines });
+  } catch (error) {
+    console.error('GET /api/ineo/lines:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les lignes' });
+  }
+});
+
+const readIneoLineBody = (body = {}, partial = false) => {
+  const data = {};
+  const text = (key, max) => { if (!partial || body[key] !== undefined) data[key] = String(body[key] || '').trim().slice(0, max); };
+  text('name', 60); text('destination1', 80); text('destination2', 80);
+  if (!partial || body.color !== undefined) data.color = String(body.color || '').trim();
+  if (data.color !== undefined && !/^#[0-9A-Fa-f]{6}$/.test(data.color)) return { error: 'Couleur invalide (format #RRGGBB)' };
+  if (body.outboundStops !== undefined) data.outboundStops = normalizeIneoLineStops(body.outboundStops);
+  if (body.returnStops !== undefined) data.returnStops = normalizeIneoLineStops(body.returnStops);
+  if (body.outboundPath !== undefined) data.outboundPath = normalizeIneoLinePath(body.outboundPath);
+  if (body.returnPath !== undefined) data.returnPath = normalizeIneoLinePath(body.returnPath);
+  if (!partial && (!data.name || !data.destination1 || !data.destination2)) return { error: 'Nom et destinations 1 et 2 requis' };
+  if (partial && ['name', 'destination1', 'destination2'].some((key) => data[key] !== undefined && !data[key])) return { error: 'Nom et destinations ne peuvent pas être vides' };
+  return { data };
+};
+
+app.post(['/ineo/lines', '/api/ineo/lines'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const parsed = readIneoLineBody(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const line = await prisma.ineoLine.create({ data: parsed.data });
+    await logIneoOperationsActivity(req, 'INEO_LINE_CREATED', true, { lineId: line.id, name: line.name });
+    res.status(201).json({ line });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Une ligne porte déjà ce nom' });
+    console.error('POST /api/ineo/lines:', error.message);
+    res.status(500).json({ error: 'Impossible de créer la ligne' });
+  }
+});
+
+app.put(['/ineo/lines/:id', '/api/ineo/lines/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const parsed = readIneoLineBody(req.body, true);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const line = await prisma.ineoLine.update({ where: { id: String(req.params.id || '') }, data: parsed.data });
+    await logIneoOperationsActivity(req, 'INEO_LINE_SAVED', true, { lineId: line.id, name: line.name });
+    res.json({ line });
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Ligne introuvable' });
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Une ligne porte déjà ce nom' });
+    console.error('PUT /api/ineo/lines/:id:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer la ligne' });
+  }
+});
+
+app.delete(['/ineo/lines/:id', '/api/ineo/lines/:id'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const line = await prisma.ineoLine.findUnique({ where: { id } });
+    if (!line) return res.status(404).json({ error: 'Ligne introuvable' });
+    const open = await prisma.ineoMission.findMany({ where: { status: { in: ['PLANNED', 'ACTIVE'] } }, select: { serviceReference: true, courses: true } });
+    const used = open.find((mission) => Array.isArray(mission.courses) && mission.courses.some((course) => course?.lineId === id));
+    if (used) return res.status(409).json({ error: `Cette ligne est utilisée par le service « ${used.serviceReference} ». Modifiez ce service avant de la supprimer.` });
+    await prisma.ineoLine.delete({ where: { id } });
+    await logIneoOperationsActivity(req, 'INEO_LINE_DELETED', true, { lineId: id, name: line.name });
+    res.json({ action: 'DELETED' });
+  } catch (error) {
+    console.error('DELETE /api/ineo/lines/:id:', error.message);
+    res.status(500).json({ error: 'Impossible de supprimer la ligne' });
+  }
+});
+
 app.get(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const status = String(req.query.status || '').toUpperCase();
@@ -4582,23 +4716,18 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOpera
     const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes, allowExpiredFimo } = req.body || {};
     const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
     const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
-    if (!serviceName || !vehicleParc || !driverIdentifier || !normalizedServiceReference || !normalizedCourseReference) {
-      return res.status(400).json({ error: 'Service, codes service et course, véhicule et conducteur sont requis' });
-    }
-    if (!/^RBE-\d{3}-\d{3}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
-    if (!/^\d{3}-\d{5}-\d{3,4}$/.test(normalizedCourseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
+    const plan = await resolveIneoMissionPlan(req.body, normalizedServiceReference, normalizedCourseReference);
+    if (plan.error) return res.status(400).json({ error: plan.error });
+    if (!vehicleParc || !driverIdentifier) return res.status(400).json({ error: 'Véhicule et conducteur sont requis' });
     const assignmentIssue = await getIneoAssignmentIssue(driverIdentifier, Boolean(allowExpiredFimo));
     if (assignmentIssue) return res.status(assignmentIssue.status).json(assignmentIssue);
     const vehicle = await prisma.vehicle.findUnique({ where: { parc: String(vehicleParc) } });
     if (!vehicle) return res.status(404).json({ error: 'Véhicule introuvable' });
-    const route = await prisma.ineoRoute.findFirst({
-      where: { courseReference: normalizedCourseReference, serviceReference: { equals: normalizedServiceReference, mode: 'insensitive' } },
-    });
-    if (!route) return res.status(400).json({ error: 'Le code course doit être configuré et rattaché au code service indiqué' });
-    await attachIneoFreeTrackingAssignment(normalizedCourseReference, normalizedServiceReference, vehicle.parc, String(driverIdentifier).trim().toLowerCase(), driverName?.trim() || null);
+    if (plan.legacy) await attachIneoFreeTrackingAssignment(normalizedCourseReference, normalizedServiceReference, vehicle.parc, String(driverIdentifier).trim().toLowerCase(), driverName?.trim() || null);
     const mission = await prisma.ineoMission.create({
       data: {
-        serviceName: String(serviceName).trim(), serviceReference: normalizedServiceReference, courseReference: normalizedCourseReference,
+        serviceName: String(serviceName || normalizedServiceReference).trim(), serviceReference: normalizedServiceReference, courseReference: plan.courseReference,
+        courses: plan.courses || undefined,
         vehicleParc: vehicle.parc, driverIdentifier: String(driverIdentifier).trim().toLowerCase(),
         driverName: driverName?.trim() || null,
         scheduledDeparture: scheduledDeparture ? new Date(scheduledDeparture) : null,
@@ -4607,7 +4736,7 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOpera
       },
       include: { vehicle: true },
     });
-    await logIneoOperationsActivity(req, 'INEO_MISSION_CREATED', true, { missionId: mission.id, vehicleParc: mission.vehicleParc, serviceName: mission.serviceName, serviceReference: normalizedServiceReference, courseReference: normalizedCourseReference });
+    await logIneoOperationsActivity(req, 'INEO_MISSION_CREATED', true, { missionId: mission.id, vehicleParc: mission.vehicleParc, serviceName: mission.serviceName, serviceReference: normalizedServiceReference, courseReference: plan.courseReference });
     res.status(201).json({ mission });
   } catch (error) {
     console.error('❌ POST /api/ineo/missions:', error.message);
@@ -4649,27 +4778,22 @@ app.patch(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, require
     const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes, allowExpiredFimo } = req.body || {};
     const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
     const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
-    if (!serviceName || !vehicleParc || !driverIdentifier || !normalizedServiceReference || !normalizedCourseReference) {
-      return res.status(400).json({ error: 'Service, codes service et course, véhicule et conducteur sont requis' });
-    }
-    if (!/^RBE-\d{3}-\d{3}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
-    if (!/^\d{3}-\d{5}-\d{3,4}$/.test(normalizedCourseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
+    const plan = await resolveIneoMissionPlan(req.body, normalizedServiceReference, normalizedCourseReference);
+    if (plan.error) return res.status(400).json({ error: plan.error });
+    if (!vehicleParc || !driverIdentifier) return res.status(400).json({ error: 'Véhicule et conducteur sont requis' });
     const assignmentIssue = await getIneoAssignmentIssue(driverIdentifier, Boolean(allowExpiredFimo));
     if (assignmentIssue) return res.status(assignmentIssue.status).json(assignmentIssue);
-    const [vehicle, route] = await Promise.all([
-      prisma.vehicle.findUnique({ where: { parc: String(vehicleParc).trim() } }),
-      prisma.ineoRoute.findFirst({ where: { courseReference: normalizedCourseReference, serviceReference: { equals: normalizedServiceReference, mode: 'insensitive' } } }),
-    ]);
+    const vehicle = await prisma.vehicle.findUnique({ where: { parc: String(vehicleParc).trim() } });
     if (!vehicle) return res.status(404).json({ error: 'Véhicule introuvable' });
-    if (!route) return res.status(400).json({ error: 'Le code course doit être configuré et rattaché au code service indiqué' });
-    await attachIneoFreeTrackingAssignment(normalizedCourseReference, normalizedServiceReference, vehicle.parc, String(driverIdentifier).trim().toLowerCase(), String(driverName || '').trim() || null);
+    if (plan.legacy) await attachIneoFreeTrackingAssignment(normalizedCourseReference, normalizedServiceReference, vehicle.parc, String(driverIdentifier).trim().toLowerCase(), String(driverName || '').trim() || null);
 
     const updatedMission = await prisma.ineoMission.update({
       where: { id: missionId },
       data: {
-        serviceName: String(serviceName).trim(),
+        serviceName: String(serviceName || normalizedServiceReference).trim(),
         serviceReference: normalizedServiceReference,
-        courseReference: normalizedCourseReference,
+        courseReference: plan.courseReference,
+        ...(plan.courses ? { courses: plan.courses, courseIndex: mission.status === 'PLANNED' ? 0 : Math.min(mission.courseIndex || 0, plan.courses.length - 1) } : {}),
         vehicleParc: vehicle.parc,
         driverIdentifier: String(driverIdentifier).trim().toLowerCase(),
         driverName: String(driverName || '').trim() || null,
@@ -5801,10 +5925,7 @@ app.get(['/ineo/driver/current', '/api/ineo/driver/current'], requireAuth, async
     });
     const now = Date.now();
     const mission = activeMission || plannedMissions.sort((left, right) => Math.abs(new Date(left.scheduledDeparture || 0).getTime() - now) - Math.abs(new Date(right.scheduledDeparture || 0).getTime() - now))[0] || null;
-    const route = mission ? await prisma.ineoRoute.findFirst({
-      where: { courseReference: { equals: mission.courseReference || '', mode: 'insensitive' } },
-      orderBy: { updatedAt: 'desc' },
-    }) : null;
+    const route = mission ? await buildIneoMissionRoute(mission) : null;
     const freeTrackingSession = mission ? await findIneoFreeTrackingSession(mission.courseReference) : null;
     res.json({ mission, route, freeTracking: freeTrackingSession ? { stopByStop: freeTrackingSession.stopByStop } : null, driverName: context.name });
   } catch (error) {
@@ -5820,19 +5941,27 @@ app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAu
     if (result.mission.status !== 'PLANNED') return res.status(409).json({ error: 'Cette mission ne peut pas être démarrée' });
     const serviceReference = String(req.body?.serviceReference || '').trim().toUpperCase();
     const courseReference = String(req.body?.courseReference || '').trim().toUpperCase();
-    if (!serviceReference || !courseReference) return res.status(400).json({ error: 'Code service et code course requis pour prendre le service' });
-    if (!/^RBE-\d{3}-\d{3}$/.test(serviceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
-    if (!/^\d{3}-\d{5}-\d{3,4}$/.test(courseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
-    if (serviceReference !== String(result.mission.serviceReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le code service saisi ne correspond pas à votre affectation' });
-    const assignedCourseReference = String(result.mission.courseReference || '').trim().toUpperCase();
-    if (assignedCourseReference && courseReference !== assignedCourseReference) return res.status(403).json({ error: 'Le code course saisi ne correspond pas à votre affectation' });
-    const route = await prisma.ineoRoute.findFirst({
-      where: { courseReference, serviceReference: { equals: serviceReference, mode: 'insensitive' } },
-    });
-    if (!route) return res.status(403).json({ error: 'Le code course ne correspond pas au code service affecté' });
+    const hasCourses = Array.isArray(result.mission.courses) && result.mission.courses.length > 0;
+    if (!serviceReference || (!hasCourses && !courseReference)) return res.status(400).json({ error: hasCourses ? 'Numéro de service requis pour prendre le service' : 'Code service et code course requis pour prendre le service' });
+    if (serviceReference !== String(result.mission.serviceReference || '').trim().toUpperCase()) return res.status(403).json({ error: 'Le numéro de service saisi ne correspond pas à votre affectation' });
+    let route;
+    let missionCourseReference = null;
+    if (hasCourses) {
+      route = await buildIneoMissionRoute({ ...result.mission, courseIndex: 0 });
+    } else {
+      if (!/^RBE-\d{3}-\d{3}$/.test(serviceReference)) return res.status(400).json({ error: 'Format code service attendu: RBE-999-999' });
+      if (!/^\d{3}-\d{5}-\d{3,4}$/.test(courseReference)) return res.status(400).json({ error: 'Format code course attendu: 999-26726-920' });
+      const assignedCourseReference = String(result.mission.courseReference || '').trim().toUpperCase();
+      if (assignedCourseReference && courseReference !== assignedCourseReference) return res.status(403).json({ error: 'Le code course saisi ne correspond pas à votre affectation' });
+      route = await prisma.ineoRoute.findFirst({
+        where: { courseReference, serviceReference: { equals: serviceReference, mode: 'insensitive' } },
+      });
+      if (!route) return res.status(403).json({ error: 'Le code course ne correspond pas au code service affecté' });
+      missionCourseReference = assignedCourseReference || courseReference;
+    }
     const mission = await prisma.ineoMission.update({
       where: { id: result.mission.id },
-      data: { status: 'ACTIVE', actualDeparture: new Date(), courseReference: assignedCourseReference || courseReference },
+      data: { status: 'ACTIVE', actualDeparture: new Date(), courseIndex: 0, ...(hasCourses ? {} : { courseReference: missionCourseReference }) },
       include: { vehicle: true },
     });
     const freeTrackingSession = await findIneoFreeTrackingSession(mission.courseReference);
@@ -5846,6 +5975,22 @@ app.post(['/ineo/missions/:id/start', '/api/ineo/missions/:id/start'], requireAu
   } catch (error) {
     console.error('❌ POST /api/ineo/missions/:id/start:', error.message);
     res.status(500).json({ error: 'Impossible de démarrer la mission' });
+  }
+});
+
+app.post(['/ineo/missions/:id/next-course', '/api/ineo/missions/:id/next-course'], requireAuth, async (req, res) => {
+  try {
+    const result = await findIneoDriverMission(req, req.params.id);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    if (result.mission.status !== 'ACTIVE') return res.status(409).json({ error: 'Le service doit être en cours' });
+    const courses = Array.isArray(result.mission.courses) ? result.mission.courses : [];
+    const next = (result.mission.courseIndex || 0) + 1;
+    if (next >= courses.length) return res.status(409).json({ error: 'Dernière course du service : terminez le service' });
+    const mission = await prisma.ineoMission.update({ where: { id: result.mission.id }, data: { courseIndex: next }, include: { vehicle: true } });
+    res.json({ mission, route: await buildIneoMissionRoute(mission) });
+  } catch (error) {
+    console.error('❌ POST /api/ineo/missions/:id/next-course:', error.message);
+    res.status(500).json({ error: 'Impossible de passer à la course suivante' });
   }
 });
 
