@@ -14317,6 +14317,33 @@ app.get(['/ineo/map-tiles/:z/:x/:y.png', '/api/ineo/map-tiles/:z/:x/:y.png'], re
   }
 });
 
+// Tracé routier entre deux points (OSRM) : le Gestionnaire l'utilise pour suivre les routes au lieu d'une ligne droite.
+app.get(['/ineo/route', '/api/ineo/route'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const parse = (value) => {
+    const [lat, lng] = String(value || '').split(',').map(Number);
+    return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+  };
+  const from = parse(req.query.from);
+  const to = parse(req.query.to);
+  if (!from || !to) return res.status(400).json({ error: 'Points invalides.' });
+  try {
+    const upstream = await fetch(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`, {
+      headers: { 'User-Agent': 'RetroBusEssonne-IneoPlanning/1.0 (contact: retrobus-essonne.fr)' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!upstream.ok) return res.status(502).json({ error: 'Calcul d’itinéraire indisponible' });
+    const data = await upstream.json();
+    const coordinates = data?.routes?.[0]?.geometry?.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length === 0) return res.status(404).json({ error: 'Aucune route trouvée entre ces points' });
+    const step = Math.max(1, Math.ceil(coordinates.length / 1500));
+    const points = coordinates.filter((_, index) => index % step === 0 || index === coordinates.length - 1)
+      .map(([lng, lat]) => [Math.round(lat * 1e6) / 1e6, Math.round(lng * 1e6) / 1e6]);
+    res.json({ points });
+  } catch (error) {
+    res.status(502).json({ error: 'Calcul d’itinéraire indisponible' });
+  }
+});
+
 app.get(['/ineo/geocode', '/api/ineo/geocode'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 200);
   if (query.length < 3) return res.json({ results: [] });
