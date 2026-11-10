@@ -5117,9 +5117,15 @@ app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth,
 // Lignes de la dernière révision publiée pour tous les véhicules : sert au configurateur à repérer les lignes modifiées depuis.
 app.get(['/ineo/content-revisions/latest-lines', '/api/ineo/content-revisions/latest-lines'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
-    const latest = await prisma.ineoContentRevision.findFirst({ where: { targetParc: null }, orderBy: { createdAt: 'desc' }, select: { revision: true, createdAt: true, payload: true } });
+    // Les révisions ciblées sur un véhicule portent aussi les lignes : on prend la plus récente qui en contient.
+    const recent = await prisma.ineoContentRevision.findMany({ orderBy: { createdAt: 'desc' }, take: 30, select: { revision: true, createdAt: true, payload: true } });
+    let latest = null;
     let content = null;
-    try { content = latest?.payload ? JSON.parse(latest.payload) : null; } catch { content = null; }
+    for (const candidate of recent) {
+      let parsed = null;
+      try { parsed = candidate.payload ? JSON.parse(candidate.payload) : null; } catch { parsed = null; }
+      if (Array.isArray(parsed?.lines)) { latest = candidate; content = parsed; break; }
+    }
     res.json({ revision: latest?.revision || null, publishedAt: latest?.createdAt || null, hasLines: Array.isArray(content?.lines), lines: content?.lines || [] });
   } catch (error) {
     console.error('GET /api/ineo/content-revisions/latest-lines:', error.message);
