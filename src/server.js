@@ -4849,7 +4849,7 @@ app.get(['/ineo/vehicle-profiles', '/api/ineo/vehicle-profiles'], requireAuth, r
 
 // Numéro de série de l'UC (ordinateur embarqué) : extrait par le logiciel Inéo RétroBus, jamais saisi à la main en production.
 import {
-  CONTENT_FILE_PATTERN, DESKTOP_INSTALLER_ID_PATTERN, MAX_CONTENT_FILE_BYTES, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, buildUpdateManifest, compareVersions, contentFolderOf, detectImageMime, handleDesktopSync,
+  CONTENT_FILE_PATTERN, DESKTOP_INSTALLER_ID_PATTERN, MAX_CONTENT_FILE_BYTES, MAX_MEDIA_BYTES, MEDIA_ID_PATTERN, PILOT_COMMAND_TYPES, PILOT_ONLINE_WINDOW_MS, PILOT_PARC, buildUpdateManifest, compareVersions, contentFolderOf, detectImageMime, handleDesktopSync,
   isValidImei, isValidUcSerial, newMediaId, nextContentRevision, normalizeImei, normalizeProduct, normalizeUcSerial, serializeScreenProfile, validateContentConfig, validateDesktopReleaseInput, validateScreenProfileInput,
 } from './lib/ineoDesktop.js';
 
@@ -4938,13 +4938,22 @@ app.post('/api/ineo-rbe-desktop/console/activate', async (req, res) => {
 });
 const textOfBody = (value, max) => String(value ?? '').trim().slice(0, max) || null;
 
+// Cible de contenu d'un UC : le parc de son véhicule, ou « PILOTE » s'il s'agit du PC du véhicule pilote.
+const contentTargetForSerial = async (serial) => {
+  if (!serial || !isValidUcSerial(serial)) return null;
+  const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, select: { vehicleParc: true } });
+  if (profile) return profile.vehicleParc;
+  const pilot = await prisma.ineoPilotVehicle.findUnique({ where: { ucSerial: serial }, select: { id: true } });
+  return pilot ? PILOT_PARC : null;
+};
+
 // Numéro de révision de contenu publié : lu par l'outil Maintenance pour comparer avec celui de l'UC.
 app.get('/api/ineo-rbe-desktop/content-revision', async (req, res) => {
   try {
     const serial = normalizeUcSerial(req.query?.serial);
-    const profile = serial && isValidUcSerial(serial) ? await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, select: { vehicleParc: true } }) : null;
+    const target = await contentTargetForSerial(serial);
     const latest = await prisma.ineoContentRevision.findFirst({
-      where: { OR: [{ targetParc: null }, ...(profile ? [{ targetParc: profile.vehicleParc }] : [])] },
+      where: { OR: [{ targetParc: null }, ...(target ? [{ targetParc: target }] : [])] },
       orderBy: { createdAt: 'desc' },
       select: { revision: true, createdAt: true },
     });
@@ -4960,9 +4969,9 @@ app.get('/api/ineo-rbe-desktop/content', async (req, res) => {
   try {
     const serial = normalizeUcSerial(req.query?.serial);
     if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série UC invalide.' });
-    const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial }, select: { vehicleParc: true } });
+    const target = await contentTargetForSerial(serial);
     const latest = await prisma.ineoContentRevision.findFirst({
-      where: { OR: [{ targetParc: null }, ...(profile ? [{ targetParc: profile.vehicleParc }] : [])] },
+      where: { OR: [{ targetParc: null }, ...(target ? [{ targetParc: target }] : [])] },
       orderBy: { createdAt: 'desc' },
       select: { revision: true, payload: true },
     });
@@ -5097,13 +5106,15 @@ app.get(['/ineo/console-devices', '/api/ineo/console-devices'], requireAuth, req
 // Révisions de contenu : publier un contenu crée un nouveau numéro ; les UC connectés l'appliquent d'eux-mêmes à leur prochaine synchronisation.
 app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
-    const [revisions, devices, profiles] = await Promise.all([
+    const [revisions, devices, profiles, pilot] = await Promise.all([
       prisma.ineoContentRevision.findMany({ orderBy: { createdAt: 'desc' }, take: 50, select: { id: true, revision: true, notes: true, createdBy: true, targetParc: true, createdAt: true } }),
       prisma.ineoUcDevice.findMany({ select: { serial: true, contentRevision: true } }),
       prisma.ineoVehicleProfile.findMany({ where: { ucSerial: { not: null } }, select: { vehicleParc: true, ucSerial: true } }),
+      prisma.ineoPilotVehicle.findFirst({ select: { ucSerial: true } }),
     ]);
     const current = revisions[0]?.revision || null;
     const parcBySerial = new Map(profiles.map((profile) => [profile.ucSerial, profile.vehicleParc]));
+    if (pilot?.ucSerial) parcBySerial.set(pilot.ucSerial, PILOT_PARC);
     // Révision attendue par chaque UC : la dernière publiée pour tous ou ciblant son véhicule.
     const expectedFor = (serial) => revisions.find((item) => !item.targetParc || item.targetParc === parcBySerial.get(serial))?.revision || null;
     const upToDate = devices.filter((device) => expectedFor(device.serial) && device.contentRevision === expectedFor(device.serial)).length;
@@ -5138,7 +5149,9 @@ app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth
     const notes = String(req.body?.notes || '').trim().slice(0, 500) || null;
     const targetParc = String(req.body?.targetParc || '').trim().slice(0, 100) || null;
     if (targetParc) {
-      const target = await prisma.ineoVehicleProfile.findUnique({ where: { vehicleParc: targetParc }, select: { ucSerial: true } });
+      const target = targetParc === PILOT_PARC
+        ? await prisma.ineoPilotVehicle.findFirst({ select: { ucSerial: true } })
+        : await prisma.ineoVehicleProfile.findUnique({ where: { vehicleParc: targetParc }, select: { ucSerial: true } });
       if (!target?.ucSerial) return res.status(400).json({ error: 'Ce véhicule n’a pas d’UC associé : renseignez son numéro de série dans son profil.' });
     }
     const { value: content, error: contentError } = validateContentConfig(req.body?.config);

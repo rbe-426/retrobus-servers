@@ -15,6 +15,8 @@ export const PILOT_COMMAND_TYPES = ['CHECK_UPDATE', 'RELOAD', 'TEST_SOUND', 'TES
 export const MEDIA_ID_PATTERN = /^[a-f0-9]{32}$/;
 export const MAX_MEDIA_BYTES = 6 * 1024 * 1024;
 export const PILOT_ONLINE_WINDOW_MS = 45_000;
+// Identifiant de ciblage du véhicule pilote dans les révisions de contenu : il n'existe que dans le Gestionnaire et le Mainteneur, jamais dans le parc.
+export const PILOT_PARC = 'PILOTE';
 const COMMAND_EXPIRY_MS = 10 * 60_000;
 
 // Numéro de série de l'UC (ordinateur embarqué) : les valeurs génériques des constructeurs ne distinguent pas deux postes.
@@ -312,7 +314,7 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
     return latest?.revision || null;
   };
   const publishedContentRevision = await latestContentFor(null);
-
+  const pilotContentRevision = await latestContentFor(PILOT_PARC);
   const screenInclude = { screenProfile: { include: { screens: true } } };
   const pilot = await prisma.ineoPilotVehicle.findUnique({ where: { ucSerial: serial }, include: screenInclude });
   if (pilot) {
@@ -333,7 +335,7 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
     return {
       status: 200,
       payload: {
-        registered: true, serial, isPilot: true, pilotName: pilot.name, vehicle: null, profile: null, contentRevision: publishedContentRevision,
+        registered: true, serial, isPilot: true, pilotName: pilot.name, vehicle: null, profile: null, contentRevision: pilotContentRevision,
         screenProfile: serializeScreenProfile(pilot.screenProfile),
         commands: pending.map((command) => ({ id: command.id, type: command.type })),
       },
