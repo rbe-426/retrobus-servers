@@ -79,8 +79,36 @@ export function validateContentConfig(config) {
     onlineImage: contentFileOrNull(item?.onlineImage),
     onlineName: textOf(item?.onlineName, 120),
   }));
+  const rawLines = Array.isArray(config.lines) ? config.lines : [];
+  if (rawLines.length > 200) return { error: 'Le contenu SAEIV contient trop de lignes.' };
+  const lines = rawLines.map(sanitizeContentLine).filter((line) => line.name);
   const files = [...new Set([...announcements.map((item) => item.soundFile), ...screens.flatMap((item) => [item.offlineImage, item.onlineImage])].filter(Boolean))];
-  return { value: { announcements, screens, files } };
+  return { value: { announcements, screens, lines, files } };
+}
+
+const roundCoord = (value) => Math.round(finiteOr(value, 0) * 1e6) / 1e6;
+const sanitizeStops = (value) => (Array.isArray(value) ? value : []).slice(0, 300).map((stop) => ({
+  city: textOf(stop?.city, 80),
+  label: textOf(stop?.label, 120),
+  lat: roundCoord(stop?.lat),
+  lng: roundCoord(stop?.lng),
+}));
+const sanitizePath = (value) => (Array.isArray(value) ? value : []).slice(0, 5000)
+  .map((point) => (Array.isArray(point) ? [roundCoord(point[0]), roundCoord(point[1])] : [roundCoord(point?.lat), roundCoord(point?.lng)]));
+
+// Ligne publiée : identité, destinations, couleur et itinéraires aller/retour (arrêts + tracé).
+function sanitizeContentLine(item) {
+  return {
+    id: textOf(item?.id, 40),
+    name: textOf(item?.name, 80),
+    color: /^#[0-9a-fA-F]{6}$/.test(String(item?.color || '')) ? String(item.color) : '#9F063A',
+    destination1: textOf(item?.destination1, 120),
+    destination2: textOf(item?.destination2, 120),
+    outboundStops: sanitizeStops(item?.outboundStops),
+    outboundPath: sanitizePath(item?.outboundPath),
+    returnStops: sanitizeStops(item?.returnStops),
+    returnPath: sanitizePath(item?.returnPath),
+  };
 }
 
 export const MAX_INSTALLER_BYTES = 60 * 1024 * 1024;

@@ -4968,7 +4968,7 @@ app.get('/api/ineo-rbe-desktop/content', async (req, res) => {
     });
     let content = null;
     try { content = latest?.payload ? JSON.parse(latest.payload) : null; } catch { content = null; }
-    res.json({ revision: latest?.revision || null, hasContent: Boolean(content), announcements: content?.announcements || [], screens: content?.screens || [] });
+    res.json({ revision: latest?.revision || null, hasContent: Boolean(content), announcements: content?.announcements || [], screens: content?.screens || [], lines: content?.lines || [] });
   } catch (error) {
     console.error('GET /api/ineo-rbe-desktop/content:', error.message);
     res.status(500).json({ error: 'Contenu indisponible.' });
@@ -5114,6 +5114,19 @@ app.get(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth,
   }
 });
 
+// Lignes de la dernière révision publiée pour tous les véhicules : sert au configurateur à repérer les lignes modifiées depuis.
+app.get(['/ineo/content-revisions/latest-lines', '/api/ineo/content-revisions/latest-lines'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
+  try {
+    const latest = await prisma.ineoContentRevision.findFirst({ where: { targetParc: null }, orderBy: { createdAt: 'desc' }, select: { revision: true, createdAt: true, payload: true } });
+    let content = null;
+    try { content = latest?.payload ? JSON.parse(latest.payload) : null; } catch { content = null; }
+    res.json({ revision: latest?.revision || null, publishedAt: latest?.createdAt || null, hasLines: Array.isArray(content?.lines), lines: content?.lines || [] });
+  } catch (error) {
+    console.error('GET /api/ineo/content-revisions/latest-lines:', error.message);
+    res.status(500).json({ error: 'Impossible de charger les lignes publiées' });
+  }
+});
+
 app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   try {
     const notes = String(req.body?.notes || '').trim().slice(0, 500) || null;
@@ -5128,7 +5141,7 @@ app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth
       const known = await prisma.ineoContentFile.findMany({ where: { id: { in: content.files } }, select: { id: true } });
       if (known.length !== content.files.length) return res.status(400).json({ error: 'Des fichiers du contenu (sons ou images) n’ont pas été envoyés au serveur.' });
     }
-    const payload = content ? JSON.stringify({ announcements: content.announcements, screens: content.screens }) : null;
+    const payload = content ? JSON.stringify({ announcements: content.announcements, screens: content.screens, lines: content.lines }) : null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const last = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true } });
       try {
@@ -5136,7 +5149,7 @@ app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth
           data: { revision: nextContentRevision(last?.revision), notes, targetParc, payload, createdBy: req.user?.username || req.user?.email || null },
         });
         const { payload: _payload, ...revision } = created;
-        await logIneoOperationsActivity(req, 'INEO_CONTENT_REVISION_PUBLISHED', true, { revision: revision.revision, targetParc, announcements: content?.announcements.length ?? 0, screens: content?.screens.length ?? 0 });
+        await logIneoOperationsActivity(req, 'INEO_CONTENT_REVISION_PUBLISHED', true, { revision: revision.revision, targetParc, announcements: content?.announcements.length ?? 0, screens: content?.screens.length ?? 0, lines: content?.lines.length ?? 0 });
         return res.status(201).json({ revision });
       } catch (error) {
         if (error.code !== 'P2002') throw error;
