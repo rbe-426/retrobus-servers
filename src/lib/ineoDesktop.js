@@ -65,6 +65,7 @@ export function validateContentConfig(config) {
     distanceMeters: Math.min(5000, Math.max(0, Math.round(finiteOr(item?.distanceMeters, 100)))),
     soundFile: contentFileOrNull(item?.soundFile),
     soundName: textOf(item?.soundName, 120),
+    text: textOf(item?.text, 500),
     enabled: item?.enabled !== false,
   }));
   const screens = rawScreens.map((item) => ({
@@ -84,8 +85,58 @@ export function validateContentConfig(config) {
   const rawLines = Array.isArray(config.lines) ? config.lines : [];
   if (rawLines.length > 200) return { error: 'Le contenu SAEIV contient trop de lignes.' };
   const lines = rawLines.map(sanitizeContentLine).filter((line) => line.name);
-  const files = [...new Set([...announcements.map((item) => item.soundFile), ...screens.flatMap((item) => [item.offlineImage, item.onlineImage])].filter(Boolean))];
-  return { value: { announcements, screens, lines, files } };
+  const norms = sanitizeNorms(config.norms);
+  const files = [...new Set([...announcements.map((item) => item.soundFile), ...screens.flatMap((item) => [item.offlineImage, item.onlineImage]), norms?.screens.baseImage].filter(Boolean))];
+  return { value: { announcements, screens, lines, norms, files } };
+}
+
+const SLIDE_TYPES = ['NEXT_STOP', 'CORRESPONDENCES', 'DESTINATION', 'CLOCK', 'MESSAGE'];
+const colorOf = (value, fallback) => (/^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? String(value).toUpperCase() : fallback);
+const clampInt = (value, min, max, fallback) => Math.min(max, Math.max(min, Math.round(finiteOr(value, fallback))));
+
+// Normes SAEIV (voix embarquée et écrans TFT) : null si absentes, l'UC garde alors ses valeurs par défaut.
+export function sanitizeNorms(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const tts = raw.tts || {};
+  const texts = tts.texts || {};
+  const screens = raw.screens || {};
+  const slides = (Array.isArray(screens.slides) ? screens.slides : []).slice(0, 20).map((slide) => ({
+    type: SLIDE_TYPES.includes(slide?.type) ? slide.type : 'NEXT_STOP',
+    seconds: clampInt(slide?.seconds, 1, 120, 6),
+    text: textOf(slide?.text, 200),
+  }));
+  return {
+    tts: {
+      enabled: tts.enabled !== false,
+      engine: tts.engine === 'SAPI5' ? 'SAPI5' : 'SAPI4',
+      voice: textOf(tts.voice, 120),
+      rate: clampInt(tts.rate, 50, 150, 100),
+      volume: clampInt(tts.volume, 0, 100, 100),
+      preAnnounceMeters: clampInt(tts.preAnnounceMeters, 0, 2000, 150),
+      texts: {
+        line: textOf(texts.line, 300),
+        nextStop: textOf(texts.nextStop, 300),
+        correspondence: textOf(texts.correspondence, 300),
+        terminus: textOf(texts.terminus, 300),
+      },
+    },
+    screens: {
+      baseColor: colorOf(screens.baseColor, '#0F172A'),
+      textColor: colorOf(screens.textColor, '#FFFFFF'),
+      bandColor: colorOf(screens.bandColor, '#9F063A'),
+      baseImage: contentFileOrNull(screens.baseImage),
+      baseName: textOf(screens.baseName, 120),
+      lineColorBand: screens.lineColorBand !== false,
+      adaptiveText: screens.adaptiveText !== false,
+      gapSeconds: clampInt(screens.gapSeconds, 0, 60, 1),
+      showLine: screens.showLine !== false,
+      showDestination: screens.showDestination !== false,
+      showClock: screens.showClock !== false,
+      showNextStop: screens.showNextStop === true,
+      fixedPosition: screens.fixedPosition === 'BOTTOM' ? 'BOTTOM' : 'TOP',
+      slides,
+    },
+  };
 }
 
 const roundCoord = (value) => Math.round(finiteOr(value, 0) * 1e6) / 1e6;
