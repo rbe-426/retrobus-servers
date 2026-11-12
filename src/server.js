@@ -5089,6 +5089,36 @@ app.get(['/ineo/uc-devices', '/api/ineo/uc-devices'], requireAuth, requireIneoOp
   }
 });
 
+// Test de voix demandé par le Gestionnaire : l'UC l'interroge souvent (toutes les 10 s), le texte est remis une seule fois.
+app.get('/api/ineo-rbe-desktop/voice-test', async (req, res) => {
+  try {
+    const serial = normalizeUcSerial(req.query?.serial);
+    if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série UC invalide.' });
+    const device = await prisma.ineoUcDevice.findUnique({ where: { serial }, select: { voiceTestText: true, voiceTestAt: true } });
+    const fresh = device?.voiceTestText && device.voiceTestAt && Date.now() - new Date(device.voiceTestAt).getTime() < 5 * 60 * 1000;
+    if (device?.voiceTestText) await prisma.ineoUcDevice.update({ where: { serial }, data: { voiceTestText: null, voiceTestAt: null } });
+    res.json({ text: fresh ? device.voiceTestText : null });
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/voice-test:', error.message);
+    res.status(500).json({ error: 'Test de voix indisponible.' });
+  }
+});
+
+app.post(['/ineo/uc-devices/:serial/voice-test', '/api/ineo/uc-devices/:serial/voice-test'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const serial = normalizeUcSerial(req.params.serial);
+    const text = String(req.body?.text || '').trim().slice(0, 300);
+    if (!isValidUcSerial(serial) || !text) return res.status(400).json({ error: 'UC ou texte invalide.' });
+    const updated = await prisma.ineoUcDevice.updateMany({ where: { serial }, data: { voiceTestText: text, voiceTestAt: new Date() } });
+    if (!updated.count) return res.status(404).json({ error: 'UC inconnu : il ne s’est encore jamais connecté.' });
+    await logIneoOperationsActivity(req, 'INEO_UC_VOICE_TEST', true, { serial });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/ineo/uc-devices/:serial/voice-test:', error.message);
+    res.status(500).json({ error: 'Impossible d’envoyer le test de voix' });
+  }
+});
+
 app.get(['/ineo/console-devices', '/api/ineo/console-devices'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
   try {
     const [devices, trackers] = await Promise.all([

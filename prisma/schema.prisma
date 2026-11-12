@@ -859,6 +859,10 @@ model IneoUcDevice {
   networkOnline  Boolean  @default(true)
   screensRevision String?
   contentRevision String?
+  // Moteur vocal détecté par l'UC (ex. « Infovox : ELAN TTS French Sayso(Claire 22Khz) »), et test de voix demandé par le Gestionnaire.
+  voiceEngine    String?
+  voiceTestText  String?
+  voiceTestAt    DateTime?
   firstSeenAt    DateTime @default(now())
   lastSeenAt     DateTime @default(now())
 

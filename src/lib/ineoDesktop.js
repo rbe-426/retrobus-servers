@@ -368,13 +368,14 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
   const networkOnline = body.online !== false;
   const screensRevision = /^[a-f0-9]{1,40}$/.test(String(body.screensRevision || '')) ? String(body.screensRevision) : null;
   const contentRevision = CONTENT_REVISION_PATTERN.test(String(body.contentRevision || '')) ? String(body.contentRevision) : null;
+  const voiceEngine = String(body.voiceEngine || '').trim().slice(0, 160) || null;
   const results = (Array.isArray(body.commandResults) ? body.commandResults : []).slice(0, 20)
     .filter((entry) => COMMAND_ID_PATTERN.test(String(entry?.id || '')) && ['DONE', 'FAILED'].includes(entry?.status));
 
   await prisma.ineoUcDevice.upsert({
     where: { serial },
-    create: { serial, hostname, appVersion, networkOnline, screensRevision, contentRevision, firstSeenAt: now, lastSeenAt: now },
-    update: { hostname, appVersion, networkOnline, screensRevision, contentRevision, lastSeenAt: now },
+    create: { serial, hostname, appVersion, networkOnline, screensRevision, contentRevision, voiceEngine, firstSeenAt: now, lastSeenAt: now },
+    update: { hostname, appVersion, networkOnline, screensRevision, contentRevision, voiceEngine, lastSeenAt: now },
   });
   // Révision applicable à cet UC : publiée pour tous les véhicules, ou ciblant uniquement son véhicule.
   const latestContentFor = async (parc) => {
