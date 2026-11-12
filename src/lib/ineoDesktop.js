@@ -86,8 +86,29 @@ export function validateContentConfig(config) {
   if (rawLines.length > 200) return { error: 'Le contenu SAEIV contient trop de lignes.' };
   const lines = rawLines.map(sanitizeContentLine).filter((line) => line.name);
   const norms = sanitizeNorms(config.norms);
+  const exceptional = sanitizeExceptional(config.exceptional);
   const files = [...new Set([...announcements.map((item) => item.soundFile), ...screens.flatMap((item) => [item.offlineImage, item.onlineImage]), norms?.screens.baseImage].filter(Boolean))];
-  return { value: { announcements, screens, lines, norms, files } };
+  return { value: { announcements, screens, lines, norms, exceptional, files } };
+}
+
+const EXCEPTIONAL_SCOPES = ['ALL', 'LINES', 'STOPS'];
+const dateTimeOrEmpty = (value) => (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$/.test(String(value || '')) ? String(value).replace('T', ' ') : '');
+
+// Messages exceptionnels : lus à intervalle régulier sur toutes les lignes, sur les lignes choisies ou sur celles qui desservent les arrêts choisis.
+export function sanitizeExceptional(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 100).map((item) => ({
+    id: textOf(item?.id, 40),
+    title: textOf(item?.title, 120),
+    text: textOf(item?.text, 800),
+    enabled: item?.enabled !== false,
+    scope: EXCEPTIONAL_SCOPES.includes(item?.scope) ? item.scope : 'ALL',
+    lineIds: (Array.isArray(item?.lineIds) ? item.lineIds : []).slice(0, 200).map((id) => textOf(id, 40)).filter(Boolean),
+    stops: (Array.isArray(item?.stops) ? item.stops : []).slice(0, 300).map((label) => textOf(label, 120)).filter(Boolean),
+    intervalMinutes: clampInt(item?.intervalMinutes, 1, 240, 10),
+    startsAt: dateTimeOrEmpty(item?.startsAt),
+    endsAt: dateTimeOrEmpty(item?.endsAt),
+  })).filter((item) => item.id && item.text);
 }
 
 const SLIDE_TYPES = ['NEXT_STOP', 'CORRESPONDENCES', 'DESTINATION', 'CLOCK', 'MESSAGE'];

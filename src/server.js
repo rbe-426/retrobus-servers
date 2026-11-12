@@ -4977,7 +4977,7 @@ app.get('/api/ineo-rbe-desktop/content', async (req, res) => {
     });
     let content = null;
     try { content = latest?.payload ? JSON.parse(latest.payload) : null; } catch { content = null; }
-    res.json({ revision: latest?.revision || null, hasContent: Boolean(content), announcements: content?.announcements || [],     screens: content?.screens || [], lines: content?.lines || [], norms: content?.norms || null });
+    res.json({ revision: latest?.revision || null, hasContent: Boolean(content), announcements: content?.announcements || [],     screens: content?.screens || [], lines: content?.lines || [], norms: content?.norms || null, exceptional: content?.exceptional || [] });
   } catch (error) {
     console.error('GET /api/ineo-rbe-desktop/content:', error.message);
     res.status(500).json({ error: 'Contenu indisponible.' });
@@ -5160,7 +5160,7 @@ app.post(['/ineo/content-revisions', '/api/ineo/content-revisions'], requireAuth
       const known = await prisma.ineoContentFile.findMany({ where: { id: { in: content.files } }, select: { id: true } });
       if (known.length !== content.files.length) return res.status(400).json({ error: 'Des fichiers du contenu (sons ou images) n’ont pas été envoyés au serveur.' });
     }
-    const payload = content ? JSON.stringify({ announcements: content.announcements, screens: content.screens, lines: content.lines, norms: content.norms }) : null;
+    const payload = content ? JSON.stringify({ announcements: content.announcements, screens: content.screens, lines: content.lines, norms: content.norms, exceptional: content.exceptional }) : null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const last = await prisma.ineoContentRevision.findFirst({ orderBy: { createdAt: 'desc' }, select: { revision: true } });
       try {
