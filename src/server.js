@@ -4,7 +4,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes, pbkdf2Sync } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import nodemailer from 'nodemailer';
 import { google } from 'googleapis';
@@ -4530,8 +4530,10 @@ app.get(['/ineo/driver-profiles', '/api/ineo/driver-profiles'], requireAuth, req
     const profileStats = profiles.map((profile) => {
       const driverMissions = missions.filter((mission) => mission.driverIdentifier === profile.driverIdentifier);
       const durationHours = (start, end) => start && end ? Math.max(0, new Date(end).getTime() - new Date(start).getTime()) / 3600000 : 0;
+      const { driverCodeHash, ...publicProfile } = profile;
       return {
-        ...profile,
+        ...publicProfile,
+        hasConsoleCode: Boolean(driverCodeHash),
         theoreticalDrivingHours: driverMissions.reduce((total, mission) => total + durationHours(mission.scheduledDeparture, mission.scheduledArrival), 0),
         actualDrivingHours: driverMissions.reduce((total, mission) => total + durationHours(mission.actualDeparture, mission.actualArrival), 0),
       };
@@ -4553,9 +4555,25 @@ app.put(['/ineo/driver-profiles/:identifier', '/api/ineo/driver-profiles/:identi
       hasValidFimo: Boolean(req.body?.hasValidFimo),
       hasTachographCard: Boolean(req.body?.hasTachographCard),
     };
-    const profile = await prisma.ineoDriverProfile.upsert({ where: { driverIdentifier }, create: { driverIdentifier, ...profileData }, update: profileData });
+    // Matricule console (5 chiffres) et code (4 à 8 chiffres, stocké en PBKDF2-SHA1 pour être vérifiable hors ligne par l'UC).
+    if (req.body?.driverNumber !== undefined) {
+      const number = String(req.body.driverNumber || '').trim();
+      if (number && !/^\d{5}$/.test(number)) return res.status(400).json({ error: 'Le matricule doit comporter exactement 5 chiffres' });
+      profileData.driverNumber = number || null;
+    }
+    const code = String(req.body?.driverCode || '').trim();
+    if (code) {
+      if (!/^\d{4,8}$/.test(code)) return res.status(400).json({ error: 'Le code doit comporter de 4 à 8 chiffres' });
+      const salt = randomBytes(8).toString('hex');
+      profileData.driverCodeHash = `${salt}$${pbkdf2Sync(code, salt, 10000, 20, 'sha1').toString('hex')}`;
+    }
+    if (profileData.driverNumber) {
+      const clash = await prisma.ineoDriverProfile.findFirst({ where: { driverNumber: profileData.driverNumber, NOT: { driverIdentifier } }, select: { id: true } });
+      if (clash) return res.status(409).json({ error: 'Ce matricule est déjà attribué à un autre conducteur' });
+    }
+    const { driverCodeHash: savedHash, ...profile } = await prisma.ineoDriverProfile.upsert({ where: { driverIdentifier }, create: { driverIdentifier, ...profileData }, update: profileData });
     await logIneoOperationsActivity(req, 'INEO_DRIVER_PROFILE_SAVED', true, { driverIdentifier });
-    res.json({ profile });
+    res.json({ profile: { ...profile, hasConsoleCode: Boolean(savedHash) } });
   } catch (error) {
     console.error('PUT /api/ineo/driver-profiles:', error.message);
     res.status(500).json({ error: 'Impossible d enregistrer le profil conducteur Inéo' });
@@ -4879,18 +4897,89 @@ app.use('/api/ineo-rbe-desktop', (req, res, next) => {
   next();
 });
 
+// Services du véhicule et conducteurs autorisés, poussés à l'UC pour que la console n'ait besoin que du réseau local.
+const buildIneoUcConsolePayload = async (parc) => {
+  const missions = await prisma.ineoMission.findMany({
+    where: { vehicleParc: parc, status: { in: ['PLANNED', 'ACTIVE'] } }, orderBy: { scheduledDeparture: 'asc' }, take: 30,
+  });
+  const services = [];
+  for (const mission of missions) {
+    const count = Array.isArray(mission.courses) && mission.courses.length ? mission.courses.length : 1;
+    const routes = [];
+    for (let index = 0; index < count; index += 1) {
+      const route = await buildIneoMissionRoute({ ...mission, courseIndex: index });
+      if (!route) continue;
+      routes.push({
+        direction: String(route.direction || ''), routeName: String(route.routeName || ''), lineName: String(route.lineName || ''),
+        color: String(route.color || ''), scheduledDeparture: route.scheduledDeparture ? String(route.scheduledDeparture) : '',
+        stops: (Array.isArray(route.stops) ? route.stops : []).slice(0, 300)
+          .map((stop) => ({ city: String(stop?.city || ''), label: String(stop?.label || ''), lat: Number(stop?.lat), lng: Number(stop?.lng) }))
+          .filter((stop) => stop.label && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)),
+      });
+    }
+    services.push({
+      id: mission.id, serviceName: mission.serviceName, serviceReference: mission.serviceReference || '', status: mission.status,
+      driverIdentifier: mission.driverIdentifier, driverName: mission.driverName || '', courseIndex: Number(mission.courseIndex) || 0,
+      scheduledDeparture: mission.scheduledDeparture ? new Date(mission.scheduledDeparture).toISOString() : '', routes,
+    });
+  }
+  const profiles = await prisma.ineoDriverProfile.findMany({ where: { driverNumber: { not: null }, driverCodeHash: { not: null } } });
+  const drivers = profiles.map((p) => ({ identifier: p.driverIdentifier, number: p.driverNumber, codeHash: p.driverCodeHash }));
+  return { services, drivers };
+};
+
 const desktopSyncHandler = (isRateLimited) => async (req, res) => {
   if (isRateLimited(String(req.ip || req.socket?.remoteAddress || 'unknown'))) {
     return res.status(429).json({ error: 'Trop de demandes, réessayez dans une minute.' });
   }
   try {
     const { status, payload } = await handleDesktopSync({ prisma, body: req.body });
+    if (status === 200 && payload.registered && !payload.isPilot && payload.vehicle?.parc) {
+      Object.assign(payload, await buildIneoUcConsolePayload(payload.vehicle.parc));
+    }
     res.status(status).json(payload);
   } catch (error) {
     console.error('POST /api/ineo-rbe-desktop:', error.message);
     res.status(500).json({ error: 'Impossible d’identifier cet UC.' });
   }
 };
+
+// Événements de service remontés par l'UC (la console ne parle qu'à l'UC) : démarrage, course suivante, fin, position.
+app.post('/api/ineo-rbe-desktop/service-event', async (req, res) => {
+  try {
+    const serial = normalizeUcSerial(req.body?.serial);
+    const profile = isValidUcSerial(serial) ? await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial } }) : null;
+    if (!profile) return res.status(403).json({ error: 'UC non reconnu' });
+    const mission = await prisma.ineoMission.findUnique({ where: { id: String(req.body?.missionId || '') } });
+    if (!mission || mission.vehicleParc !== profile.vehicleParc) return res.status(404).json({ error: 'Service introuvable pour ce véhicule' });
+    const event = String(req.body?.event || '');
+    if (event === 'start' && mission.status === 'PLANNED') {
+      await prisma.ineoMission.update({ where: { id: mission.id }, data: { status: 'ACTIVE', actualDeparture: new Date(), courseIndex: 0 } });
+    } else if (event === 'next' && mission.status === 'ACTIVE') {
+      const total = Array.isArray(mission.courses) ? mission.courses.length : 0;
+      const target = Number.isInteger(req.body?.courseIndex) ? req.body.courseIndex : (mission.courseIndex || 0) + 1;
+      if (target < total) await prisma.ineoMission.update({ where: { id: mission.id }, data: { courseIndex: target } });
+    } else if (event === 'complete' && mission.status === 'ACTIVE') {
+      await prisma.ineoMission.update({ where: { id: mission.id }, data: { status: 'COMPLETED', actualArrival: new Date() } });
+    } else if (event === 'position' && mission.status === 'ACTIVE') {
+      const latitude = Number(req.body?.latitude); const longitude = Number(req.body?.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return res.status(400).json({ error: 'Coordonnées GPS invalides' });
+      const speedKmh = Number.isFinite(Number(req.body?.speedKmh)) ? Number(req.body.speedKmh) : null;
+      const accuracy = Number.isFinite(Number(req.body?.accuracy)) ? Number(req.body.accuracy) : null;
+      const recordedAt = new Date();
+      await prisma.$transaction([
+        prisma.ineoPosition.create({ data: { missionId: mission.id, latitude, longitude, speedKmh, accuracy, recordedAt } }),
+        prisma.ineoMission.update({ where: { id: mission.id }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
+      ]);
+    } else {
+      return res.status(409).json({ error: 'Événement incompatible avec l’état du service' });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/ineo-rbe-desktop/service-event:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer l’événement' });
+  }
+});
 // « identify » est conservé pour les logiciels déjà installés ; « sync » ajoute l'état, les écrans et les commandes pilote.
 app.post('/api/ineo-rbe-desktop/identify', desktopSyncHandler(isUcIdentifyRateLimited));
 app.post('/api/ineo-rbe-desktop/sync', desktopSyncHandler(isUcSyncRateLimited));

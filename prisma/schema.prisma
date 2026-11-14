@@ -826,6 +826,8 @@ model IneoDriverProfile {
   hasDriverCard         Boolean  @default(false)
   hasValidFimo          Boolean  @default(false)
   hasTachographCard     Boolean  @default(false)
+  driverNumber          String?  @unique
+  driverCodeHash        String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
