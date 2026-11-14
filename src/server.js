@@ -5063,10 +5063,12 @@ app.post('/api/ineo-rbe-desktop/console/activate', async (req, res) => {
       orderBy: { createdAt: 'desc' },
       select: { revision: true },
     });
+    const ucDevice = await prisma.ineoUcDevice.findUnique({ where: { serial: profile.ucSerial }, select: { localAddresses: true } });
     res.json({
       activated: true,
       vehicle: { parc: profile.vehicleParc, type: profile.vehicleType, label: profile.vehicle?.modele || null },
       ucSerial: profile.ucSerial,
+      ucAddresses: ucDevice?.localAddresses ? ucDevice.localAddresses.split(',') : [],
       contentRevision: latest?.revision || null,
     });
   } catch (error) {

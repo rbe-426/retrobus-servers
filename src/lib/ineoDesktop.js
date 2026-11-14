@@ -369,13 +369,15 @@ export async function handleDesktopSync({ prisma, body = {}, now = new Date() })
   const screensRevision = /^[a-f0-9]{1,40}$/.test(String(body.screensRevision || '')) ? String(body.screensRevision) : null;
   const contentRevision = CONTENT_REVISION_PATTERN.test(String(body.contentRevision || '')) ? String(body.contentRevision) : null;
   const voiceEngine = String(body.voiceEngine || '').trim().slice(0, 160) || null;
+  const localAddresses = (Array.isArray(body.addresses) ? body.addresses : []).map((a) => String(a).trim())
+    .filter((a) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(a)).slice(0, 6).join(',') || null;
   const results = (Array.isArray(body.commandResults) ? body.commandResults : []).slice(0, 20)
     .filter((entry) => COMMAND_ID_PATTERN.test(String(entry?.id || '')) && ['DONE', 'FAILED'].includes(entry?.status));
 
   await prisma.ineoUcDevice.upsert({
     where: { serial },
-    create: { serial, hostname, appVersion, networkOnline, screensRevision, contentRevision, voiceEngine, firstSeenAt: now, lastSeenAt: now },
-    update: { hostname, appVersion, networkOnline, screensRevision, contentRevision, voiceEngine, lastSeenAt: now },
+    create: { serial, hostname, appVersion, networkOnline, screensRevision, contentRevision, voiceEngine, localAddresses, firstSeenAt: now, lastSeenAt: now },
+    update: { hostname, appVersion, networkOnline, screensRevision, contentRevision, voiceEngine, ...(localAddresses ? { localAddresses } : {}), lastSeenAt: now },
   });
   // Révision applicable à cet UC : publiée pour tous les véhicules, ou ciblant uniquement son véhicule.
   const latestContentFor = async (parc) => {
