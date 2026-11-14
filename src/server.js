@@ -4733,6 +4733,7 @@ app.post(['/ineo/missions', '/api/ineo/missions'], requireAuth, requireIneoOpera
   try {
     const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes, allowExpiredFimo } = req.body || {};
     const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
+    if (!/^\d{1,8}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Le numéro de service doit être numérique (8 chiffres maximum).' });
     const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
     const plan = await resolveIneoMissionPlan(req.body, normalizedServiceReference, normalizedCourseReference);
     if (plan.error) return res.status(400).json({ error: plan.error });
@@ -4795,6 +4796,7 @@ app.patch(['/ineo/missions/:id', '/api/ineo/missions/:id'], requireAuth, require
 
     const { serviceName, serviceReference, courseReference, vehicleParc, driverIdentifier, driverName, scheduledDeparture, scheduledArrival, notes, allowExpiredFimo } = req.body || {};
     const normalizedServiceReference = String(serviceReference || '').trim().toUpperCase();
+    if (!/^\d{1,8}$/.test(normalizedServiceReference)) return res.status(400).json({ error: 'Le numéro de service doit être numérique (8 chiffres maximum).' });
     const normalizedCourseReference = String(courseReference || '').trim().toUpperCase();
     const plan = await resolveIneoMissionPlan(req.body, normalizedServiceReference, normalizedCourseReference);
     if (plan.error) return res.status(400).json({ error: plan.error });
