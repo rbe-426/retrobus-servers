@@ -794,11 +794,11 @@ model IneoMission {
   notes              String?
   courses            Json?
   courseIndex        Int                @default(0)
+  stopIndex          Int                @default(0)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
   vehicle            Vehicle            @relation(fields: [vehicleParc], references: [parc], onDelete: Cascade)
   positions          IneoPosition[]
-
   @@index([vehicleParc])
   @@index([driverIdentifier])
   @@index([status])

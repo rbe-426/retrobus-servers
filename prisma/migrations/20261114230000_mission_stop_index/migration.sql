@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "IneoMission" ADD COLUMN "stopIndex" INTEGER NOT NULL DEFAULT 0;
