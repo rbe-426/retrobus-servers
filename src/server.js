@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs';
@@ -4652,8 +4652,9 @@ const buildIneoMissionRoute = async (mission) => {
     .map((stop) => ({ ...stop, label: stop.city ? `${stop.city} – ${stop.label}` : stop.label, scheduledTime: null }));
   const path = Array.isArray(outbound ? line.outboundPath : line.returnPath) ? (outbound ? line.outboundPath : line.returnPath) : [];
   // Course écourtée depuis le Gestionnaire : le terminus devient l'arrêt choisi.
-  if (Number.isInteger(course.endStopIndex) && course.endStopIndex >= 0 && course.endStopIndex < stops.length - 1) stops.length = course.endStopIndex + 1;
-  return { ...base, routeName: `${line.name} → ${outbound ? line.destination2 : line.destination1}`, lineName: line.name, color: line.color, stops, path };
+  const shortened = Number.isInteger(course.endStopIndex) && course.endStopIndex >= 0 && course.endStopIndex < stops.length - 1;
+  if (shortened) stops.length = course.endStopIndex + 1;
+  return { ...base, routeName: `${line.name} → ${outbound ? line.destination2 : line.destination1}`, lineName: line.name, color: line.color, stops, path, shortened };
 };
 
 app.get(['/ineo/lines', '/api/ineo/lines'], requireAuth, requireIneoOperationsAccess, async (_req, res) => {
@@ -4987,7 +4988,7 @@ const buildIneoUcConsolePayload = async (parc) => {
       if (!route) continue;
       routes.push({
         direction: String(route.direction || ''), routeName: String(route.routeName || ''), lineName: String(route.lineName || ''),
-        color: String(route.color || ''), scheduledDeparture: route.scheduledDeparture ? String(route.scheduledDeparture) : '',
+        color: String(route.color || ''), shortened: route.shortened === true, scheduledDeparture: route.scheduledDeparture ? String(route.scheduledDeparture) : '',
         stops: (Array.isArray(route.stops) ? route.stops : []).slice(0, 300)
           .map((stop) => ({ city: String(stop?.city || ''), label: String(stop?.label || ''), lat: Number(stop?.lat), lng: Number(stop?.lng) }))
           .filter((stop) => stop.label && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)),
