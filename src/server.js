@@ -4651,6 +4651,8 @@ const buildIneoMissionRoute = async (mission) => {
   const stops = (Array.isArray(outbound ? line.outboundStops : line.returnStops) ? (outbound ? line.outboundStops : line.returnStops) : [])
     .map((stop) => ({ ...stop, label: stop.city ? `${stop.city} – ${stop.label}` : stop.label, scheduledTime: null }));
   const path = Array.isArray(outbound ? line.outboundPath : line.returnPath) ? (outbound ? line.outboundPath : line.returnPath) : [];
+  // Course écourtée depuis le Gestionnaire : le terminus devient l'arrêt choisi.
+  if (Number.isInteger(course.endStopIndex) && course.endStopIndex >= 0 && course.endStopIndex < stops.length - 1) stops.length = course.endStopIndex + 1;
   return { ...base, routeName: `${line.name} → ${outbound ? line.destination2 : line.destination1}`, lineName: line.name, color: line.color, stops, path };
 };
 
@@ -4875,6 +4877,18 @@ app.post(['/ineo/missions/:id/realign', '/api/ineo/missions/:id/realign'], requi
       if (!Number.isInteger(stopIndex) || stopIndex < 0) return res.status(400).json({ error: 'Arrêt invalide' });
       data.stopIndex = stopIndex;
     }
+    if (body.endStopIndex !== undefined) {
+      const target = Number.isInteger(Number(body.endCourseIndex)) && body.endCourseIndex !== null ? Number(body.endCourseIndex) : (data.courseIndex ?? mission.courseIndex ?? 0);
+      if (!courses[target]) return res.status(400).json({ error: 'Course invalide' });
+      const end = body.endStopIndex === null || Number(body.endStopIndex) < 0 ? null : Number(body.endStopIndex);
+      if (end !== null && !Number.isInteger(end)) return res.status(400).json({ error: 'Arrêt de fin invalide' });
+      if (mission.status === 'ACTIVE' && target < (mission.courseIndex || 0)) return res.status(409).json({ error: 'Course déjà effectuée' });
+      data.courses = courses.map((course, i) => {
+        if (i !== target) return course;
+        const { endStopIndex, ...rest } = course;
+        return end === null ? rest : { ...rest, endStopIndex: end };
+      });
+    }
     if (body.driverIdentifier) {
       const issue = await getIneoAssignmentIssue(body.driverIdentifier, Boolean(body.allowExpiredFimo));
       if (issue) return res.status(issue.status).json(issue);
@@ -4977,6 +4991,7 @@ const buildIneoUcConsolePayload = async (parc) => {
         stops: (Array.isArray(route.stops) ? route.stops : []).slice(0, 300)
           .map((stop) => ({ city: String(stop?.city || ''), label: String(stop?.label || ''), lat: Number(stop?.lat), lng: Number(stop?.lng) }))
           .filter((stop) => stop.label && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)),
+        path: (Array.isArray(route.path) ? route.path : []).filter((_, i, all) => all.length <= 1500 || i % Math.ceil(all.length / 1500) === 0),
       });
     }
     services.push({
