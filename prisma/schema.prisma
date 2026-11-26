@@ -2890,6 +2890,7 @@ model AgAmendment {
   rejectionKind String?
   rejectionNote String?
   decidedAt     DateTime?
+  published     Boolean  @default(false)
   createdAt     DateTime @default(now())
   document      AgDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   article       AgArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)

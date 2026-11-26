@@ -11,7 +11,7 @@ export const AMENDMENT_REASONS = [
   'MISE_EN_CONFORMITE',
   'REPORT_PERIODE_TRANSITOIRE'
 ];
-const REJECTION_KINDS = ['LEGAL', 'STATUTAIRE', 'AUTRE'];
+const REJECTION_KINDS = ['LEGAL', 'STATUTAIRE', 'ILLISIBLE', 'AUTRE'];
 const FINAL_STATUSES = ['ADOPTED', 'REJECTED', 'NOT_ADOPTED'];
 const CHOICES = ['POUR', 'CONTRE'];
 const ARTICLE_HEADING = /^\s*(?:#+\s*)?(?:\*\*)?\s*(art(?:icle)?\.?\s*(?:premier|1er|\d+[a-z]?(?:[.-]\d+)*)\b[^\n]*)$/i;
@@ -116,6 +116,7 @@ export function createAgModule({ prisma, requireAuth, isPresident }) {
     rejectionKind: amendment.rejectionKind,
     rejectionNote: amendment.rejectionNote,
     decidedAt: amendment.decidedAt,
+    published: amendment.published,
     vote: poll ? { pour: tally(poll).pour, contre: tally(poll).contre, total: poll.votes.length } : null
   });
 
@@ -364,7 +365,7 @@ export function createAgModule({ prisma, requireAuth, isPresident }) {
         include: amendmentInclude
       });
       res.json({
-        amendments: rows.map((row) => FINAL_STATUSES.includes(row.status)
+        amendments: rows.map((row) => FINAL_STATUSES.includes(row.status) && row.published
           ? publicAmendment(row, row.polls[0])
           : { id: row.id, documentTitle: row.document?.title, articleLabel: row.article?.label, reason: row.reason, status: 'IN_REVIEW' })
       });
@@ -377,7 +378,7 @@ export function createAgModule({ prisma, requireAuth, isPresident }) {
   router.get('/amendments/published', async (req, res) => {
     try {
       const rows = await prisma.agAmendment.findMany({
-        where: { status: { in: FINAL_STATUSES } },
+        where: { status: { in: FINAL_STATUSES }, published: true },
         orderBy: { decidedAt: 'desc' },
         include: amendmentInclude
       });
@@ -416,12 +417,45 @@ export function createAgModule({ prisma, requireAuth, isPresident }) {
         prisma.agPoll.deleteMany({ where: { amendmentId: amendment.id, status: 'DRAFT' } }),
         prisma.agAmendment.update({
           where: { id: amendment.id },
-          data: { status: 'REJECTED', rejectionKind: kind, rejectionNote: String(req.body?.note || '').trim() || null, decidedAt: new Date() }
+          data: {
+            status: 'REJECTED',
+            rejectionKind: kind,
+            rejectionNote: String(req.body?.note || '').trim() || null,
+            decidedAt: new Date(),
+            published: req.body?.publish === true
+          }
         })
       ]);
       res.json({ ok: true });
     } catch (error) {
       console.error('❌ AG amendment reject:', error.message);
+      res.status(500).json({ error: 'Erreur serveur' });
+    }
+  });
+
+  // Publication (ou retrait) de la décision d'instruction : brouillon tant que non publiée.
+  router.post('/amendments/:id/publish', requirePresident, async (req, res) => {
+    try {
+      const amendment = await prisma.agAmendment.findUnique({ where: { id: req.params.id } });
+      if (!amendment) return res.status(404).json({ error: 'Amendement introuvable.' });
+      if (!FINAL_STATUSES.includes(amendment.status)) return res.status(409).json({ error: 'Aucune décision à publier.' });
+      await prisma.agAmendment.update({ where: { id: amendment.id }, data: { published: req.body?.published !== false } });
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('❌ AG amendment publish:', error.message);
+      res.status(500).json({ error: 'Erreur serveur' });
+    }
+  });
+
+  router.post('/amendments/publish-all', requirePresident, async (req, res) => {
+    try {
+      const result = await prisma.agAmendment.updateMany({
+        where: { status: { in: FINAL_STATUSES }, published: false },
+        data: { published: true }
+      });
+      res.json({ ok: true, count: result.count });
+    } catch (error) {
+      console.error('❌ AG amendments publish-all:', error.message);
       res.status(500).json({ error: 'Erreur serveur' });
     }
   });
@@ -510,7 +544,7 @@ export function createAgModule({ prisma, requireAuth, isPresident }) {
         ...(poll.amendmentId
           ? [prisma.agAmendment.update({
               where: { id: poll.amendmentId },
-              data: { status: verdict, decidedAt: now, rejectionKind: verdict === 'NOT_ADOPTED' ? 'VOTE' : null }
+              data: { status: verdict, decidedAt: now, published: true, rejectionKind: verdict === 'NOT_ADOPTED' ? 'VOTE' : null }
             })]
           : [])
       ]);
