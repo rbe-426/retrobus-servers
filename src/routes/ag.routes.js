@@ -145,6 +145,23 @@ export function createAgModule({ prisma, requireAuth, isPresident }) {
     return res.status(423).json({ error: 'Mode AG activé, l\'accès à l\'URBEX est suspendu.', code: 'AG_MODE' });
   };
 
+  // Page publique : textes à amender (lecture seule, sans authentification).
+  router.get('/public/documents', async (req, res) => {
+    try {
+      const session = await currentSession();
+      if (!session) return res.json({ session: null, documents: [] });
+      const documents = await prisma.agDocument.findMany({
+        where: { sessionId: session.id },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, title: true, articles: { orderBy: { position: 'asc' }, select: { id: true, label: true, body: true } } }
+      });
+      res.json({ session: { title: session.title, meetingDate: session.meetingDate }, documents });
+    } catch (error) {
+      console.error('❌ AG public documents:', error.message);
+      res.status(500).json({ error: 'Erreur serveur' });
+    }
+  });
+
   router.use(requireAuth);
 
   router.get('/status', async (req, res) => {
