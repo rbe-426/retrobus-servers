@@ -289,8 +289,13 @@ export function createAgModule({ prisma, requireAuth, isPresident }) {
       const session = await currentSession();
       if (!session) return res.status(409).json({ error: 'Créez d\'abord une session AG.' });
       const title = String(req.body?.title || '').trim();
-      const articles = splitIntoArticles(req.body?.text);
-      if (!title) return res.status(400).json({ error: 'Titre requis.' });
+      const provided = Array.isArray(req.body?.articles)
+        ? req.body.articles
+          .map((article) => ({ label: String(article?.label || '').trim().slice(0, 200), body: String(article?.body || '').trim() }))
+          .filter((article) => article.label || article.body)
+          .map((article, index) => ({ ...article, label: article.label || `Article ${index + 1}` }))
+        : null;
+      const articles = provided || splitIntoArticles(req.body?.text);
       if (!articles.length) return res.status(400).json({ error: 'Le document est vide.' });
       const document = await prisma.agDocument.create({
         data: {
