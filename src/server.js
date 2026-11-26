@@ -5042,6 +5042,38 @@ app.post('/api/ineo-rbe-desktop/service-event', async (req, res) => {
     res.status(500).json({ error: 'Impossible d’enregistrer l’événement' });
   }
 });
+// Position GPS remontée par l'UC (source unique : la console ne parle qu'à l'UC). Alimente le Gestionnaire (appareil rattaché au véhicule)
+// et, si un service est en cours, son tracé.
+const isUcPositionRateLimited = createDesktopRateLimiter(30);
+app.post('/api/ineo-rbe-desktop/position', async (req, res) => {
+  try {
+    const serial = normalizeUcSerial(req.body?.serial);
+    if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série invalide' });
+    if (isUcPositionRateLimited(serial)) return res.status(429).json({ error: 'Trop de positions, réessayez dans une minute.' });
+    const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial } });
+    if (!profile) return res.status(403).json({ error: 'UC non reconnu' });
+    const latitude = Number(req.body?.latitude); const longitude = Number(req.body?.longitude);
+    if (req.body?.latitude == null || req.body?.longitude == null || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return res.status(400).json({ error: 'Coordonnées GPS invalides' });
+    }
+    const speedKmh = req.body?.speedKmh != null && Number.isFinite(Number(req.body.speedKmh)) ? Number(req.body.speedKmh) : null;
+    const accuracy = req.body?.accuracy != null && Number.isFinite(Number(req.body.accuracy)) ? Number(req.body.accuracy) : null;
+    const recordedAt = new Date();
+    const last = { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt };
+    await prisma.ineoVehicleTracker.updateMany({ where: { vehicleParc: profile.vehicleParc }, data: last });
+    const mission = await prisma.ineoMission.findFirst({ where: { vehicleParc: profile.vehicleParc, status: 'ACTIVE' }, orderBy: { actualDeparture: 'desc' } });
+    if (mission) {
+      await prisma.$transaction([
+        prisma.ineoPosition.create({ data: { missionId: mission.id, latitude, longitude, speedKmh, accuracy, recordedAt } }),
+        prisma.ineoMission.update({ where: { id: mission.id }, data: last }),
+      ]);
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/ineo-rbe-desktop/position:', error.message);
+    res.status(500).json({ error: 'Impossible d’enregistrer la position' });
+  }
+});
 // « identify » est conservé pour les logiciels déjà installés ; « sync » ajoute l'état, les écrans et les commandes pilote.
 app.post('/api/ineo-rbe-desktop/identify', desktopSyncHandler(isUcIdentifyRateLimited));
 app.post('/api/ineo-rbe-desktop/sync', desktopSyncHandler(isUcSyncRateLimited));
