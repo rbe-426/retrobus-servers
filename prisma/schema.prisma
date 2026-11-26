@@ -2825,3 +2825,106 @@ enum AnnouncementSeverity {
   CRITICAL
   SUCCESS
 }
+
+model AgSession {
+  id               String   @id @default(cuid())
+  title            String
+  meetingDate      DateTime?
+  modeActive       Boolean  @default(false)
+  joinCode         String   @unique
+  excludedUserIds  Json     @default("[]")
+  closedAt         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  documents        AgDocument[]
+  polls            AgPoll[]
+  attendees        AgAttendee[]
+}
+
+model AgAttendee {
+  id        String   @id @default(cuid())
+  sessionId String
+  userId    String
+  name      String
+  joinedAt  DateTime @default(now())
+  session   AgSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+}
+
+model AgDocument {
+  id        String   @id @default(cuid())
+  sessionId String
+  title     String
+  createdBy String?
+  createdAt DateTime @default(now())
+  session   AgSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  articles  AgArticle[]
+  amendments AgAmendment[]
+
+  @@index([sessionId])
+}
+
+model AgArticle {
+  id         String   @id @default(cuid())
+  documentId String
+  position   Int
+  label      String
+  body       String
+  document   AgDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  amendments AgAmendment[]
+
+  @@index([documentId, position])
+}
+
+model AgAmendment {
+  id            String   @id @default(cuid())
+  documentId    String
+  articleId     String
+  authorId      String
+  authorName    String
+  reason        String
+  proposedText  String
+  justification String?
+  status        String   @default("SUBMITTED")
+  rejectionKind String?
+  rejectionNote String?
+  decidedAt     DateTime?
+  createdAt     DateTime @default(now())
+  document      AgDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  article       AgArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  polls         AgPoll[]
+
+  @@index([documentId])
+  @@index([authorId])
+  @@index([status])
+}
+
+model AgPoll {
+  id          String   @id @default(cuid())
+  sessionId   String
+  amendmentId String?
+  title       String
+  status      String   @default("DRAFT")
+  position    Int      @default(0)
+  openedAt    DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime @default(now())
+  session     AgSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  amendment   AgAmendment? @relation(fields: [amendmentId], references: [id], onDelete: SetNull)
+  votes       AgVote[]
+
+  @@index([sessionId, status])
+}
+
+model AgVote {
+  id        String   @id @default(cuid())
+  pollId    String
+  userId    String
+  voterName String
+  choice    String
+  createdAt DateTime @default(now())
+  poll      AgPoll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+}

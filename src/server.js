@@ -26,6 +26,7 @@ import {
 } from './lib/csrfService.js';
 import authRoutes from './routes/auth.routes.js';
 import systemRoutes from './routes/system.routes.js';
+import { createAgModule } from './routes/ag.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import eventsRoutes from './routes/events.routes.js';
 import ticketingRoutes from './routes/ticketing.routes.js';
@@ -1033,6 +1034,13 @@ const requireAuth = (req, res, next) => {
   console.log(`✅ requireAuth passed for ${req.method} ${req.path} - User: ${req.user.email}`);
   next();
 };
+
+const agModule = createAgModule({
+  prisma,
+  requireAuth,
+  isPresident: (req) => isConfiguredPresidentRequest(req)
+});
+app.use(agModule.lockMiddleware);
 
 const requireMobileVehicleAccess = async (req, res, next) => {
   if (req.user) return next();
@@ -2048,6 +2056,9 @@ app.use('/api/notifications', notificationsRoutes);
 
 // Routes événements (gestion des événements et participants)
 app.use('/api/events', eventsRoutes);
+
+// Module AG : amendements, Mode AG et votes
+app.use('/api/ag', agModule.router);
 
 // Routes billetterie musée (gestion des tarifs et ventes)
 app.use('/api/ticketing', ticketingRoutes);
