@@ -5093,6 +5093,45 @@ app.post('/api/ineo-rbe-desktop/position', async (req, res) => {
     res.status(500).json({ error: 'Impossible d’enregistrer la position' });
   }
 });
+// Simulation : le Gestionnaire déplace un curseur fictif sur la ligne d'un service en cours ; l'UC l'interroge toutes les 2 s,
+// l'utilise comme position (annonces) et la relaie à la console. Conservée en mémoire, expire sans nouvelle position.
+const ineoSimulations = new Map();
+const INEO_SIMULATION_TTL_MS = 15000;
+app.post(['/ineo/missions/:id/simulate', '/api/ineo/missions/:id/simulate'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  try {
+    const missionId = String(req.params.id || '').trim();
+    if (req.body?.stop === true) { ineoSimulations.delete(missionId); return res.json({ ok: true }); }
+    const mission = await prisma.ineoMission.findUnique({ where: { id: missionId } });
+    if (!mission) return res.status(404).json({ error: 'Mission introuvable' });
+    if (mission.status !== 'ACTIVE') return res.status(409).json({ error: 'Le service doit être en cours (démarré depuis la console).' });
+    const latitude = Number(req.body?.latitude); const longitude = Number(req.body?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return res.status(400).json({ error: 'Coordonnées invalides' });
+    const speedKmh = Number.isFinite(Number(req.body?.speedKmh)) ? Math.max(0, Math.min(130, Number(req.body.speedKmh))) : 20;
+    ineoSimulations.set(missionId, { parc: mission.vehicleParc, latitude, longitude, speedKmh, at: Date.now() });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/ineo/missions/:id/simulate:', error.message);
+    res.status(500).json({ error: 'Impossible de simuler la position' });
+  }
+});
+const isUcSimulationRateLimited = createDesktopRateLimiter(90);
+app.get('/api/ineo-rbe-desktop/simulation', async (req, res) => {
+  try {
+    const serial = normalizeUcSerial(req.query?.serial);
+    if (!isValidUcSerial(serial)) return res.status(400).json({ error: 'Numéro de série invalide' });
+    if (isUcSimulationRateLimited(serial)) return res.status(429).json({ error: 'Trop de demandes.' });
+    const profile = await prisma.ineoVehicleProfile.findUnique({ where: { ucSerial: serial } });
+    if (!profile) return res.status(403).json({ error: 'UC non reconnu' });
+    for (const [missionId, sim] of ineoSimulations) {
+      if (Date.now() - sim.at > INEO_SIMULATION_TTL_MS) { ineoSimulations.delete(missionId); continue; }
+      if (sim.parc === profile.vehicleParc) return res.json({ active: true, missionId, latitude: sim.latitude, longitude: sim.longitude, speedKmh: sim.speedKmh });
+    }
+    res.json({ active: false });
+  } catch (error) {
+    console.error('GET /api/ineo-rbe-desktop/simulation:', error.message);
+    res.status(500).json({ error: 'Simulation indisponible' });
+  }
+});
 // « identify » est conservé pour les logiciels déjà installés ; « sync » ajoute l'état, les écrans et les commandes pilote.
 app.post('/api/ineo-rbe-desktop/identify', desktopSyncHandler(isUcIdentifyRateLimited));
 app.post('/api/ineo-rbe-desktop/sync', desktopSyncHandler(isUcSyncRateLimited));
