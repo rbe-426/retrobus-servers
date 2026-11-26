@@ -10,7 +10,8 @@ const notes = 'Nouvelle interface InéoRBE : identification conducteur et servic
   const sha256 = crypto.createHash('sha256').update(data).digest('hex');
   const fields = { fileName: `Ineo-Console-${version}.apk`, size: data.length, sha256, notes, data };
   await prisma.ineoDesktopRelease.upsert({ where: { product_version: { product: 'CONSOLE', version } }, create: { product: 'CONSOLE', version, ...fields }, update: fields });
-  await prisma.changelog.create({ data: { title: `Inéo RBE Console - version ${version}`, version, changes: ['Nouvelle interface de la console d\'après les maquettes InéoRBE', 'Écrans : démarrage, identification conducteur et service (réussie, échouée, refusée), perte de connexion, course'] } });
+  const exists = await prisma.changelog.findFirst({ where: { version, title: { contains: 'Console' } } });
+  if (!exists) await prisma.changelog.create({ data: { title: `Inéo RBE Console - version ${version}`, version, changes: ['Nouvelle interface de la console d\'après les maquettes InéoRBE', 'Écrans : démarrage, identification conducteur et service (réussie, échouée, refusée), perte de connexion, course'] } });
   console.log(version, data.length, sha256);
   await prisma.$disconnect();
 })().catch((e) => { console.error(e.message); process.exit(1); });
