@@ -5032,8 +5032,9 @@ app.post('/api/ineo-rbe-desktop/service-event', async (req, res) => {
       await prisma.$transaction([
         prisma.ineoPosition.create({ data: { missionId: mission.id, latitude, longitude, speedKmh, accuracy, recordedAt } }),
         prisma.ineoMission.update({ where: { id: mission.id }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
+        // Le Gestionnaire lit la position de l'appareil rattaché au véhicule.
+        prisma.ineoVehicleTracker.updateMany({ where: { vehicleParc: mission.vehicleParc }, data: { lastLatitude: latitude, lastLongitude: longitude, lastSpeedKmh: speedKmh, lastAccuracy: accuracy, lastPositionAt: recordedAt } }),
       ]);
-    } else {
       return res.status(409).json({ error: 'Événement incompatible avec l’état du service' });
     }
     res.json({ ok: true });
