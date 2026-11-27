@@ -15,6 +15,7 @@ import {
   sendEmail,
   deleteEmail,
   moveEmail,
+  setEmailFlags,
   getUnreadCount
 } from '../services/mailService.js';
 import { changeInfomaniakMailboxPassword, getInfomaniakMailboxInfo } from '../services/infomaniakMailAdminService.js';
@@ -37,8 +38,8 @@ const normalizeRecipients = (value) => {
 };
 
 const normalizeMailSettings = (value = {}) => ({
-  signature: String(value.signature || '').slice(0, 250000),
-  profilePhoto: String(value.profilePhoto || '').slice(0, 250000),
+  signature: String(value.signature || '').slice(0, 1500000),
+  profilePhoto: String(value.profilePhoto || '').slice(0, 1500000),
   mailFont: String(value.mailFont || 'Arial').slice(0, 100)
 });
 
@@ -550,31 +551,6 @@ router.get('/unread-count', requireAuth, async (req, res) => {
 });
 
 /**
- * GET /api/mail/unread-count
- * Compter les emails non lus dans INBOX
- */
-router.get('/unread-count', requireAuth, async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    if (!hasMailSession(userId)) {
-      return res.json({ count: 0 }); // Pas connecté = 0 non lus
-    }
-
-    const count = await getUnreadCount(userId, 'INBOX');
-
-    res.json({
-      success: true,
-      count
-    });
-  } catch (error) {
-    console.error('Erreur comptage emails non lus:', error);
-    // En cas d'erreur, renvoyer 0 au lieu de fail
-    res.json({ count: 0 });
-  }
-});
-
-/**
  * GET /api/mail/list
  * Lister les emails
  * Query params: folder (default: INBOX), limit (default: 50), offset (default: 0)
@@ -585,6 +561,7 @@ router.get('/list', requireAuth, async (req, res) => {
     const folder = req.query.folder || 'INBOX';
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
 
     if (!hasMailSession(userId)) {
       return res.status(401).json({ 
@@ -593,7 +570,7 @@ router.get('/list', requireAuth, async (req, res) => {
       });
     }
 
-    const result = await listEmails(userId, folder, limit, offset);
+    const result = await listEmails(userId, folder, limit, offset, q);
 
     res.json({
       success: true,
@@ -607,6 +584,8 @@ router.get('/list', requireAuth, async (req, res) => {
         subject: email.subject,
         date: email.date,
         read: email.read,
+        flagged: email.flagged,
+        hasAttachments: email.hasAttachments,
         preview: '' // Pas de preview dans la liste
       })),
       total: result.total,
@@ -622,6 +601,8 @@ router.get('/list', requireAuth, async (req, res) => {
       return res.json({
         success: true,
         emails: [],
+        total: 0,
+        hasMore: false,
         warning: `Le dossier "${req.query.folder}" n'existe pas pour ce compte.`
       });
     }
@@ -734,11 +715,12 @@ router.delete('/delete/:id', requireAuth, async (req, res) => {
       });
     }
 
-    await deleteEmail(userId, emailId, folder);
+    const result = await deleteEmail(userId, emailId, folder);
 
     res.json({
       success: true,
-      message: 'Email supprimé'
+      permanent: result.permanent,
+      message: result.permanent ? 'Email supprimé définitivement' : 'Email déplacé dans la corbeille'
     });
   } catch (error) {
     console.error('Erreur suppression email:', error);
@@ -777,6 +759,31 @@ router.post('/move/:id', requireAuth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erreur déplacement email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/mail/flags/:id
+ * Marquer lu / non lu, ajouter une étoile
+ * Body: { folder, seen?, flagged? }
+ */
+router.post('/flags/:id', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { folder = 'INBOX', seen, flagged } = req.body || {};
+
+    if (!hasMailSession(userId)) {
+      return res.status(401).json({ error: 'Session mail non active. Veuillez vous reconnecter.' });
+    }
+
+    await setEmailFlags(userId, req.params.id, folder, {
+      seen: typeof seen === 'boolean' ? seen : undefined,
+      flagged: typeof flagged === 'boolean' ? flagged : undefined
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erreur mise à jour indicateurs:', error);
     res.status(500).json({ error: error.message });
   }
 });
