@@ -14268,9 +14268,21 @@ app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status']
     const { id } = req.params;
     const { status } = req.body;
     
-    // Trouver le document
-    const docIdx = state.financialDocuments.findIndex(d => d.id === id);
-    if (docIdx === -1) return res.status(404).json({ error: 'Document not found' });
+    // Trouver le document (mémoire, sinon base)
+    let docIdx = state.financialDocuments.findIndex(d => d.id === id);
+    if (docIdx === -1) {
+      const row = await prisma.financial_documents.findUnique({ where: { id } });
+      if (!row) return res.status(404).json({ error: 'Document not found' });
+      state.financialDocuments.push({
+        ...row,
+        status: row.type === 'INVOICE' ? (row.invoiceStatus || 'DRAFT') : (row.quoteStatus || 'DRAFT'),
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        date: row.date.toISOString(),
+        dueDate: row.dueDate?.toISOString?.() || null
+      });
+      docIdx = state.financialDocuments.length - 1;
+    }
     
     const doc = state.financialDocuments[docIdx];
     
