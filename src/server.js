@@ -14296,65 +14296,8 @@ app.patch(['/finance/documents/:id/status', '/api/finance/documents/:id/status']
     
     // ========== LOGIQUE MÉTIER ==========
     
-    // Cas 1: Devis accepté (QUOTE + ACCEPTED) -> créer facture auto
-    if (doc.type === 'QUOTE' && status === 'ACCEPTED' && oldStatus !== 'ACCEPTED') {
-      try {
-        // Créer la facture depuis le devis
-        const invoiceId = uid();
-        const invoiceNumber = `FAC-${doc.number.replace('DV-', '')}`;
-        
-        const invoiceData = {
-          id: invoiceId,
-          type: 'INVOICE',
-          number: invoiceNumber,
-          title: doc.title,
-          description: doc.description,
-          date: new Date(),
-          dueDate: doc.dueDate,
-          amountExcludingTax: doc.amountExcludingTax,
-          taxRate: doc.taxRate || 0,
-          taxAmount: doc.taxAmount || 0,
-          amount: doc.amount,
-          invoiceStatus: 'DRAFT',
-          linkedQuoteId: doc.id,
-          linkedQuoteNumber: doc.number,
-          eventId: doc.eventId || '',
-          memberId: doc.memberId || '',
-          destinataireName: doc.destinataireName || '',
-          destinataireAdresse: doc.destinataireAdresse || '',
-          destinataireSociete: doc.destinataireSociete || '',
-          destinataireContacts: doc.destinataireContacts || '',
-          notes: doc.notes || '',
-          createdBy: req.user?.name || req.user?.email || 'Anonymous',
-          updatedAt: new Date()
-        };
-        
-        // Créer dans Prisma
-        const invoice = await prisma.financial_documents.create({
-          data: invoiceData
-        });
-        
-        const invoiceResult = {
-          ...invoice,
-          status: 'DRAFT',
-          createdAt: invoice.createdAt.toISOString(),
-          updatedAt: invoice.updatedAt.toISOString(),
-          date: invoice.date.toISOString(),
-          dueDate: invoice.dueDate?.toISOString?.() || null
-        };
-        
-        state.financialDocuments.push(invoiceResult);
-        response.invoiceCreated = true;
-        response.invoiceId = invoiceId;
-        response.invoiceNumber = invoiceNumber;
-        
-        console.log(`✅ Facture auto-créée à partir du devis ${doc.number}: ${invoiceNumber}`);
-      } catch (invoiceErr) {
-        console.error('❌ Erreur création facture auto:', invoiceErr.message);
-        response.invoiceError = invoiceErr.message;
-      }
-    }
-    
+    // Devis accepté : la facture est créée depuis « Créer la facture » (reprise cohérente du devis).
+
     // Cas 2: Facture marquée payée (INVOICE + PAID) -> créer opération automatique
     if (doc.type === 'INVOICE' && status === 'PAID' && oldStatus !== 'PAID') {
       try {
