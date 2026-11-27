@@ -542,6 +542,18 @@ model FinanceArticle {
   @@index([isActive])
 }
 
+model FinanceAddress {
+  id        String   @id
+  name      String
+  address   String
+  lat       Float?
+  lng       Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+
+  @@index([name])
+}
+
 model CalendarEvent {
   id          String    @id
   title       String

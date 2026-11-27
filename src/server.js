@@ -14455,6 +14455,53 @@ app.delete('/api/finance/articles/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ===== CARNET D'ADRESSES PARTAGÉ (calculateurs de trajet) =====
+const sanitizeFinanceAddress = (body = {}) => {
+  const lat = Number(body.lat);
+  const lng = Number(body.lng);
+  const hasCoords = body.lat != null && body.lng != null && Number.isFinite(lat) && Number.isFinite(lng);
+  return {
+    name: String(body.name || '').trim().slice(0, 120),
+    address: String(body.address || '').trim().slice(0, 300),
+    lat: hasCoords ? lat : null,
+    lng: hasCoords ? lng : null
+  };
+};
+
+app.get('/api/finance/addresses', requireAuth, async (req, res) => {
+  try {
+    res.json(await prisma.financeAddress.findMany({ orderBy: { name: 'asc' } }));
+  } catch (e) {
+    console.error('❌ GET /api/finance/addresses error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch addresses', details: e.message });
+  }
+});
+
+app.post('/api/finance/addresses', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizeFinanceAddress(req.body);
+    if (!data.name || !data.address) return res.status(400).json({ error: 'name and address are required' });
+    const existing = await prisma.financeAddress.findFirst({ where: { name: { equals: data.name, mode: 'insensitive' } } });
+    const saved = existing
+      ? await prisma.financeAddress.update({ where: { id: existing.id }, data: { ...data, updatedAt: new Date() } })
+      : await prisma.financeAddress.create({ data: { id: uid(), updatedAt: new Date(), ...data } });
+    res.status(existing ? 200 : 201).json(saved);
+  } catch (e) {
+    console.error('❌ POST /api/finance/addresses error:', e.message);
+    res.status(500).json({ error: 'Failed to save address', details: e.message });
+  }
+});
+
+app.delete('/api/finance/addresses/:id', requireAuth, async (req, res) => {
+  try {
+    await prisma.financeAddress.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Address not found' });
+    console.error('❌ DELETE /api/finance/addresses/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to delete address', details: e.message });
+  }
+});
 // Poste embarqué Inéo RétroBus : manifeste de mise à jour public et vérifié par SHA-256 (logique dans lib/ineoDesktop.js).
 const desktopApiBaseUrl = (req) => {
   const host = String(req.get('host') || '');
