@@ -14607,7 +14607,12 @@ const computeClientStats = (documents) => {
       entry.quotes += 1;
       if (!cancelled) entry.quotedTotal += doc.amount || 0;
       // Acompte encaissé sur un devis sans facture : il compte comme encaissé
-      if (status === 'DEPOSIT_PAID' && !invoiceKeys.has(key(doc))) entry.paidTotal += Math.min(doc.amount || 0, Math.max(depositOf(doc), doc.amountPaid || 0));
+      if (status === 'DEPOSIT_PAID' && !invoiceKeys.has(key(doc))) {
+        // L'acompte encaissé est aussi comptabilisé comme facturé, sinon l'encaissé dépasse le facturé
+        const dep = Math.min(doc.amount || 0, Math.max(depositOf(doc), doc.amountPaid || 0));
+        entry.paidTotal += dep;
+        entry.invoicedTotal += dep;
+      }
     }
     const activity = doc.date || doc.createdAt;
     if (activity && (!entry.lastActivity || activity > entry.lastActivity)) entry.lastActivity = activity;
