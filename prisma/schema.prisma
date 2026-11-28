@@ -527,6 +527,42 @@ model NewsletterSubscriber {
   updatedAt DateTime
 }
 
+// Portefeuilles clients : regroupement avec responsable optionnel
+model FinancePortfolio {
+  id          String   @id
+  name        String
+  description String?
+  color       String?
+  ownerId     String?
+  ownerName   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([name])
+}
+
+model FinanceClient {
+  id           String   @id
+  name         String
+  company      String?
+  type         String   @default("ENTREPRISE")
+  status       String   @default("ACTIVE")
+  portfolioId  String?
+  email        String?
+  phone        String?
+  address      String?
+  siret        String?
+  vatNumber    String?
+  paymentTerms String?
+  contacts     Json     @default("[]")
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+
+  @@index([name])
+  @@index([portfolioId])
+  @@index([status])
+}
 model FinanceArticle {
   id          String   @id
   name        String
@@ -1414,11 +1450,13 @@ model financial_documents {
   destinataireAdresse     String?
   destinataireSociete     String?
   destinataireContacts    String?
+  clientId                String?
   retro_request           retro_request? @relation(fields: [retroRequestId], references: [id])
 
   @@unique([type, number])
   @@index([date])
   @@index([eventId])
+  @@index([clientId])
   @@index([invoiceStatus])
   @@index([memberId])
   @@index([quoteStatus])

@@ -14083,6 +14083,7 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
       destinataireAdresse: req.body.destinataireAdresse || null,
       destinataireSociete: req.body.destinataireSociete || null,
       destinataireContacts: req.body.destinataireContacts || null,
+      clientId: req.body.clientId || null,
       // Autres champs
       paymentTerms: req.body.paymentTerms || '30',
       paymentMethod: req.body.paymentMethod || null,
@@ -14172,6 +14173,7 @@ app.put('/api/finance/documents/:id', requireAuth, async (req, res) => {
       destinataireAdresse: req.body.destinataireAdresse,
       destinataireSociete: req.body.destinataireSociete,
       destinataireContacts: req.body.destinataireContacts,
+      clientId: req.body.clientId === '' ? null : req.body.clientId,
       notes: req.body.notes,
       paymentTerms: req.body.paymentTerms,
       paymentMethod: req.body.paymentMethod
@@ -14502,6 +14504,244 @@ app.delete('/api/finance/addresses/:id', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to delete address', details: e.message });
   }
 });
+// ===== Clients & portefeuilles (devis / factures) =====
+const CLIENT_TYPES = ['ENTREPRISE', 'COLLECTIVITE', 'ASSOCIATION', 'PARTICULIER', 'PRODUCTION', 'AUTRE'];
+const CLIENT_STATUSES = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
+const optText = (value, max) => {
+  const text = String(value ?? '').trim().slice(0, max);
+  return text || null;
+};
+
+const sanitizeFinanceClient = (body = {}) => {
+  const contacts = (Array.isArray(body.contacts) ? body.contacts : [])
+    .map((contact) => ({
+      name: String(contact?.name || '').trim().slice(0, 120),
+      role: String(contact?.role || '').trim().slice(0, 120),
+      email: String(contact?.email || '').trim().slice(0, 200),
+      phone: String(contact?.phone || '').trim().slice(0, 40)
+    }))
+    .filter((contact) => contact.name || contact.email || contact.phone)
+    .slice(0, 20);
+  return {
+    name: String(body.name || '').trim().slice(0, 160),
+    company: optText(body.company, 160),
+    type: CLIENT_TYPES.includes(body.type) ? body.type : 'ENTREPRISE',
+    status: CLIENT_STATUSES.includes(body.status) ? body.status : 'ACTIVE',
+    portfolioId: optText(body.portfolioId, 60),
+    email: optText(body.email, 200),
+    phone: optText(body.phone, 40),
+    address: optText(body.address, 400),
+    siret: optText(body.siret, 20),
+    vatNumber: optText(body.vatNumber, 30),
+    paymentTerms: optText(body.paymentTerms, 10),
+    contacts,
+    notes: optText(body.notes, 4000)
+  };
+};
+
+const normalizeClientKey = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+const computeClientStats = (documents) => {
+  const stats = new Map();
+  for (const doc of documents) {
+    if (!doc.clientId) continue;
+    const entry = stats.get(doc.clientId) || { quotes: 0, invoices: 0, quotedTotal: 0, invoicedTotal: 0, paidTotal: 0, outstanding: 0, lastActivity: null };
+    const isInvoice = doc.type === 'INVOICE';
+    const status = isInvoice ? doc.invoiceStatus : doc.quoteStatus;
+    const cancelled = ['CANCELLED', 'CANCELED', 'REJECTED', 'EXPIRED'].includes(status);
+    if (isInvoice) {
+      entry.invoices += 1;
+      if (!cancelled && status !== 'DRAFT') {
+        entry.invoicedTotal += doc.amount || 0;
+        entry.paidTotal += doc.amountPaid || 0;
+        entry.outstanding += Math.max(0, (doc.amount || 0) - (doc.amountPaid || 0));
+      }
+    } else {
+      entry.quotes += 1;
+      if (!cancelled) entry.quotedTotal += doc.amount || 0;
+    }
+    const activity = doc.date || doc.createdAt;
+    if (activity && (!entry.lastActivity || activity > entry.lastActivity)) entry.lastActivity = activity;
+    stats.set(doc.clientId, entry);
+  }
+  return stats;
+};
+
+app.get('/api/finance/clients', requireAuth, async (req, res) => {
+  try {
+    const [clients, documents] = await Promise.all([
+      prisma.financeClient.findMany({ orderBy: { name: 'asc' } }),
+      prisma.financial_documents.findMany({
+        where: { clientId: { not: null } },
+        select: { clientId: true, type: true, amount: true, amountPaid: true, quoteStatus: true, invoiceStatus: true, date: true, createdAt: true }
+      })
+    ]);
+    const stats = computeClientStats(documents);
+    const empty = { quotes: 0, invoices: 0, quotedTotal: 0, invoicedTotal: 0, paidTotal: 0, outstanding: 0, lastActivity: null };
+    res.json(clients.map((client) => ({ ...client, stats: stats.get(client.id) || empty })));
+  } catch (e) {
+    console.error('❌ GET /api/finance/clients error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch clients', details: e.message });
+  }
+});
+
+app.post('/api/finance/clients', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizeFinanceClient(req.body);
+    if (!data.name) return res.status(400).json({ error: 'name is required' });
+    const saved = await prisma.financeClient.create({ data: { id: uid(), updatedAt: new Date(), ...data } });
+    res.status(201).json(saved);
+  } catch (e) {
+    console.error('❌ POST /api/finance/clients error:', e.message);
+    res.status(500).json({ error: 'Failed to save client', details: e.message });
+  }
+});
+
+app.put('/api/finance/clients/:id', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizeFinanceClient(req.body);
+    if (!data.name) return res.status(400).json({ error: 'name is required' });
+    const saved = await prisma.financeClient.update({ where: { id: req.params.id }, data: { ...data, updatedAt: new Date() } });
+    res.json(saved);
+  } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Client not found' });
+    console.error('❌ PUT /api/finance/clients/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to save client', details: e.message });
+  }
+});
+
+app.delete('/api/finance/clients/:id', requireAuth, async (req, res) => {
+  try {
+    const linked = await prisma.financial_documents.count({ where: { clientId: req.params.id } });
+    if (linked > 0) {
+      return res.status(409).json({ error: `Ce client a ${linked} document(s) : passez-le en « Inactif » plutôt que de le supprimer.` });
+    }
+    await prisma.financeClient.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Client not found' });
+    console.error('❌ DELETE /api/finance/clients/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to delete client', details: e.message });
+  }
+});
+
+app.get('/api/finance/clients/:id/documents', requireAuth, async (req, res) => {
+  try {
+    const documents = await prisma.financial_documents.findMany({
+      where: { clientId: req.params.id },
+      orderBy: { date: 'desc' },
+      select: { id: true, type: true, number: true, title: true, date: true, dueDate: true, amount: true, amountPaid: true, quoteStatus: true, invoiceStatus: true, archived: true }
+    });
+    res.json(documents);
+  } catch (e) {
+    console.error('❌ GET /api/finance/clients/:id/documents error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch client documents', details: e.message });
+  }
+});
+
+// Reprise des clients saisis à la main dans les devis/factures existants (dédoublonnés par société ou nom)
+app.post('/api/finance/clients/import-from-documents', requireAuth, async (req, res) => {
+  try {
+    const [documents, existing] = await Promise.all([
+      prisma.financial_documents.findMany({
+        where: { clientId: null },
+        select: { id: true, destinataireName: true, destinataireSociete: true, destinataireAdresse: true, destinataireContacts: true }
+      }),
+      prisma.financeClient.findMany({ select: { id: true, name: true, company: true } })
+    ]);
+    const byKey = new Map();
+    for (const client of existing) {
+      byKey.set(normalizeClientKey(client.company || client.name), client.id);
+    }
+    let created = 0;
+    let linked = 0;
+    for (const doc of documents) {
+      const company = String(doc.destinataireSociete || '').trim();
+      const person = String(doc.destinataireName || '').trim();
+      const label = company || person;
+      const key = normalizeClientKey(label);
+      if (!key || key === 'destinataire') continue;
+      let clientId = byKey.get(key);
+      if (!clientId) {
+        const emailMatch = String(doc.destinataireContacts || '').match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+        const phoneMatch = String(doc.destinataireContacts || '').match(/(?:\+?\d[\d .-]{7,}\d)/);
+        const data = sanitizeFinanceClient({
+          name: label,
+          company: company && person ? company : null,
+          type: company ? 'ENTREPRISE' : 'PARTICULIER',
+          address: doc.destinataireAdresse,
+          email: emailMatch?.[0],
+          phone: phoneMatch?.[0],
+          contacts: company && person ? [{ name: person, email: emailMatch?.[0] || '', phone: phoneMatch?.[0] || '' }] : []
+        });
+        const client = await prisma.financeClient.create({ data: { id: uid(), updatedAt: new Date(), ...data } });
+        clientId = client.id;
+        byKey.set(key, clientId);
+        created += 1;
+      }
+      await prisma.financial_documents.update({ where: { id: doc.id }, data: { clientId } });
+      linked += 1;
+    }
+    res.json({ created, linked, scanned: documents.length });
+  } catch (e) {
+    console.error('❌ POST /api/finance/clients/import-from-documents error:', e.message);
+    res.status(500).json({ error: 'Failed to import clients', details: e.message });
+  }
+});
+
+app.get('/api/finance/portfolios', requireAuth, async (req, res) => {
+  try {
+    res.json(await prisma.financePortfolio.findMany({ orderBy: { name: 'asc' } }));
+  } catch (e) {
+    console.error('❌ GET /api/finance/portfolios error:', e.message);
+    res.status(500).json({ error: 'Failed to fetch portfolios', details: e.message });
+  }
+});
+
+const sanitizePortfolio = (body = {}) => ({
+  name: String(body.name || '').trim().slice(0, 120),
+  description: optText(body.description, 500),
+  color: optText(body.color, 20),
+  ownerId: optText(body.ownerId, 60),
+  ownerName: optText(body.ownerName, 120)
+});
+
+app.post('/api/finance/portfolios', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizePortfolio(req.body);
+    if (!data.name) return res.status(400).json({ error: 'name is required' });
+    res.status(201).json(await prisma.financePortfolio.create({ data: { id: uid(), updatedAt: new Date(), ...data } }));
+  } catch (e) {
+    console.error('❌ POST /api/finance/portfolios error:', e.message);
+    res.status(500).json({ error: 'Failed to save portfolio', details: e.message });
+  }
+});
+
+app.put('/api/finance/portfolios/:id', requireAuth, async (req, res) => {
+  try {
+    const data = sanitizePortfolio(req.body);
+    if (!data.name) return res.status(400).json({ error: 'name is required' });
+    res.json(await prisma.financePortfolio.update({ where: { id: req.params.id }, data: { ...data, updatedAt: new Date() } }));
+  } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Portfolio not found' });
+    console.error('❌ PUT /api/finance/portfolios/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to save portfolio', details: e.message });
+  }
+});
+
+// Supprimer un portefeuille détache ses clients (ils ne sont jamais supprimés)
+app.delete('/api/finance/portfolios/:id', requireAuth, async (req, res) => {
+  try {
+    await prisma.financeClient.updateMany({ where: { portfolioId: req.params.id }, data: { portfolioId: null } });
+    await prisma.financePortfolio.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Portfolio not found' });
+    console.error('❌ DELETE /api/finance/portfolios/:id error:', e.message);
+    res.status(500).json({ error: 'Failed to delete portfolio', details: e.message });
+  }
+});
+
 // Poste embarqué Inéo RétroBus : manifeste de mise à jour public et vérifié par SHA-256 (logique dans lib/ineoDesktop.js).
 const desktopApiBaseUrl = (req) => {
   const host = String(req.get('host') || '');
