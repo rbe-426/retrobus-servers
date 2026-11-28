@@ -1,5 +1,5 @@
 {
-  "savedAt": "2026-11-28T15:26:46.499Z",
+  "savedAt": "2026-11-28T15:33:57.526Z",
   "state": {
     "members": [
       {
@@ -2537,9 +2537,9 @@
         "description": "Déjeuner forum asso",
         "amount": 24,
         "date": "2026-09-05T00:00:00.000Z",
-        "status": "approved",
+        "status": "paid",
         "createdAt": "2026-09-05T11:16:30.081Z",
-        "updatedAt": "2026-10-30T21:14:44.425Z",
+        "updatedAt": "2026-11-28T15:33:56.723Z",
         "approvedBy": null,
         "financeTransactionId": null,
         "requestedByEmail": null,
@@ -2555,10 +2555,10 @@
         "fileName": "image.jpg",
         "fileUrl": "/uploads/f20b8513e381185bc6fcf5c20d179178",
         "eventId": null,
-        "transferProofFileName": null,
-        "transferProofStoredName": null,
-        "transferProofUploadedAt": null,
-        "transferProofUploadedBy": null
+        "transferProofFileName": "devis_2611003.pdf",
+        "transferProofStoredName": "cecc05d3-c9f4-4940-89e9-600faeff3107.pdf",
+        "transferProofUploadedAt": "2026-11-28T15:33:56.723Z",
+        "transferProofUploadedBy": "belaidiw91@gmail.com"
       }
     ],
     "documents": [],
@@ -2871,7 +2871,7 @@
       }
     ],
     "simulations": [],
-    "bankBalance": 472.83,
+    "bankBalance": 100.05,
     "categories": [
       {
         "id": "adhesions",
