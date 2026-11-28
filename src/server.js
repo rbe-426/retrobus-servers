@@ -11307,6 +11307,7 @@ app.post('/finance/scheduled-expenses/:id/execute', requireAuth, async (req, res
 
 // ─── Import relevé bancaire structuré ────────────────────────────────────────
 import { parseBankStatementFile } from './lib/bankStatementImportParser.js';
+import { computeBusRoute, analyzeStops } from './lib/busRouting.js';
 const bankStatementUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 app.post(
@@ -14933,6 +14934,40 @@ app.get(['/ineo/route', '/api/ineo/route'], requireAuth, requireIneoOperationsAc
   }
 });
 
+// Tracé bus sur route (Valhalla, profil bus : voies de transport urbain, sens interdits, contrôle poids lourd) et optimisations d'arrêts.
+app.post(['/ineo/bus-route', '/api/ineo/bus-route'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
+  const points = (Array.isArray(req.body?.points) ? req.body.points : [])
+    .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng), label: String(point?.label || '').slice(0, 120) }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng) && Math.abs(point.lat) <= 90 && Math.abs(point.lng) <= 180);
+  if (points.length < 2 || points.length > 60) return res.status(400).json({ error: 'Entre 2 et 60 arrêts sont nécessaires.' });
+  const vehicle = {
+    heightM: Number(req.body?.vehicle?.heightM) || 0,
+    widthM: Number(req.body?.vehicle?.widthM) || 0,
+    lengthM: Number(req.body?.vehicle?.lengthM) || 0,
+    weightT: Number(req.body?.vehicle?.weightT) || 0,
+  };
+  try {
+    const route = await computeBusRoute(points, vehicle, AbortSignal.timeout(25000));
+    let suggestions = [];
+    if (route.engine === 'bus' && req.body?.analyze !== false) {
+      try { suggestions = await analyzeStops(points, vehicle, AbortSignal.timeout(25000)); } catch (error) { suggestions = []; }
+    }
+    const step = Math.max(1, Math.ceil(route.coords.length / 3000));
+    const path = route.coords.filter((_, index) => index % step === 0 || index === route.coords.length - 1).map(([lat, lng]) => [Math.round(lat * 1e6) / 1e6, Math.round(lng * 1e6) / 1e6]);
+    res.json({
+      engine: route.engine,
+      path,
+      totalKm: Math.round(route.totalKm * 10) / 10,
+      totalMinutes: Math.round(route.totalTimeS / 60),
+      failedLegs: route.failedLegs,
+      heavyConflicts: (route.heavyConflicts || []).length,
+      suggestions,
+    });
+  } catch (error) {
+    console.error('POST /api/ineo/bus-route:', error.message);
+    res.status(502).json({ error: 'Calcul d’itinéraire bus indisponible' });
+  }
+});
 app.get(['/ineo/geocode', '/api/ineo/geocode'], requireAuth, requireIneoOperationsAccess, async (req, res) => {
   const query = String(req.query.q || '').trim().slice(0, 200);
   if (query.length < 3) return res.json({ results: [] });
