@@ -14548,13 +14548,21 @@ const computeClientStats = (documents) => {
     const entry = stats.get(doc.clientId) || { quotes: 0, invoices: 0, quotedTotal: 0, invoicedTotal: 0, paidTotal: 0, outstanding: 0, lastActivity: null };
     const isInvoice = doc.type === 'INVOICE';
     const status = isInvoice ? doc.invoiceStatus : doc.quoteStatus;
-    const cancelled = ['CANCELLED', 'CANCELED', 'REJECTED', 'EXPIRED'].includes(status);
+    const cancelled = ['CANCELLED', 'CANCELED', 'REJECTED', 'REFUSED', 'EXPIRED', 'ABANDONED'].includes(status);
     if (isInvoice) {
       entry.invoices += 1;
       if (!cancelled && status !== 'DRAFT') {
-        entry.invoicedTotal += doc.amount || 0;
-        entry.paidTotal += doc.amountPaid || 0;
-        entry.outstanding += Math.max(0, (doc.amount || 0) - (doc.amountPaid || 0));
+        const amount = doc.amount || 0;
+        let received = doc.amountPaid || 0;
+        if (status === 'PAID') received = amount;
+        else if (status === 'DEPOSIT_PAID') {
+          let deposit = 0;
+          try { deposit = Number(JSON.parse(doc.pricingData || '{}')?.deposit) || 0; } catch { deposit = 0; }
+          received = Math.max(received, Math.min(amount, deposit > 0 ? deposit : amount));
+        }
+        entry.invoicedTotal += amount;
+        entry.paidTotal += received;
+        entry.outstanding += Math.max(0, amount - received);
       }
     } else {
       entry.quotes += 1;
@@ -14573,7 +14581,7 @@ app.get('/api/finance/clients', requireAuth, async (req, res) => {
       prisma.financeClient.findMany({ orderBy: { name: 'asc' } }),
       prisma.financial_documents.findMany({
         where: { clientId: { not: null } },
-        select: { clientId: true, type: true, amount: true, amountPaid: true, quoteStatus: true, invoiceStatus: true, date: true, createdAt: true }
+        select: { clientId: true, type: true, amount: true, amountPaid: true, pricingData: true, quoteStatus: true, invoiceStatus: true, date: true, createdAt: true }
       })
     ]);
     const stats = computeClientStats(documents);
