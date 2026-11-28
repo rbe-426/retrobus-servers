@@ -14115,8 +14115,10 @@ app.post('/api/finance/documents', requireAuth, async (req, res) => {
       notes: req.body.notes || null,
       internalNotes: req.body.internalNotes || null,
       // Initialiser le statut selon le type
-      quoteStatus: type === 'QUOTE' ? 'DRAFT' : null,
-      invoiceStatus: type === 'INVOICE' ? 'DRAFT' : null,
+      // Reprise de l'historique : statut et encaissement d'origine (sans créer d'opération bancaire)
+      quoteStatus: type === 'QUOTE' ? (req.body.historical && req.body.status ? String(req.body.status) : 'DRAFT') : null,
+      invoiceStatus: type === 'INVOICE' ? (req.body.historical && req.body.status ? String(req.body.status) : 'DRAFT') : null,
+      ...(req.body.historical && Number.isFinite(Number(req.body.amountPaid)) ? { amountPaid: Number(req.body.amountPaid) } : {}),
       createdBy: req.user?.email || req.user?.name || 'API',
       updatedAt: new Date()
     };
