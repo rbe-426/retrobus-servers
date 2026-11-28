@@ -13562,7 +13562,8 @@ app.get('/api/finance/balance', requireAuth, async (req, res) => {
   try {
     const storedBalance = await prisma.finance_balances.findFirst();
     if (storedBalance) state.bankBalance = storedBalance.balance;
-    res.json({ balance: state.bankBalance });
+    const lastChange = await prisma.finance_balance_history.findFirst({ orderBy: { createdAt: 'desc' } }).catch(() => null);
+    res.json({ balance: state.bankBalance, lastUpdate: lastChange?.createdAt || storedBalance?.createdAt || null, isLocked: storedBalance?.isLocked !== false });
   } catch (error) {
     console.error('❌ Erreur lecture solde bancaire:', error.message);
     res.status(500).json({ error: 'Impossible de charger le solde bancaire' });
@@ -13621,6 +13622,30 @@ app.put('/api/finance/balance', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('❌ Erreur PUT /api/finance/balance:', error);
     res.status(500).json({ error: 'Erreur mise à jour solde' });
+  }
+});
+
+// POST /api/finance/balance/configure - utilisé par la configuration du solde (code de sécurité requis)
+app.post('/api/finance/balance/configure', requireAuth, async (req, res) => {
+  try {
+    const { code, newBalance, reason } = req.body || {};
+    if (String(code) !== (process.env.FINANCE_BALANCE_CODE || '0920')) {
+      return res.status(401).json({ message: 'Code de sécurité incorrect' });
+    }
+    const amount = Math.round(Number(newBalance) * 100) / 100;
+    if (!Number.isFinite(amount)) return res.status(400).json({ message: 'Montant invalide' });
+    const previous = await prisma.finance_balances.findFirst();
+    const oldBalance = previous?.balance ?? 0;
+    if (previous) await prisma.finance_balances.update({ where: { id: previous.id }, data: { balance: amount } });
+    else await prisma.finance_balances.create({ data: { id: uid(), balance: amount } });
+    await prisma.finance_balance_history.create({
+      data: { id: uid(), oldBalance, newBalance: amount, reason: reason || 'Mise à jour manuelle du solde bancaire' }
+    });
+    state.bankBalance = amount;
+    res.json({ success: true, newBalance: amount, difference: Math.round((amount - oldBalance) * 100) / 100 });
+  } catch (error) {
+    console.error('❌ Erreur POST /api/finance/balance/configure:', error);
+    res.status(500).json({ message: 'Erreur mise à jour solde' });
   }
 });
 
@@ -14543,6 +14568,17 @@ const normalizeClientKey = (value) => String(value || '').normalize('NFD').repla
 
 const computeClientStats = (documents) => {
   const stats = new Map();
+  const depositOf = (doc) => {
+    try { return Number(JSON.parse(doc.pricingData || '{}')?.deposit) || 0; } catch { return 0; }
+  };
+  const key = (doc) => `${doc.clientId}|${normalizeClientKey(doc.title)}`;
+  const invoiceKeys = new Set(documents.filter((d) => d.type === 'INVOICE' && d.clientId).map(key));
+  const quoteDeposits = new Map();
+  for (const d of documents) {
+    if (d.type === 'QUOTE' && d.clientId && d.quoteStatus === 'DEPOSIT_PAID') {
+      quoteDeposits.set(key(d), Math.max(quoteDeposits.get(key(d)) || 0, depositOf(d), d.amountPaid || 0));
+    }
+  }
   for (const doc of documents) {
     if (!doc.clientId) continue;
     const entry = stats.get(doc.clientId) || { quotes: 0, invoices: 0, quotedTotal: 0, invoicedTotal: 0, paidTotal: 0, outstanding: 0, lastActivity: null };
@@ -14555,10 +14591,11 @@ const computeClientStats = (documents) => {
         const amount = doc.amount || 0;
         let received = doc.amountPaid || 0;
         if (status === 'PAID') received = amount;
-        else if (status === 'DEPOSIT_PAID') {
-          let deposit = 0;
-          try { deposit = Number(JSON.parse(doc.pricingData || '{}')?.deposit) || 0; } catch { deposit = 0; }
-          received = Math.max(received, Math.min(amount, deposit > 0 ? deposit : amount));
+        else {
+          // L'acompte peut avoir été encaissé sur le devis d'origine (même client et même objet) ou copié dans la facture
+          const deposit = Math.max(depositOf(doc), quoteDeposits.get(key(doc)) || 0);
+          if (deposit > 0) received = Math.max(received, Math.min(amount, deposit));
+          else if (status === 'DEPOSIT_PAID') received = Math.max(received, amount);
         }
         entry.invoicedTotal += amount;
         entry.paidTotal += received;
@@ -14567,6 +14604,8 @@ const computeClientStats = (documents) => {
     } else {
       entry.quotes += 1;
       if (!cancelled) entry.quotedTotal += doc.amount || 0;
+      // Acompte encaissé sur un devis sans facture : il compte comme encaissé
+      if (status === 'DEPOSIT_PAID' && !invoiceKeys.has(key(doc))) entry.paidTotal += Math.min(doc.amount || 0, Math.max(depositOf(doc), doc.amountPaid || 0));
     }
     const activity = doc.date || doc.createdAt;
     if (activity && (!entry.lastActivity || activity > entry.lastActivity)) entry.lastActivity = activity;
@@ -14581,7 +14620,7 @@ app.get('/api/finance/clients', requireAuth, async (req, res) => {
       prisma.financeClient.findMany({ orderBy: { name: 'asc' } }),
       prisma.financial_documents.findMany({
         where: { clientId: { not: null } },
-        select: { clientId: true, type: true, amount: true, amountPaid: true, pricingData: true, quoteStatus: true, invoiceStatus: true, date: true, createdAt: true }
+        select: { clientId: true, type: true, title: true, amount: true, amountPaid: true, pricingData: true, quoteStatus: true, invoiceStatus: true, date: true, createdAt: true }
       })
     ]);
     const stats = computeClientStats(documents);

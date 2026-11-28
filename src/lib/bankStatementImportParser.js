@@ -44,7 +44,7 @@ const parseDate = (value) => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 };
 
-const toTransaction = ({ date, amount, description, type }) => {
+const toTransaction = ({ date, amount, description, type, fitId }) => {
   const parsedAmount = parseAmount(amount);
   const parsedDate = parseDate(date);
   const normalizedType = String(type || '').toUpperCase();
@@ -55,13 +55,17 @@ const toTransaction = ({ date, amount, description, type }) => {
     description: normalizeText(description),
     type: normalizedType.includes('DEBIT') || parsedAmount < 0 ? 'DEBIT' : 'CREDIT',
     category: categorizeTransaction(description),
+    ...(fitId ? { fitId } : {}),
   };
 };
 
 const deduplicateTransactions = (transactions) => {
   const seen = new Set();
   return transactions.filter((transaction) => {
-    const key = `${transaction.date}|${transaction.amount.toFixed(2)}|${transaction.type}|${transaction.description.toUpperCase().slice(0, 60)}`;
+    // Un FITID distinct désigne une opération distincte, même si date, montant et libellé sont identiques
+    const key = transaction.fitId
+      ? `fit|${transaction.fitId}`
+      : `${transaction.date}|${transaction.amount.toFixed(2)}|${transaction.type}|${transaction.description.toUpperCase().slice(0, 60)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -77,8 +81,13 @@ const parseOfx = (content) => {
     amount: tagValue(record, 'TRNAMT'),
     type: tagValue(record, 'TRNTYPE'),
     description: tagValue(record, 'NAME') || tagValue(record, 'MEMO') || tagValue(record, 'FITID'),
+    fitId: tagValue(record, 'FITID'),
   })).filter(Boolean);
-  return { bank: 'OFX', period: null, transactions: deduplicateTransactions(transactions) };
+  // Solde comptable publié par la banque : référence au centime près pour le rapprochement
+  const ledger = content.match(/<LEDGERBAL>[\s\S]*?<\/LEDGERBAL>/i)?.[0] || '';
+  const ledgerAmount = parseAmount(tagValue(ledger, 'BALAMT'));
+  const ledgerBalance = ledgerAmount === null ? null : { amount: Math.round(ledgerAmount * 100) / 100, date: parseDate(tagValue(ledger, 'DTASOF')) };
+  return { bank: 'OFX', period: null, ledgerBalance, transactions: deduplicateTransactions(transactions) };
 };
 
 const findColumn = (headers, patterns) => headers.findIndex((header) => patterns.some((pattern) => pattern.test(header)));
